@@ -462,17 +462,11 @@ function commissionOwed(profId){
   const period = currentPeriod();
   const paidService = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='servico').reduce((a,c)=>a+Number(c.amount),0);
   const paidPote = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='pote' && c.period===period).reduce((a,c)=>a+Number(c.amount),0);
-  const settings = state.commissionSettings;
-  const monthCounts = {};
   const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   let serviceEarned = 0;
   concludedAppts.forEach(ap=>{
     const s = serviceById(ap.serviceId); if(!s) return;
-    let pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
-    if(ap.date.startsWith(period)){
-      monthCounts[ap.serviceId] = (monthCounts[ap.serviceId]||0)+1;
-      if(monthCounts[ap.serviceId] > settings.volumeTierThreshold) pct += settings.volumeTierBonusPercent;
-    }
+    const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
     serviceEarned += s.price * (pct/100);
   });
   const potEarned = potCommissionForProf(profId);
@@ -1284,12 +1278,7 @@ function renderComissoes(view){
     ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
     ${userSession.role==='dono' ? `
     <div class="card" style="padding:14px 18px;margin-bottom:18px;">
-      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
-        <div><label>Comissão por serviço</label><div style="font-size:11.5px;color:var(--muted-2);max-width:220px;">Configure % específico por serviço em cada profissional (aba Profissionais).</div></div>
-        <div><label>Bônus por volume: a partir de</label><input id="f-tier-threshold" type="number" min="1" value="${state.commissionSettings.volumeTierThreshold}" style="width:70px;"></div>
-        <div><label>atendimentos do mesmo serviço no mês, some</label><input id="f-tier-bonus" type="number" min="0" value="${state.commissionSettings.volumeTierBonusPercent}" style="width:70px;"> pp na comissão</div>
-        <button class="btn btn-ghost" id="btn-save-tier">Salvar</button>
-      </div>
+      <div style="font-size:12.5px;color:var(--muted);">Comissão por serviço — configure o % específico de cada profissional na aba Profissionais.</div>
     </div>` : ''}
     <div style="display:flex;flex-direction:column;gap:12px;">
       ${visibleProfs.length===0 ? emptyState('Cadastre profissionais para ver comissões.') : visibleProfs.map(p=>{
@@ -1383,13 +1372,6 @@ function renderComissoes(view){
     `}
   `;
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
-  view.querySelector('#btn-save-tier')?.addEventListener('click', ()=>{
-    update(s=>{
-      s.commissionSettings.volumeTierThreshold = parseInt(view.querySelector('#f-tier-threshold').value)||1;
-      s.commissionSettings.volumeTierBonusPercent = parseFloat(view.querySelector('#f-tier-bonus').value)||0;
-    });
-    showToast('Regra de comissão por volume salva.');
-  });
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
 }
 function payServiceCommission(profId){
@@ -1732,9 +1714,14 @@ function renderClube(view){
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:26px;">
       ${state.subscriptionPlans.map(p=>`
         <div class="card" style="padding:16px 18px;">
-          <div style="font-weight:600;font-size:15px;">${p.name}</div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="font-weight:600;font-size:15px;">${p.name}</div>
+            ${p.category ? `<span class="pill" style="flex-shrink:0;">${p.category}</span>` : ''}
+          </div>
           <div class="font-mono" style="font-size:19px;color:var(--gold-bright);margin:6px 0;">${BRL(p.price)}<span style="font-size:12px;color:var(--muted-2);">/mês</span></div>
-          <div style="font-size:12.5px;color:var(--muted);">${p.benefits}</div>
+          ${p.includedServiceIds && p.includedServiceIds.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px;">Inclui: ${p.includedServiceIds.map(id=>serviceById(id)?.name).filter(Boolean).join(', ')}</div>` : ''}
+          ${p.discountPercent>0 ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px;">${p.discountPercent}% de desconto em serviços extras</div>` : ''}
+          ${p.benefits ? `<div style="font-size:12.5px;color:var(--muted);">${p.benefits}</div>` : ''}
           <div style="display:flex;gap:6px;margin-top:12px;">
             <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:6px;" data-edit-plan="${p.id}">${ICON.edit}</button>
             <button class="btn btn-ghost" style="padding:6px 9px;color:var(--bad);border-color:var(--bad);" data-del-plan="${p.id}">${ICON.trash}</button>
@@ -1795,6 +1782,7 @@ function syncAsaas(){
 }
 function planModal(existing){
   const isEdit = !!existing;
+  const selectedIds = new Set(existing?.includedServiceIds || []);
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -1803,8 +1791,25 @@ function planModal(existing){
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Nome do plano</label><input id="f-name" value="${existing?.name||''}" placeholder="Ex: Plano Ouro" style="width:100%;"></div>
+        <div><label>Categoria</label><input id="f-category" list="f-category-list" value="${existing?.category||''}" placeholder="Ex: Corte, Combo, Premium" style="width:100%;">
+          <datalist id="f-category-list">${[...new Set(state.subscriptionPlans.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${c}">`).join('')}</datalist>
+        </div>
         <div><label>Valor mensal (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${existing?.price??''}" style="width:100%;"></div>
-        <div><label>Benefícios</label><input id="f-benefits" value="${existing?.benefits||''}" placeholder="Ex: 2 cortes por mês" style="width:100%;"></div>
+        <div>
+          <label>Serviços incluídos no plano</label>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;padding:10px;">
+            ${state.services.length===0 ? '<div style="font-size:12px;color:var(--muted);">Cadastre serviços primeiro.</div>' : state.services.map(s=>`
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" class="f-service-check" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} style="width:auto;">
+                ${s.name} — ${BRL(s.price)}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div><label>Desconto do assinante em serviços extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Aplicado quando o assinante contrata um serviço fora dos incluídos no plano.</div>
+        </div>
+        <div><label>Benefícios (texto livre, opcional)</label><input id="f-benefits" value="${existing?.benefits||''}" placeholder="Ex: prioridade na agenda" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Criar plano'}</button>
       </div>
     </div>
@@ -1812,12 +1817,15 @@ function planModal(existing){
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
+      const category = root.querySelector('#f-category').value.trim();
       const price = parseFloat(root.querySelector('#f-price').value);
+      const discountPercent = parseFloat(root.querySelector('#f-discount').value)||0;
+      const includedServiceIds = [...root.querySelectorAll('.f-service-check:checked')].map(c=>c.value);
       const benefits = root.querySelector('#f-benefits').value.trim();
       if(!name || isNaN(price)){ showToast('Preencha nome e valor.'); return; }
       update(s=>{
-        if(isEdit){ Object.assign(existing, {name, price, benefits}); }
-        else{ s.subscriptionPlans.push({id:uid(), name, price, benefits}); }
+        if(isEdit){ Object.assign(existing, {name, category, price, discountPercent, includedServiceIds, benefits}); }
+        else{ s.subscriptionPlans.push({id:uid(), name, category, price, discountPercent, includedServiceIds, benefits}); }
       });
       closeModal();
     });
