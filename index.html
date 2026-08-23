@@ -24,6 +24,22 @@
     --bad-bg:#2a201c;
     --warn:#d0a94f;
   }
+  :root[data-theme="light"]{
+    --bg:#f7f4ee;
+    --panel:#ffffff;
+    --panel-2:#f1ece0;
+    --border:#e2d8c3;
+    --gold:#a9793a;
+    --gold-bright:#8a5f28;
+    --ink:#221d15;
+    --muted:#6b6252;
+    --muted-2:#8f8571;
+    --ok:#3d7a45;
+    --ok-bg:#e6f0e3;
+    --bad:#a8402d;
+    --bad-bg:#f6e3de;
+    --warn:#8a6210;
+  }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;}
   .font-display{font-family:'Fraunces',serif;}
@@ -275,6 +291,7 @@ function blankShopData(){
     clients: [], products: [], waitlist: [],
     loyalty:{pointsPerReal:1, redeemThreshold:100, redeemValue:20, referralBonusPoints:30},
     onlineBooking:{slug:'', allowCancel:true, allowReschedule:true, active:true},
+    themePreference:'dark',
     shopProfile:{
       name:'Minha Barbearia', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'',
       bio:'', address:'', phone:'',
@@ -312,8 +329,13 @@ async function loadState(){
   migrateState();
   render();
 }
+function applyTheme(theme){
+  document.documentElement.dataset.theme = theme==='light' ? 'light' : '';
+}
 function migrateState(){
   // Garante que sessões salvas antes destas funcionalidades recebam valores padrão.
+  state.themePreference = state.themePreference || 'dark';
+  applyTheme(state.themePreference);
   state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true};
   state.waitlist = state.waitlist || [];
   state.commissionSettings = state.commissionSettings || {volumeTierThreshold:4, volumeTierBonusPercent:5};
@@ -697,6 +719,13 @@ function render(){
           <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Status do caixa</div>
           <div class="pill ${cashOpen?'pill-ok':'pill-bad'}">${cashOpen?'Caixa aberto':'Caixa fechado'}</div>
         </div>
+        <div style="padding:0 8px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;">Tema</div>
+          <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+            <button class="theme-toggle-btn" data-theme-choice="dark" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference!=='light'?'var(--gold)':'var(--panel-2)'};color:${state.themePreference!=='light'?'#1a1610':'var(--muted)'};">Escuro</button>
+            <button class="theme-toggle-btn" data-theme-choice="light" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference==='light'?'var(--gold)':'var(--panel-2)'};color:${state.themePreference==='light'?'#1a1610':'var(--muted)'};">Claro</button>
+          </div>
+        </div>
         <div style="padding:10px 8px 0;border-top:1px solid var(--border);">
           <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 6px;">${ICON.shield} Perfil ativo</div>
           <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${userSession.role==='dono' ? 'Dono / Gerente' : activeProf?.name || 'Profissional'}</div>
@@ -714,6 +743,11 @@ function render(){
   });
   app.querySelector('#btn-switch-profile').addEventListener('click', openProfileSwitchModal);
   app.querySelector('#btn-logout').addEventListener('click', async ()=>{ await supa.auth.signOut(); currentShop=null; state=null; boot(); });
+  app.querySelectorAll('.theme-toggle-btn').forEach(b=>b.addEventListener('click', ()=>{
+    update(s=>{ s.themePreference = b.dataset.themeChoice; });
+    applyTheme(b.dataset.themeChoice);
+    render();
+  }));
   renderView();
 }
 function openProfileSwitchModal(){
