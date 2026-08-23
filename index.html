@@ -1938,6 +1938,7 @@ function renderClube(view){
             <td class="font-mono">${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</td>
             <td>${statusPillMember(m.status)}</td>
             <td style="text-align:right;white-space:nowrap;">
+              ${m.invoiceUrl ? `<a href="${m.invoiceUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 10px;text-decoration:none;">${ICON.link} Ver cobrança</a>` : ''}
               ${m.paymentMethod==='dinheiro' && m.status!=='pago' && m.status!=='cancelado' ? `<button class="btn btn-ghost" style="padding:6px 10px;color:var(--ok);border-color:var(--ok);" data-mark-cash="${m.id}">Marcar pago (dinheiro)</button>` : ''}
               <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-member="${m.id}">${ICON.edit}</button>
               <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-member="${m.id}">${ICON.trash}</button>
@@ -1966,12 +1967,21 @@ function renderClube(view){
   }));
   view.querySelector('[data-goto="config"]')?.addEventListener('click', ()=>{ route='config'; render(); });
 }
-function syncAsaas(){
+async function syncAsaas(){
   if(!state.asaas.apiKey){
     showToast('Configure sua API Key do Asaas em Integração Asaas antes de sincronizar.');
     return;
   }
-  showToast('Sincronização com o Asaas exige um backend — configure o servidor descrito em Integração Asaas.');
+  showToast('Sincronizando com o Asaas...');
+  const { data: result, error } = await supa.functions.invoke('asaas-sync', { body: { action:'sync_status' } });
+  if(error || result?.error){ showToast(result?.error || 'Não foi possível sincronizar com o Asaas.'); return; }
+  update(s=>{
+    (result.results||[]).forEach(r=>{
+      const m = s.subscriptionMembers.find(x=>x.id===r.memberId);
+      if(m){ m.status = r.status; m.lastPaymentDate = r.lastPaymentDate; m.lastPaymentAmount = r.lastPaymentAmount; }
+    });
+  });
+  showToast(`Sincronizado — ${(result.results||[]).length} assinante(s) atualizados.`);
 }
 function planModal(existing){
   const isEdit = !!existing;
@@ -2056,19 +2066,36 @@ function memberModal(existing){
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
-    root.querySelector('#f-submit').addEventListener('click', ()=>{
+    root.querySelector('#f-submit').addEventListener('click', async ()=>{
       const name = root.querySelector('#f-name').value.trim();
       if(!name){ showToast('Informe o nome.'); return; }
+      const phone = root.querySelector('#f-phone').value.trim();
+      const planId = root.querySelector('#f-plan').value;
+      const paymentMethod = root.querySelector('#f-method').value;
       const data = {
-        name, phone: root.querySelector('#f-phone').value.trim(),
-        planId: root.querySelector('#f-plan').value,
-        paymentMethod: root.querySelector('#f-method').value,
+        name, phone, planId, paymentMethod,
         dueDate: root.querySelector('#f-due').value,
         status: root.querySelector('#f-status').value,
       };
+      if(!isEdit && paymentMethod==='asaas'){
+        if(!state.asaas.apiKey){ showToast('Configure sua API Key do Asaas em Integração Asaas antes de cadastrar via Pix/Cartão.'); return; }
+        const submitBtn = root.querySelector('#f-submit');
+        submitBtn.disabled = true; submitBtn.textContent = 'Criando cobrança no Asaas...';
+        const plan = state.subscriptionPlans.find(p=>p.id===planId);
+        const newMemberId = uid();
+        const { data: result, error } = await supa.functions.invoke('asaas-sync', {
+          body: { action:'create_subscription', memberId: newMemberId, memberName:name, memberPhone:phone, planPrice:plan.price, planName:plan.name }
+        });
+        submitBtn.disabled = false; submitBtn.textContent = isEdit?'Salvar':'Adicionar membro';
+        if(error || result?.error){ showToast(result?.error || 'Não foi possível criar a cobrança no Asaas.'); return; }
+        update(s=>{ s.subscriptionMembers.push({id:newMemberId, asaasChargeId:'', asaasSubscriptionId:result.subscriptionId, asaasCustomerId:result.customerId, invoiceUrl:result.invoiceUrl, lastPaymentDate:null, lastPaymentAmount:0, ...data}); });
+        showToast('Assinante cadastrado e cobrança recorrente criada no Asaas.');
+        closeModal();
+        return;
+      }
       update(s=>{
         if(isEdit){ Object.assign(existing, data); }
-        else{ s.subscriptionMembers.push({id:uid(), asaasChargeId:'', lastPaymentDate:null, lastPaymentAmount:0, ...data}); }
+        else{ s.subscriptionMembers.push({id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data}); }
       });
       closeModal();
     });
@@ -2086,7 +2113,10 @@ function renderConfig(view){
       <div style="display:flex;gap:10px;align-items:flex-start;">
         <div style="color:var(--gold-bright);margin-top:2px;">${ICON.lock}</div>
         <div style="font-size:13.5px;color:var(--muted);line-height:1.7;">
-          Por segurança, a chave de API do Asaas <strong style="color:var(--ink);">não deve ficar exposta</strong> em um app que roda direto no navegador — qualquer pessoa poderia acessá-la pelo código. Esta tela guarda a configuração e deixa a integração pronta para ser plugada a um pequeno servidor (backend) que fará as chamadas reais à API do Asaas. Até lá, os pagamentos do clube são controlados manualmente na aba <span data-goto="clube" style="color:var(--gold-bright);cursor:pointer;text-decoration:underline;">Clube de Assinatura</span>.
+          Sua chave de API do Asaas fica guardada com segurança e é usada apenas pelo servidor
+          (nunca é exposta no navegador). Assinantes cadastrados com "Pix / Cartão" geram uma cobrança
+          recorrente de verdade no Asaas — o cliente recebe o link de pagamento, e o status é atualizado
+          automaticamente aqui assim que ele paga.
         </div>
       </div>
     </div>
@@ -2116,37 +2146,18 @@ function renderConfig(view){
       </div>
     </div>
 
-    <div class="card" style="padding:20px;margin-bottom:20px;">
+    <div class="card" style="padding:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
         <div class="font-display" style="font-size:16px;font-weight:600;">Sincronizar cobranças</div>
         <button class="btn btn-ghost" id="f-sync">${ICON.link} Sincronizar com Asaas</button>
       </div>
-      <div style="font-size:13px;color:var(--muted-2);">Esta ação exige um endpoint de backend próprio (ver estrutura abaixo). Quando o backend estiver no ar, este botão passa a buscar as cobranças do Asaas — quantos assinantes pagaram, quantos estão pendentes e quantos em atraso — e atualiza o status dos membros automaticamente.</div>
+      <div style="font-size:13px;color:var(--muted-2);">Busca no Asaas o status mais recente de cada assinante (pago, pendente ou atrasado) e atualiza aqui. Isso também acontece automaticamente quando o Asaas avisa o sistema de um pagamento novo — este botão é só para forçar uma checagem manual.</div>
     </div>
 
-    <div class="card" style="padding:20px;">
-      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Estrutura de integração (referência para o backend)</div>
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px;">Este é o formato de chamada que seu servidor deve fazer para o Asaas — nunca a partir do navegador. Use como referência ao montar o backend.</div>
-      <pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12px;line-height:1.65;" class="font-mono">
-<span style="color:var(--muted-2);">// backend (Node/Express, Python/Flask, etc.) — nunca no navegador</span>
-<span style="color:var(--gold-bright);">POST</span> https://api.asaas.com/v3/customers
-<span style="color:var(--muted-2);">headers:</span> { "access_token": ASAAS_API_KEY }
-<span style="color:var(--muted-2);">body:</span> { "name": member.name, "mobilePhone": member.phone }
-
-<span style="color:var(--gold-bright);">POST</span> https://api.asaas.com/v3/subscriptions
-<span style="color:var(--muted-2);">body:</span> {
-  "customer": customerId,
-  "billingType": "PIX",
-  "value": plan.price,
-  "cycle": "MONTHLY",
-  "description": plan.name
-}
-
-<span style="color:var(--gold-bright);">GET</span> https://api.asaas.com/v3/payments?subscription={id}&status=RECEIVED
-<span style="color:var(--muted-2);">// soma apenas cobranças com status RECEIVED/CONFIRMED do período — nunca o saldo da conta (balance)</span>
-
-<span style="color:var(--muted-2);">// app chama seu backend, nunca o Asaas direto:</span>
-<span style="color:var(--gold-bright);">GET</span> /api/asaas/sync  <span style="color:var(--muted-2);">→ seu servidor consulta o Asaas e devolve o status</span></pre>
+    <div class="card" style="padding:20px;margin-top:20px;">
+      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Atualização automática (webhook)</div>
+      <div style="font-size:13px;color:var(--muted-2);margin-bottom:10px;">Para que o status mude sozinho assim que um assinante pagar (sem precisar clicar em "Sincronizar"), cole este endereço no painel do Asaas em <b>Integrações → Webhooks</b>:</div>
+      <div class="font-mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;word-break:break-all;color:var(--gold-bright);">${SUPABASE_URL}/functions/v1/asaas-webhook</div>
     </div>
   `;
   view.querySelector('#f-save').addEventListener('click', ()=>{
