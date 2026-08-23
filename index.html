@@ -267,6 +267,37 @@ function seedState(){
   };
 }
 
+function blankShopData(){
+  return {
+    professionals: [], services: [], appointments: [],
+    cashSessions:[], commissionPayments:[],
+    subscriptionPlans: [], subscriptionMembers: [],
+    clients: [], products: [], waitlist: [],
+    loyalty:{pointsPerReal:1, redeemThreshold:100, redeemValue:20, referralBonusPoints:30},
+    onlineBooking:{slug:'', allowCancel:true, allowReschedule:true, active:true},
+    shopProfile:{
+      name:'Minha Barbearia', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'',
+      bio:'', address:'', phone:'',
+      social:{instagram:'', facebook:'', tiktok:'', whatsapp:'', website:''},
+    },
+    asaas:{apiKey:'', walletId:'', env:'sandbox', enabled:false},
+    messageSettings:{reminderHours:3, winbackDays:23, depositExpireMinutes:30},
+    messageTemplates:{
+      confirmation:'Olá {cliente}! Seu horário está marcado para {data} às {hora} — {servico} com {profissional}. Pode confirmar sua presença? 💈',
+      reminder:'Oi {cliente}, passando pra lembrar: seu horário é hoje às {hora} — {servico} com {profissional}. Te esperamos! 💈',
+      winback:'Sentimos sua falta, {cliente}! Já faz {dias} dias desde seu último corte. Que tal marcar um horário essa semana? Responda aqui que já te encaixamos. ✂️',
+      upsellServices:'Oi {cliente}! Notamos que você ainda não experimentou {sugestao}. Quer aproveitar no seu próximo horário?',
+      upsellProducts:'{cliente}, temos {sugestao} disponíveis na barbearia — combinam bem com o seu estilo de corte. Quer que a gente separe um pra você na próxima visita?',
+      waitlistOpen:'Boa notícia, {cliente}! Abriu um horário em {data} às {hora} com {profissional}. Quer confirmar? Responda rápido que é por ordem de chegada.',
+      reviewRequest:'Oi {cliente}! Como foi seu atendimento hoje? Dá uma nota de 1 a 5 pra gente por aqui, sua opinião ajuda muito. ⭐',
+    },
+    messageLog:[],
+    commissionSettings:{volumeTierThreshold:4, volumeTierBonusPercent:5},
+    nfe:{enabled:false, provider:'', apiKey:'', cnpj:'', autoEmit:false},
+    nfeLog:[],
+  };
+}
+
 let state = null;
 let route = 'dashboard';
 let toastTimer = null;
@@ -276,13 +307,14 @@ async function loadState(){
   if(currentShop && currentShop.data && Object.keys(currentShop.data).length){
     state = currentShop.data;
   } else {
-    state = seedState();
+    state = blankShopData();
   }
   migrateState();
   render();
 }
 function migrateState(){
   // Garante que sessões salvas antes destas funcionalidades recebam valores padrão.
+  state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true};
   state.waitlist = state.waitlist || [];
   state.commissionSettings = state.commissionSettings || {volumeTierThreshold:4, volumeTierBonusPercent:5};
   state.nfe = state.nfe || {enabled:false, provider:'', apiKey:'', cnpj:'', autoEmit:false};
@@ -327,7 +359,8 @@ function migrateState(){
 async function persist(){
   if(!supa || !currentShop) return;
   try{
-    const { error } = await supa.from('shops').update({ data: state }).eq('id', currentShop.id);
+    const slug = state?.onlineBooking?.slug || null;
+    const { error } = await supa.from('shops').update({ data: state, booking_slug: slug || null }).eq('id', currentShop.id);
     if(error) console.error('Falha ao salvar', error);
   }catch(e){ console.error('Falha ao salvar', e); }
 }
@@ -2316,21 +2349,30 @@ function renderFidelidade(view){
 /* ============ AGENDAMENTO ONLINE ============ */
 function renderOnlineBooking(view){
   const ob = state.onlineBooking;
-  const link = `primerbarber.app/${ob.slug}`;
+  const link = ob.slug ? publicBookingUrl(ob.slug) : '(configure um identificador de link abaixo)';
   view.innerHTML = `
     ${pageHeader('Agendamento Online', 'Link público para seus clientes marcarem horário sozinhos')}
 
     <div class="card" style="padding:22px;margin-bottom:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
-        <div>
+        <div style="min-width:0;">
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Seu link personalizado</div>
-          <div class="font-mono" style="font-size:17px;color:var(--gold-bright);">${link}</div>
+          <div class="font-mono" style="font-size:13px;color:var(--gold-bright);word-break:break-all;">${link}</div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-shrink:0;">
           <button class="btn btn-ghost" id="btn-copy-link">${ICON.copy} Copiar link</button>
           <span class="pill ${ob.active?'pill-ok':'pill-bad'}">${ob.active?'Ativo':'Desativado'}</span>
         </div>
       </div>
+    </div>
+
+    <div class="card" style="padding:22px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Solicitações de agendamento</div>
+        <span class="pill pill-warn" id="pb-pending-count">carregando...</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Pedidos que clientes fizeram pelo link público, aguardando sua confirmação.</div>
+      <div id="pb-requests-list">Carregando...</div>
     </div>
 
     <div class="card" style="padding:20px;margin-bottom:20px;max-width:460px;">
@@ -2345,106 +2387,59 @@ function renderOnlineBooking(view){
     </div>
 
     <div style="font-size:12px;color:var(--muted-2);margin-bottom:20px;display:flex;align-items:center;gap:6px;">${ICON.image} Logo, banner, bio e redes sociais da página ficam em <span data-goto="configuracoes" style="color:var(--gold-bright);cursor:pointer;text-decoration:underline;">Configurações da Página</span>.</div>
-
-    <div style="font-size:12px;color:var(--muted-2);margin-bottom:12px;">Este simulador roda de verdade dentro do app: escolhendo serviço, data e horário, o agendamento é criado igual a um cliente reservando pelo link. Para publicar em <span class="font-mono">${link}</span> como página pública, é necessário hospedar esta tela em um servidor.</div>
-
-    <div class="card" style="padding:0;max-width:520px;overflow:hidden;margin-bottom:16px;">
-      <div style="width:100%;height:80px;background:${state.shopProfile.bannerDataUrl?`url(${state.shopProfile.bannerDataUrl}) center/cover`:'linear-gradient(135deg, var(--panel-2), var(--panel))'};"></div>
-      <div style="padding:16px 22px 0;display:flex;align-items:center;gap:10px;">
-        <div style="width:44px;height:44px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-30px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
-          ${state.shopProfile.logoDataUrl ? `<img src="${state.shopProfile.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.scissors}
-        </div>
-        <div class="font-display" style="font-size:16px;font-weight:600;">${state.shopProfile.name}</div>
-      </div>
-      ${state.shopProfile.bio ? `<div style="padding:8px 22px 0;font-size:12px;color:var(--muted);">${state.shopProfile.bio}</div>` : ''}
-    </div>
-
-    <div class="card" style="padding:22px;max-width:520px;">
-      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:14px;">${ICON.globe} Simular reserva do cliente</div>
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Serviço</label><select id="ob-service" style="width:100%;">
-          <option value="">Selecione um serviço</option>
-          ${state.services.map(s=>`<option value="${s.id}">${s.name} — ${BRL(s.price)} · ${s.duration}min${s.requireDeposit?' (sinal exigido)':''}</option>`).join('')}
-        </select></div>
-        <div><label>Data</label><input id="ob-date" type="date" min="${todayISO()}" value="${todayISO()}" style="width:100%;"></div>
-        <div id="ob-slots"></div>
-        <div id="ob-client-form" style="display:none;flex-direction:column;gap:10px;">
-          <div><label>Seu nome</label><input id="ob-name" style="width:100%;"></div>
-          <div><label>Telefone</label><input id="ob-phone" style="width:100%;"></div>
-          <div id="ob-deposit-note" style="font-size:12px;color:var(--warn);"></div>
-          <button class="btn btn-gold" id="ob-confirm" style="justify-content:center;">Confirmar agendamento</button>
-        </div>
-      </div>
-    </div>
   `;
   view.querySelector('[data-goto="configuracoes"]')?.addEventListener('click', ()=>{ route='configuracoes'; render(); });
-  view.querySelector('#btn-copy-link').addEventListener('click', ()=>showToast('Link copiado: '+link));
+  view.querySelector('#btn-copy-link').addEventListener('click', ()=>{
+    if(ob.slug){ navigator.clipboard?.writeText(link); showToast('Link copiado: '+link); }
+    else showToast('Configure um identificador de link antes de copiar.');
+  });
   view.querySelector('#f-save-ob').addEventListener('click', ()=>{
     update(s=>{
-      s.onlineBooking.slug = view.querySelector('#f-slug').value.trim() || s.onlineBooking.slug;
+      s.onlineBooking.slug = slugify(view.querySelector('#f-slug').value.trim()) || s.onlineBooking.slug;
       s.onlineBooking.active = view.querySelector('#f-active').checked;
       s.onlineBooking.allowCancel = view.querySelector('#f-cancel').checked;
       s.onlineBooking.allowReschedule = view.querySelector('#f-resched').checked;
     });
     showToast('Configurações salvas.');
-  });
-
-  let selectedSlot = null; // {professionalId, time}
-  function renderSlots(){
-    const serviceId = view.querySelector('#ob-service').value;
-    const date = view.querySelector('#ob-date').value;
-    const slotsBox = view.querySelector('#ob-slots');
-    view.querySelector('#ob-client-form').style.display = 'none';
-    selectedSlot = null;
-    if(!serviceId || !date){ slotsBox.innerHTML = ''; return; }
-    const service = serviceById(serviceId);
-    const available = state.professionals
-      .filter(p=>isProfessionalWorking(p, date))
-      .map(p=>({prof:p, slots: generateSlotsForProfessional(p, date, service.duration)}))
-      .filter(x=>x.slots.length>0);
-    if(available.length===0){
-      slotsBox.innerHTML = emptyState('Nenhum horário disponível nesta data.', 'Tente outra data ou verifique a escala dos profissionais.');
-      return;
-    }
-    slotsBox.innerHTML = available.map(({prof,slots})=>`
-      <div style="margin-bottom:10px;">
-        <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;">${prof.name}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${slots.slice(0,16).map(t=>`<button type="button" class="btn btn-ghost" style="padding:6px 10px;font-size:12.5px;" data-slot-prof="${prof.id}" data-slot-time="${t}">${t}</button>`).join('')}
-        </div>
-      </div>
-    `).join('');
-    slotsBox.querySelectorAll('[data-slot-time]').forEach(btn=>btn.addEventListener('click', ()=>{
-      slotsBox.querySelectorAll('[data-slot-time]').forEach(b=>{ b.classList.remove('btn-gold'); b.classList.add('btn-ghost'); });
-      btn.classList.remove('btn-ghost'); btn.classList.add('btn-gold');
-      selectedSlot = {professionalId:btn.dataset.slotProf, time:btn.dataset.slotTime};
-      const dep = depositAmountFor(service);
-      view.querySelector('#ob-deposit-note').textContent = dep>0 ? `Este serviço exige sinal de ${BRL(dep)} para confirmar a reserva.` : '';
-      view.querySelector('#ob-client-form').style.display = 'flex';
-    }));
-  }
-  view.querySelector('#ob-service').addEventListener('change', renderSlots);
-  view.querySelector('#ob-date').addEventListener('change', renderSlots);
-  view.querySelector('#ob-confirm').addEventListener('click', ()=>{
-    const name = view.querySelector('#ob-name').value.trim();
-    const phone = view.querySelector('#ob-phone').value.trim();
-    if(!name || !selectedSlot){ showToast('Preencha seu nome e escolha um horário.'); return; }
-    const serviceId = view.querySelector('#ob-service').value;
-    const date = view.querySelector('#ob-date').value;
-    const service = serviceById(serviceId);
-    const dep = depositAmountFor(service);
-    update(s=>{
-      s.appointments.push({
-        id:uid(), date, time:selectedSlot.time, client:name, professionalId:selectedSlot.professionalId, serviceId,
-        status:'agendado', confirmed:true, depositStatus: dep>0?'pendente':'nao_aplicavel', depositAmount:dep, createdAt:new Date().toISOString(), rating:null,
-      });
-      if(phone && !s.clients.some(c=>c.name.trim().toLowerCase()===name.trim().toLowerCase())){
-        s.clients.push({id:uid(), name, phone, birthday:'', points:0, notes:'', referredBy:'', referralBonusGiven:false});
-      }
-    });
-    showToast(dep>0 ? `Reserva confirmada! Sinal de ${BRL(dep)} pendente.` : 'Reserva confirmada!');
     renderOnlineBooking(view);
   });
+  loadBookingRequests(view);
+}
+
+async function loadBookingRequests(view){
+  const listEl = view.querySelector('#pb-requests-list');
+  const countEl = view.querySelector('#pb-pending-count');
+  if(!listEl || !currentShop) return;
+  const { data, error } = await supa.from('booking_requests').select('*').eq('shop_id', currentShop.id).eq('status','pendente').order('created_at',{ascending:false});
+  if(error){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Não foi possível carregar.</div>'; return; }
+  countEl.textContent = (data||[]).length + ' pendente(s)';
+  if(!data || !data.length){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Nenhum pedido pendente.</div>'; return; }
+  listEl.innerHTML = data.map(r=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:13px;">
+        <b>${r.client_name}</b> — ${r.service_name} com ${r.professional_name}<br>
+        <span style="color:var(--muted);font-size:11.5px;">${r.date} às ${r.time} · ${r.client_phone}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button class="btn btn-gold" data-accept="${r.id}" style="padding:6px 10px;font-size:12px;">Aceitar</button>
+        <button class="btn btn-ghost" data-decline="${r.id}" style="padding:6px 10px;font-size:12px;">Recusar</button>
+      </div>
+    </div>
+  `).join('');
+  listEl.querySelectorAll('[data-accept]').forEach(b=>b.addEventListener('click', async ()=>{
+    const req = data.find(r=>r.id===b.dataset.accept);
+    update(s=>{
+      s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null});
+    });
+    await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
+    showToast('Agendamento aceito e adicionado à agenda.');
+    loadBookingRequests(view);
+  }));
+  listEl.querySelectorAll('[data-decline]').forEach(b=>b.addEventListener('click', async ()=>{
+    await supa.from('booking_requests').update({status:'recusado'}).eq('id', b.dataset.decline);
+    showToast('Pedido recusado.');
+    loadBookingRequests(view);
+  }));
 }
 
 /* ============ MENSAGENS AUTOMÁTICAS (view) ============ */
@@ -2914,7 +2909,150 @@ function renderConfiguracoes(view){
   });
 }
 
-/* ============ AUTENTICAÇÃO E ASSINATURA ============ */
+/* ============ PÁGINA PÚBLICA DE AGENDAMENTO (sem login) ============ */
+function publicBookingUrl(slug){
+  return `${window.location.origin}${window.location.pathname}?agendar=${slug}`;
+}
+let pubBooking = { shopId:null, slug:null, info:null, serviceId:null, professionalId:null, date:null };
+
+async function renderPublicBooking(slug){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;"><div class="spinner"></div></div>`;
+  const { data, error } = await supa.rpc('get_public_shop_booking', { p_slug: slug });
+  if(error || !data || !data.shop_id){
+    app.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center;color:var(--muted);">Link de agendamento não encontrado.</div>`;
+    return;
+  }
+  if(data.active===false){
+    app.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center;color:var(--muted);">Esta barbearia não está aceitando agendamentos online no momento.</div>`;
+    return;
+  }
+  pubBooking = { shopId:data.shop_id, slug, info:data, serviceId:null, professionalId:null, date:todayISO() };
+  renderPublicBookingScreen();
+}
+
+function renderPublicBookingScreen(step1Only){
+  const app = document.getElementById('app');
+  const info = pubBooking.info;
+  const services = info.services || [];
+  const professionals = info.professionals || [];
+  app.innerHTML = `
+    <div style="min-height:100vh;padding:20px;display:flex;justify-content:center;">
+      <div style="width:100%;max-width:460px;">
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
+          <div style="width:100%;height:70px;background:${info.bannerDataUrl?`url(${info.bannerDataUrl}) center/cover`:'linear-gradient(135deg, var(--panel-2), var(--panel))'};"></div>
+          <div style="padding:14px 20px 16px;display:flex;align-items:center;gap:10px;">
+            <div style="width:42px;height:42px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-26px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
+              ${info.logoDataUrl ? `<img src="${info.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ''}
+            </div>
+            <div class="font-display" style="font-size:16px;font-weight:600;">${info.name || 'Barbearia'}</div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:20px;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px;">1. Escolha o serviço</div>
+          <div id="pb-services" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+            ${services.map(s=>`
+              <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:${pubBooking.serviceId===s.id?'var(--panel-2)':'transparent'};">
+                <input type="radio" name="pb-service" value="${s.id}" ${pubBooking.serviceId===s.id?'checked':''} style="width:auto;">
+                <div style="flex:1;">
+                  <div style="font-size:13.5px;">${s.name}</div>
+                  <div style="font-size:11.5px;color:var(--muted);">${BRL(s.price)} · ${s.duration}min</div>
+                </div>
+              </label>
+            `).join('') || '<div style="font-size:12.5px;color:var(--muted);">Nenhum serviço disponível ainda.</div>'}
+          </div>
+
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px;">2. Escolha o profissional</div>
+          <div id="pb-profs" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+            ${professionals.map(p=>`
+              <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:${pubBooking.professionalId===p.id?'var(--panel-2)':'transparent'};">
+                <input type="radio" name="pb-prof" value="${p.id}" ${pubBooking.professionalId===p.id?'checked':''} style="width:auto;">
+                <div style="font-size:13.5px;">${p.name}</div>
+              </label>
+            `).join('') || '<div style="font-size:12.5px;color:var(--muted);">Nenhum profissional disponível ainda.</div>'}
+          </div>
+
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px;">3. Escolha o dia</div>
+          <input id="pb-date" type="date" min="${todayISO()}" value="${pubBooking.date}" style="width:100%;margin-bottom:16px;">
+
+          <div id="pb-slots-wrap"></div>
+
+          <div id="pb-form" style="display:none;flex-direction:column;gap:10px;margin-top:16px;">
+            <div style="font-size:13px;font-weight:600;">4. Seus dados</div>
+            <div><label>Seu nome</label><input id="pb-name" style="width:100%;"></div>
+            <div><label>Telefone (WhatsApp)</label><input id="pb-phone" style="width:100%;" placeholder="(11) 90000-0000"></div>
+            <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
+          </div>
+          <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
+            <div style="font-size:15px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
+            <div style="font-size:12.5px;color:var(--muted);">A barbearia vai confirmar seu horário em breve.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  app.querySelectorAll('input[name="pb-service"]').forEach(r=>r.addEventListener('change', e=>{ pubBooking.serviceId=e.target.value; renderPublicBookingScreen(); }));
+  app.querySelectorAll('input[name="pb-prof"]').forEach(r=>r.addEventListener('change', e=>{ pubBooking.professionalId=e.target.value; loadPublicSlots(); }));
+  app.querySelector('#pb-date').addEventListener('change', e=>{ pubBooking.date=e.target.value; loadPublicSlots(); });
+  if(pubBooking.professionalId) loadPublicSlots();
+}
+
+async function loadPublicSlots(){
+  const wrap = document.getElementById('pb-slots-wrap');
+  const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
+  if(!wrap || !prof) return;
+  wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);">Carregando horários...</div>`;
+  const { data: booked } = await supa.rpc('get_booked_times', { p_shop_id: pubBooking.shopId, p_professional_id: prof.id, p_date: pubBooking.date });
+  const bookedSet = new Set(booked || []);
+  const slots = [];
+  let [h,m] = (prof.workStart||'09:00').split(':').map(Number);
+  const [endH,endM] = (prof.workEnd||'18:00').split(':').map(Number);
+  while(h < endH || (h===endH && m < endM)){
+    const t = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+    if(!bookedSet.has(t)) slots.push(t);
+    m += 30; if(m>=60){m=0;h++;}
+  }
+  wrap.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Horários disponíveis</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+      ${slots.map(t=>`<button class="btn btn-ghost pb-slot" data-time="${t}" style="padding:8px 12px;font-size:12.5px;">${t}</button>`).join('') || '<div style="font-size:12.5px;color:var(--muted);">Sem horários livres neste dia.</div>'}
+    </div>
+  `;
+  wrap.querySelectorAll('.pb-slot').forEach(b=>b.addEventListener('click', ()=>{
+    pubBooking.time = b.dataset.time;
+    wrap.querySelectorAll('.pb-slot').forEach(x=>x.classList.remove('btn-gold'));
+    b.classList.add('btn-gold');
+    const form = document.getElementById('pb-form');
+    form.style.display = 'flex';
+    form.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }));
+}
+
+document.addEventListener('click', function pbConfirmDelegate(e){
+  if(e.target && e.target.id === 'pb-confirm') submitPublicBooking();
+});
+async function submitPublicBooking(){
+  const name = document.getElementById('pb-name').value.trim();
+  const phone = document.getElementById('pb-phone').value.trim();
+  if(!name || !phone || !pubBooking.serviceId || !pubBooking.professionalId || !pubBooking.time){
+    alert('Preencha todos os campos e escolha um horário.'); return;
+  }
+  const service = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
+  const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
+  const { error } = await supa.from('booking_requests').insert({
+    shop_id: pubBooking.shopId,
+    professional_id: prof.id, professional_name: prof.name,
+    service_id: service.id, service_name: service.name,
+    client_name: name, client_phone: phone,
+    date: pubBooking.date, time: pubBooking.time,
+  });
+  if(error){ alert('Não foi possível enviar o pedido. Tente novamente.'); return; }
+  document.getElementById('pb-form').style.display = 'none';
+  document.getElementById('pb-done').style.display = 'block';
+}
+
+
 function authShell(inner){
   document.getElementById('app').innerHTML = `
     <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
@@ -2979,17 +3117,25 @@ async function ensureShop(defaultName){
   const { data: existing } = await supa.from('shops').select('*').eq('owner_id', user.id).maybeSingle();
   if(existing) return existing;
   const trialEnds = new Date(Date.now() + TRIAL_DAYS*24*60*60*1000).toISOString();
-  const seeded = seedState();
+  const seeded = blankShopData();
   if(defaultName) seeded.shopProfile.name = defaultName;
+  const baseSlug = slugify(defaultName || 'barbearia');
+  const uniqueSlug = baseSlug + '-' + Math.random().toString(36).slice(2,7);
+  seeded.onlineBooking.slug = uniqueSlug;
   const { data: created, error } = await supa.from('shops').insert({
     owner_id: user.id,
     email: user.email,
     data: seeded,
+    booking_slug: uniqueSlug,
     subscription_status: 'trialing',
     trial_ends_at: trialEnds,
   }).select().single();
   if(error){ console.error('Erro ao criar barbearia', error); return null; }
   return created;
+}
+function slugify(text){
+  return (text||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'barbearia';
 }
 
 function shopIsActive(shop){
@@ -3057,6 +3203,9 @@ function renderPaywallUpgrade(fromRoute){
 
 async function boot(){
   if(!supa){ renderConfigMissing(); return; }
+  const urlParams = new URLSearchParams(window.location.search);
+  const bookSlug = urlParams.get('agendar');
+  if(bookSlug){ await renderPublicBooking(bookSlug); return; }
   const { data: { session } } = await supa.auth.getSession();
   if(!session){ renderAuthScreen('login'); return; }
   let shop = await ensureShop();
