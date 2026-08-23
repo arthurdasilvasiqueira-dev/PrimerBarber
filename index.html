@@ -187,6 +187,7 @@ const todayISO = () => new Date().toISOString().slice(0,10);
 const BRL = n => (Number(n)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const STORAGE_KEY = 'barberpro-state-v1';
 let currentShop = null; // linha da tabela `shops` do usuário logado
+let notifState = { items: [], open: false, channel: null };
 
 function seedState(){
   const profs = [
@@ -286,7 +287,7 @@ function seedState(){
 function blankShopData(){
   return {
     professionals: [], services: [], appointments: [],
-    cashSessions:[], commissionPayments:[],
+    cashSessions:[], commissionPayments:[], withdrawalRequests:[],
     subscriptionPlans: [], subscriptionMembers: [],
     clients: [], products: [], waitlist: [],
     loyalty:{pointsPerReal:1, redeemThreshold:100, redeemValue:20, referralBonusPoints:30},
@@ -319,6 +320,8 @@ let state = null;
 let route = 'dashboard';
 let toastTimer = null;
 let userSession = {role:'dono', professionalId:null}; // não persistido — apenas separa a visão por login
+function isOwnerLevel(){ return userSession.role==='dono' || userSession.role==='admin'; }
+function roleLabel(r){ return r==='admin' ? 'Admin' : r==='recepcionista' ? 'Recepcionista' : 'Profissional'; }
 
 async function loadState(){
   if(currentShop && currentShop.data && Object.keys(currentShop.data).length){
@@ -336,6 +339,7 @@ function migrateState(){
   // Garante que sessões salvas antes destas funcionalidades recebam valores padrão.
   state.themePreference = state.themePreference || 'dark';
   applyTheme(state.themePreference);
+  state.withdrawalRequests = state.withdrawalRequests || [];
   state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true};
   state.waitlist = state.waitlist || [];
   state.commissionSettings = state.commissionSettings || {volumeTierThreshold:4, volumeTierBonusPercent:5};
@@ -484,6 +488,7 @@ function commissionOwed(profId){
   const period = currentPeriod();
   const paidService = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='servico').reduce((a,c)=>a+Number(c.amount),0);
   const paidPote = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='pote' && c.period===period).reduce((a,c)=>a+Number(c.amount),0);
+  const paidSaque = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='saque').reduce((a,c)=>a+Number(c.amount),0);
   const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   let serviceEarned = 0;
   concludedAppts.forEach(ap=>{
@@ -494,11 +499,26 @@ function commissionOwed(profId){
   const potEarned = potCommissionForProf(profId);
   const serviceOwed = Math.max(0, serviceEarned - paidService);
   const potOwed = Math.max(0, potEarned - paidPote);
+  const totalEarned = serviceEarned + potEarned;
+  const totalPaid = paidService + paidPote + paidSaque;
   return {
-    earned: serviceEarned + potEarned, serviceEarned, potEarned,
-    paid: paidService + paidPote, paidService, paidPote,
-    owed: serviceOwed + potOwed, serviceOwed, potOwed,
+    earned: totalEarned, serviceEarned, potEarned,
+    paid: totalPaid, paidService, paidPote, paidSaque,
+    owed: Math.max(0, totalEarned - totalPaid), serviceOwed, potOwed,
   };
+}
+function monthlyEarnedForProf(profId){
+  const prof = state.professionals.find(p=>p.id===profId);
+  if(!prof) return 0;
+  const period = currentPeriod();
+  const concludedThisMonth = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido' && a.date.startsWith(period));
+  let total = 0;
+  concludedThisMonth.forEach(ap=>{
+    const s = serviceById(ap.serviceId); if(!s) return;
+    const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
+    total += s.price * (pct/100);
+  });
+  return total + potCommissionForProf(profId);
 }
 function effectiveCommissionPercent(prof, serviceId){
   return (prof.serviceOverrides && prof.serviceOverrides[serviceId]!=null) ? prof.serviceOverrides[serviceId] : prof.commission;
@@ -679,7 +699,8 @@ const NAV_GROUPS = [
 ];
 const NAV = NAV_GROUPS.flatMap(g=>g.items);
 function navAllowedForSession(){
-  if(userSession.role==='dono') return NAV.map(n=>n.id);
+  if(isOwnerLevel()) return NAV.map(n=>n.id);
+  if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque'];
   // profissional: acesso restrito à própria agenda, comissões e mensagens
   return ['dashboard','agenda','espera','clientes','mensagens','comissoes'];
 }
@@ -689,7 +710,7 @@ function render(){
   const app = document.getElementById('app');
   const cashOpen = openSession();
   if(!navAllowedForSession().includes(route)) route = 'dashboard';
-  const activeProf = userSession.role==='profissional' ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
+  const activeProf = userSession.professionalId ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
   app.innerHTML = `
     <div style="display:flex;min-height:100vh;">
       <aside class="sidebar" style="width:236px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);padding:22px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;">
@@ -728,12 +749,16 @@ function render(){
         </div>
         <div style="padding:10px 8px 0;border-top:1px solid var(--border);">
           <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 6px;">${ICON.shield} Perfil ativo</div>
-          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${userSession.role==='dono' ? 'Dono / Gerente' : activeProf?.name || 'Profissional'}</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${userSession.role==='dono' ? 'Dono / Gerente' : (activeProf?.name || 'Profissional') + (userSession.role==='admin'?' · Admin':userSession.role==='recepcionista'?' · Recepcionista':'')}</div>
           <button class="btn btn-ghost" id="btn-switch-profile" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;margin-bottom:6px;">Trocar perfil</button>
           <button class="btn btn-ghost" id="btn-logout" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;color:var(--muted);">Sair</button>
         </div>
       </aside>
       <main style="flex:1;padding:26px 30px 60px;max-width:1180px;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;position:relative;">
+          <button class="btn btn-ghost" id="btn-notif-bell" style="position:relative;padding:9px 11px;">${ICON.bell}</button>
+          <div id="notif-dropdown" style="display:${notifState.open?'block':'none'};position:absolute;top:44px;right:0;width:320px;max-height:420px;overflow-y:auto;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);z-index:80;">${notifState.open?notifDropdownContent():''}</div>
+        </div>
         <div id="view"></div>
       </main>
     </div>
@@ -742,12 +767,40 @@ function render(){
     el.addEventListener('click', ()=>{ route = el.dataset.route; render(); });
   });
   app.querySelector('#btn-switch-profile').addEventListener('click', openProfileSwitchModal);
-  app.querySelector('#btn-logout').addEventListener('click', async ()=>{ await supa.auth.signOut(); currentShop=null; state=null; boot(); });
+  app.querySelector('#btn-logout').addEventListener('click', async ()=>{
+    if(notifState.channel){ supa.removeChannel(notifState.channel); notifState.channel=null; }
+    notifState.items = []; notifState.open = false;
+    await supa.auth.signOut(); currentShop=null; state=null; boot();
+  });
   app.querySelectorAll('.theme-toggle-btn').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{ s.themePreference = b.dataset.themeChoice; });
     applyTheme(b.dataset.themeChoice);
     render();
   }));
+  app.querySelector('#btn-notif-bell')?.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    notifState.open = !notifState.open;
+    render();
+  });
+  app.querySelector('#notif-dropdown')?.addEventListener('click', e=>e.stopPropagation());
+  app.querySelectorAll('[data-notif-accept]').forEach(b=>b.addEventListener('click', async ()=>{
+    const req = notifState.items.find(r=>r.id===b.dataset.notifAccept);
+    if(req) await acceptBookingRequest(req);
+    render();
+  }));
+  app.querySelectorAll('[data-notif-decline]').forEach(b=>b.addEventListener('click', async ()=>{
+    await declineBookingRequest(b.dataset.notifDecline);
+    render();
+  }));
+  if(notifState.open){
+    setTimeout(()=>{
+      document.addEventListener('click', function closeNotifOnce(){
+        notifState.open = false;
+        document.removeEventListener('click', closeNotifOnce);
+        render();
+      }, {once:true});
+    }, 0);
+  }
   renderView();
 }
 function openProfileSwitchModal(){
@@ -765,7 +818,7 @@ function openProfileSwitchModal(){
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${state.professionals.map(p=>`
           <div style="display:flex;gap:8px;align-items:center;">
-            <div style="flex:1;font-size:13.5px;">${p.name}</div>
+            <div style="flex:1;font-size:13.5px;">${p.name} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
             <input type="password" maxlength="4" placeholder="PIN" data-pin-for="${p.id}" style="width:70px;text-align:center;">
             <button class="btn btn-ghost" style="padding:8px 10px;" data-login-prof="${p.id}">Entrar</button>
           </div>
@@ -783,7 +836,8 @@ function openProfileSwitchModal(){
       const prof = state.professionals.find(p=>p.id===profId);
       const pin = root.querySelector(`[data-pin-for="${profId}"]`).value;
       if(pin !== prof.pin){ showToast('PIN incorreto.'); return; }
-      userSession = {role:'profissional', professionalId:profId};
+      const accessRole = prof.accessRole || 'profissional';
+      userSession = {role: accessRole, professionalId: profId};
       route = 'dashboard';
       closeModal(); render();
       showToast(`Logado como ${prof.name}.`);
@@ -1307,13 +1361,57 @@ function renderComissoes(view){
   const potRows = state.professionals.map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
   const totalPotOwed = potRows.reduce((a,r)=>a+r.owed,0);
   const visibleProfs = userSession.role==='profissional' ? state.professionals.filter(p=>p.id===userSession.professionalId) : state.professionals;
+  const myProf = userSession.role==='profissional' ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
+  const myWithdrawals = myProf ? state.withdrawalRequests.filter(w=>w.professionalId===myProf.id).slice().reverse() : [];
+  const pendingWithdrawals = state.withdrawalRequests.filter(w=>w.status==='pendente').slice().reverse();
 
   view.innerHTML = `
     ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
-    ${userSession.role==='dono' ? `
+    ${isOwnerLevel() ? `
     <div class="card" style="padding:14px 18px;margin-bottom:18px;">
       <div style="font-size:12.5px;color:var(--muted);">Comissão por serviço — configure o % específico de cada profissional na aba Profissionais.</div>
     </div>` : ''}
+
+    ${myProf ? `
+    <div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:var(--gold);">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
+        <div>
+          <div style="font-size:11.5px;color:var(--muted-2);">Total ganho em ${periodLabel(period)} (comissões)</div>
+          <div class="font-mono" style="font-size:22px;color:var(--gold-bright);">${BRL(monthlyEarnedForProf(myProf.id))}</div>
+        </div>
+        <button class="btn btn-gold" id="btn-request-withdrawal">${ICON.cash} Solicitar saque</button>
+      </div>
+    </div>
+    ${myWithdrawals.length>0 ? `
+    <div class="card" style="padding:16px 18px;margin-bottom:20px;">
+      <div class="font-display" style="font-size:14.5px;font-weight:600;margin-bottom:10px;">Meus pedidos de saque</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${myWithdrawals.map(w=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+            <span>${BRL(w.amount)} <span style="color:var(--muted-2);font-size:11.5px;">— ${new Date(w.createdAt).toLocaleDateString('pt-BR')}</span></span>
+            <span class="pill ${w.status==='pago'?'pill-ok':w.status==='recusado'?'pill-bad':'pill-warn'}">${w.status==='pago'?'Pago':w.status==='recusado'?'Recusado':'Pendente'}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
+    ` : ''}
+
+    ${isOwnerLevel() && pendingWithdrawals.length>0 ? `
+    <div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:var(--warn);">
+      <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:12px;">${ICON.bell} Solicitações de saque pendentes</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${pendingWithdrawals.map(w=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="font-size:13px;"><b>${profName(w.professionalId)}</b> pediu ${BRL(w.amount)}${w.note?` — <span style="color:var(--muted);">${w.note}</span>`:''}</div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <button class="btn btn-gold" data-approve-withdrawal="${w.id}" style="padding:6px 10px;font-size:12px;">Marcar como pago</button>
+              <button class="btn btn-ghost" data-decline-withdrawal="${w.id}" style="padding:6px 10px;font-size:12px;">Recusar</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
+
     <div style="display:flex;flex-direction:column;gap:12px;">
       ${visibleProfs.length===0 ? emptyState('Cadastre profissionais para ver comissões.') : visibleProfs.map(p=>{
         const c = commissionOwed(p.id);
@@ -1325,7 +1423,7 @@ function renderComissoes(view){
                 <div style="font-size:11.5px;color:var(--muted-2);">Serviços avulsos</div>
                 <div class="font-mono" style="font-size:15px;color:${c.serviceOwed>0?'var(--warn)':'var(--muted)'};">${BRL(c.serviceOwed)} <span style="font-size:11px;color:var(--muted-2);">a pagar</span></div>
               </div>
-              ${userSession.role==='dono' ? `<button class="btn btn-gold" style="padding:8px 12px;" ${c.serviceOwed<=0?'disabled':''} data-pay-service="${p.id}">Pagar</button>` : ''}
+              ${isOwnerLevel() ? `<button class="btn btn-gold" style="padding:8px 12px;" ${c.serviceOwed<=0?'disabled':''} data-pay-service="${p.id}">Pagar</button>` : ''}
             </div>
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;">
               <div style="font-size:11.5px;color:var(--muted-2);">Pote do clube · ${periodLabel(period)}</div>
@@ -1362,7 +1460,7 @@ function renderComissoes(view){
       </div>
     `}
 
-    ${userSession.role==='dono' ? `
+    ${isOwnerLevel() ? `
     <div class="card" style="padding:18px 20px;margin-bottom:26px;border-color:var(--gold);">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div>
@@ -1407,6 +1505,57 @@ function renderComissoes(view){
   `;
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
+  view.querySelector('#btn-request-withdrawal')?.addEventListener('click', ()=>withdrawalRequestModal(myProf));
+  view.querySelectorAll('[data-approve-withdrawal]').forEach(b=>b.addEventListener('click', ()=>{
+    const w = state.withdrawalRequests.find(x=>x.id===b.dataset.approveWithdrawal);
+    if(!w) return;
+    update(s=>{
+      s.commissionPayments.push({id:uid(), professionalId:w.professionalId, amount:w.amount, date:new Date().toISOString(), source:'saque'});
+      const target = s.withdrawalRequests.find(x=>x.id===w.id);
+      if(target){ target.status='pago'; target.resolvedAt=new Date().toISOString(); }
+    });
+    showToast('Saque marcado como pago.');
+    renderComissoes(view);
+  }));
+  view.querySelectorAll('[data-decline-withdrawal]').forEach(b=>b.addEventListener('click', ()=>{
+    update(s=>{
+      const target = s.withdrawalRequests.find(x=>x.id===b.dataset.declineWithdrawal);
+      if(target){ target.status='recusado'; target.resolvedAt=new Date().toISOString(); }
+    });
+    showToast('Pedido de saque recusado.');
+    renderComissoes(view);
+  }));
+}
+function withdrawalRequestModal(prof){
+  const owed = commissionOwed(prof.id).owed;
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Solicitar saque</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;">Você tem ${BRL(owed)} disponível a receber. O dono vai revisar e marcar como pago.</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div><label>Valor do saque (R$)</label><input id="f-amount" type="number" step="0.01" min="0" max="${owed}" value="${owed>0?owed.toFixed(2):''}" style="width:100%;"></div>
+        <div><label>Observação (opcional)</label><input id="f-note" placeholder="Ex: preciso até sexta" style="width:100%;"></div>
+        <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">Enviar solicitação</button>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-submit').addEventListener('click', ()=>{
+      const amount = parseFloat(root.querySelector('#f-amount').value);
+      const note = root.querySelector('#f-note').value.trim();
+      if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
+      if(amount > owed){ showToast('O valor não pode passar do que você tem a receber.'); return; }
+      update(s=>{
+        s.withdrawalRequests.push({id:uid(), professionalId:prof.id, amount, note, status:'pendente', createdAt:new Date().toISOString()});
+      });
+      showToast('Solicitação de saque enviada.');
+      closeModal();
+      render();
+    });
+  });
 }
 function payServiceCommission(profId){
   const c = commissionOwed(profId);
@@ -1486,6 +1635,7 @@ function renderProfissionais(view){
               <div>
                 <div style="font-weight:600;font-size:15px;">${p.name}</div>
                 <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${p.phone||'Sem telefone'}</div>
+                <span class="pill pill-muted" style="margin-top:6px;display:inline-block;">${roleLabel(p.accessRole)}</span>
               </div>
               <span class="pill pill-warn font-mono">${p.commission}%</span>
             </div>
@@ -1527,6 +1677,14 @@ function profModal(existing){
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Nome</label><input id="f-name" value="${existing?.name||''}" placeholder="Nome completo" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" value="${existing?.phone||''}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div>
+          <label>Nível de acesso ao sistema</label>
+          <select id="f-access-role" style="width:100%;">
+            <option value="profissional" ${(!existing||existing.accessRole==='profissional'||!existing.accessRole)?'selected':''}>Profissional — vê a própria agenda, comissões e pode solicitar saques</option>
+            <option value="recepcionista" ${existing?.accessRole==='recepcionista'?'selected':''}>Recepcionista — agenda, clientes, caixa, estoque e mensagens</option>
+            <option value="admin" ${existing?.accessRole==='admin'?'selected':''}>Dono / Admin — acesso completo ao sistema</option>
+          </select>
+        </div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
           <div style="flex:1;"><label>PIN de login (4 dígitos)</label><input id="f-pin" maxlength="4" value="${existing?.pin || String(1000+Math.floor(Math.random()*9000))}" style="width:100%;"></div>
@@ -1585,6 +1743,7 @@ function profModal(existing){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
       const phone = root.querySelector('#f-phone').value.trim();
+      const accessRole = root.querySelector('#f-access-role').value;
       const commission = parseFloat(root.querySelector('#f-comm').value)||0;
       const pin = root.querySelector('#f-pin').value.trim() || '0000';
       const selectedDays = [...root.querySelectorAll('[data-workday]:checked')].map(el=>parseInt(el.dataset.workday));
@@ -1595,7 +1754,7 @@ function profModal(existing){
         if(inp.value!=='') serviceOverrides[inp.dataset.override] = parseFloat(inp.value);
       });
       if(!name){ showToast('Informe o nome.'); return; }
-      const data = {name, phone, commission, pin, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
+      const data = {name, phone, accessRole, commission, pin, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
         if(isEdit){ Object.assign(existing, data); }
         else{ s.professionals.push({id:uid(), ...data}); }
@@ -2448,6 +2607,20 @@ function renderOnlineBooking(view){
   loadBookingRequests(view);
 }
 
+async function acceptBookingRequest(req){
+  update(s=>{
+    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null});
+  });
+  await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
+  showToast('Agendamento aceito e adicionado à agenda.');
+  await refreshNotifItems();
+}
+async function declineBookingRequest(id){
+  await supa.from('booking_requests').update({status:'recusado'}).eq('id', id);
+  showToast('Pedido recusado.');
+  await refreshNotifItems();
+}
+
 async function loadBookingRequests(view){
   const listEl = view.querySelector('#pb-requests-list');
   const countEl = view.querySelector('#pb-pending-count');
@@ -2470,19 +2643,60 @@ async function loadBookingRequests(view){
   `).join('');
   listEl.querySelectorAll('[data-accept]').forEach(b=>b.addEventListener('click', async ()=>{
     const req = data.find(r=>r.id===b.dataset.accept);
-    update(s=>{
-      s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null});
-    });
-    await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
-    showToast('Agendamento aceito e adicionado à agenda.');
+    await acceptBookingRequest(req);
     loadBookingRequests(view);
   }));
   listEl.querySelectorAll('[data-decline]').forEach(b=>b.addEventListener('click', async ()=>{
-    await supa.from('booking_requests').update({status:'recusado'}).eq('id', b.dataset.decline);
-    showToast('Pedido recusado.');
+    await declineBookingRequest(b.dataset.decline);
     loadBookingRequests(view);
   }));
 }
+
+/* ============ SININHO DE NOTIFICAÇÕES (novos agendamentos em tempo real) ============ */
+async function refreshNotifItems(){
+  if(!supa || !currentShop) return;
+  const { data } = await supa.from('booking_requests').select('*').eq('shop_id', currentShop.id).eq('status','pendente').order('created_at',{ascending:false});
+  notifState.items = data || [];
+  renderNotifUI();
+}
+function subscribeBookingNotifications(){
+  if(!supa || !currentShop || notifState.channel) return;
+  notifState.channel = supa.channel('booking-notify-'+currentShop.id)
+    .on('postgres_changes', {event:'INSERT', schema:'public', table:'booking_requests', filter:`shop_id=eq.${currentShop.id}`}, payload=>{
+      notifState.items.unshift(payload.new);
+      showToast(`Novo agendamento: ${payload.new.client_name} — ${payload.new.date} às ${payload.new.time}`);
+      renderNotifUI();
+    })
+    .subscribe();
+}
+function renderNotifUI(){
+  const badge = document.getElementById('notif-badge');
+  const bell = document.getElementById('btn-notif-bell');
+  if(bell){
+    const count = notifState.items.length;
+    let b = document.getElementById('notif-badge');
+    if(count>0){
+      if(!b){ b = document.createElement('span'); b.id='notif-badge'; b.style.cssText='position:absolute;top:-4px;right:-4px;background:var(--bad);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px;'; bell.appendChild(b); }
+      b.textContent = count>9?'9+':String(count);
+    } else if(b){ b.remove(); }
+  }
+  const dropdown = document.getElementById('notif-dropdown');
+  if(dropdown && notifState.open) dropdown.innerHTML = notifDropdownContent();
+}
+function notifDropdownContent(){
+  if(!notifState.items.length) return `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center;">Nenhum agendamento novo.</div>`;
+  return notifState.items.map(r=>`
+    <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
+      <div style="font-size:13px;"><b>${r.client_name}</b> agendou</div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${r.service_name} com ${r.professional_name} · ${new Date(r.date+'T'+r.time).toLocaleDateString('pt-BR')} às ${r.time}</div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-gold" data-notif-accept="${r.id}" style="padding:5px 10px;font-size:11.5px;">Aceitar</button>
+        <button class="btn btn-ghost" data-notif-decline="${r.id}" style="padding:5px 10px;font-size:11.5px;">Recusar</button>
+      </div>
+    </div>
+  `).join('');
+}
+
 
 /* ============ MENSAGENS AUTOMÁTICAS (view) ============ */
 function messageChannelRow(phone, text, onSend){
@@ -2983,11 +3197,24 @@ function renderPublicBookingScreen(step1Only){
       <div style="width:100%;max-width:460px;">
         <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
           <div style="width:100%;height:70px;background:${info.bannerDataUrl?`url(${info.bannerDataUrl}) center/cover`:'linear-gradient(135deg, var(--panel-2), var(--panel))'};"></div>
-          <div style="padding:14px 20px 16px;display:flex;align-items:center;gap:10px;">
-            <div style="width:42px;height:42px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-26px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
-              ${info.logoDataUrl ? `<img src="${info.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ''}
+          <div style="padding:14px 20px 16px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:42px;height:42px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-26px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
+                ${info.logoDataUrl ? `<img src="${info.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ''}
+              </div>
+              <div class="font-display" style="font-size:16px;font-weight:600;">${info.name || 'Barbearia'}</div>
             </div>
-            <div class="font-display" style="font-size:16px;font-weight:600;">${info.name || 'Barbearia'}</div>
+            ${info.bio ? `<div style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5;">${info.bio}</div>` : ''}
+            ${info.address ? `<div style="font-size:11.5px;color:var(--muted-2);margin-top:6px;">📍 ${info.address}</div>` : ''}
+            ${(info.social && Object.values(info.social).some(v=>v)) || info.phone ? `
+              <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                ${info.phone ? `<a href="https://wa.me/55${info.phone.replace(/\D/g,'')}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.chat} WhatsApp</a>` : ''}
+                ${info.social?.instagram ? `<a href="${info.social.instagram.startsWith('http')?info.social.instagram:'https://instagram.com/'+info.social.instagram.replace('@','')}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.instagram} Instagram</a>` : ''}
+                ${info.social?.facebook ? `<a href="${info.social.facebook}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.facebook} Facebook</a>` : ''}
+                ${info.social?.tiktok ? `<a href="${info.social.tiktok.startsWith('http')?info.social.tiktok:'https://tiktok.com/@'+info.social.tiktok.replace('@','')}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.tiktok} TikTok</a>` : ''}
+                ${info.social?.website ? `<a href="${info.social.website}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.globe} Site</a>` : ''}
+              </div>
+            ` : ''}
           </div>
         </div>
 
@@ -3260,6 +3487,8 @@ async function boot(){
   currentShop = shop;
   if(!shopIsActive(shop)){ renderPaywallScreen(shop); return; }
   await loadState();
+  await refreshNotifItems();
+  subscribeBookingNotifications();
 }
 
 /* ============ INIT ============ */
