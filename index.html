@@ -293,6 +293,7 @@ function blankShopData(){
     loyalty:{pointsPerReal:1, redeemThreshold:100, redeemValue:20, referralBonusPoints:30},
     onlineBooking:{slug:'', allowCancel:true, allowReschedule:true, active:true},
     themePreference:'dark',
+    ownerName:'',
     shopProfile:{
       name:'Minha Barbearia', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'',
       bio:'', address:'', phone:'',
@@ -339,6 +340,7 @@ function migrateState(){
   // Garante que sessões salvas antes destas funcionalidades recebam valores padrão.
   state.themePreference = state.themePreference || 'dark';
   applyTheme(state.themePreference);
+  if(state.ownerName==null) state.ownerName = '';
   state.withdrawalRequests = state.withdrawalRequests || [];
   state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true};
   state.waitlist = state.waitlist || [];
@@ -711,7 +713,7 @@ const NAV_GROUPS = [
     {id:'fidelidade', label:'Fidelidade', icon:ICON.heart},
   ]},
   {label:'Sistema', items:[
-    {id:'minha-assinatura', label:'Minha Assinatura', icon:ICON.shield},
+    {id:'minha-assinatura', label:'Configurações da Conta', icon:ICON.shield},
     {id:'config', label:'Integração Asaas', icon:ICON.gear},
     {id:'notafiscal', label:'Notas Fiscais', icon:ICON.receipt},
   ]},
@@ -2165,7 +2167,7 @@ function memberModal(existing){
 }
 
 /* ============ CONFIG ASAAS ============ */
-/* ============ MINHA ASSINATURA ============ */
+/* ============ CONFIGURAÇÕES DA CONTA ============ */
 function renderMinhaAssinatura(view){
   const shop = currentShop;
   const limits = planLimits(shop);
@@ -2181,17 +2183,35 @@ function renderMinhaAssinatura(view){
     const daysLeft = Math.max(0, Math.ceil((new Date(shop.trial_ends_at) - new Date())/86400000));
     periodInfo = `Seu teste grátis termina em ${new Date(shop.trial_ends_at).toLocaleDateString('pt-BR')} (${daysLeft} dia(s) restante(s)).`;
   } else if(shop.subscription_status==='active' && shop.current_period_end){
-    periodInfo = `Próxima renovação em ${new Date(shop.current_period_end).toLocaleDateString('pt-BR')}.`;
+    const daysLeft = Math.max(0, Math.ceil((new Date(shop.current_period_end) - new Date())/86400000));
+    periodInfo = `Próxima renovação em ${new Date(shop.current_period_end).toLocaleDateString('pt-BR')} (${daysLeft} dia(s)). Se o pagamento falhar nessa data, a assinatura passa para "Pagamento atrasado".`;
   } else if(shop.subscription_status==='past_due'){
-    periodInfo = 'Houve um problema com o último pagamento. Verifique seu método de pagamento no Stripe para evitar a perda de acesso.';
+    periodInfo = 'Houve um problema com o último pagamento. Regularize pelo botão abaixo para não perder o acesso.';
   } else if(shop.subscription_status==='canceled'){
     periodInfo = 'Sua assinatura foi cancelada. Assine novamente para recuperar o acesso.';
   }
 
   view.innerHTML = `
-    ${pageHeader('Minha Assinatura', 'Plano contratado, status do pagamento e limites do sistema')}
+    ${pageHeader('Configurações da Conta', 'Seu perfil de acesso e os dados da sua assinatura do sistema')}
+
+    <div class="card" style="padding:22px;margin-bottom:20px;max-width:560px;">
+      <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:14px;">Perfil da conta</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div><label>Seu nome (dono/gerente)</label><input id="f-owner-name" value="${state.ownerName||''}" placeholder="Como podemos te chamar" style="width:100%;"></div>
+        <div><label>Email cadastrado</label><input value="${shop.email||''}" disabled style="width:100%;opacity:.7;"></div>
+        <button class="btn btn-ghost" id="btn-save-owner-name" style="width:fit-content;">Salvar nome</button>
+      </div>
+      <div class="divider-blade" style="margin:18px 0;"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Trocar senha</div>
+      <div style="display:flex;flex-direction:column;gap:12px;max-width:340px;">
+        <div><label>Nova senha</label><input id="f-new-pass" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;"></div>
+        <div><label>Confirmar nova senha</label><input id="f-new-pass2" type="password" style="width:100%;"></div>
+        <button class="btn btn-ghost" id="btn-change-pass" style="width:fit-content;">Atualizar senha</button>
+      </div>
+    </div>
 
     <div class="card" style="padding:24px;margin-bottom:20px;max-width:560px;border-color:var(--gold);">
+      <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:14px;">Minha Assinatura</div>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
         <div>
           <div style="font-size:11.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Plano atual</div>
@@ -2200,9 +2220,13 @@ function renderMinhaAssinatura(view){
         <span class="pill pill-${statusInfo.tone}" style="font-size:13px;padding:6px 14px;">${statusInfo.label}</span>
       </div>
       ${periodInfo ? `<div style="font-size:13px;color:var(--muted);margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">${periodInfo}</div>` : ''}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+        <button class="btn btn-gold" id="btn-change-plan">Trocar de plano</button>
+        <button class="btn btn-ghost" id="btn-open-portal">${ICON.link} Ver fatura / pagar / trocar cartão</button>
+      </div>
     </div>
 
-    <div class="card" style="padding:22px;margin-bottom:20px;max-width:560px;">
+    <div class="card" style="padding:22px;max-width:560px;">
       <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:14px;">O que está incluso no seu plano</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
         <div style="display:flex;justify-content:space-between;font-size:13.5px;">
@@ -2215,10 +2239,33 @@ function renderMinhaAssinatura(view){
         </div>
       </div>
     </div>
-
-    <button class="btn btn-gold" id="btn-change-plan">Trocar de plano</button>
   `;
   view.querySelector('#btn-change-plan').addEventListener('click', ()=>renderPaywallUpgrade('minha-assinatura'));
+  view.querySelector('#btn-save-owner-name').addEventListener('click', ()=>{
+    const name = view.querySelector('#f-owner-name').value.trim();
+    update(s=>{ s.ownerName = name; });
+    showToast('Nome salvo.');
+  });
+  view.querySelector('#btn-change-pass').addEventListener('click', async ()=>{
+    const p1 = view.querySelector('#f-new-pass').value;
+    const p2 = view.querySelector('#f-new-pass2').value;
+    if(p1.length<6){ showToast('A senha precisa ter pelo menos 6 caracteres.'); return; }
+    if(p1!==p2){ showToast('As senhas não coincidem.'); return; }
+    const { error } = await supa.auth.updateUser({ password: p1 });
+    if(error){ showToast('Não foi possível trocar a senha: '+error.message); return; }
+    view.querySelector('#f-new-pass').value = '';
+    view.querySelector('#f-new-pass2').value = '';
+    showToast('Senha atualizada com sucesso.');
+  });
+  view.querySelector('#btn-open-portal').addEventListener('click', async (e)=>{
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Abrindo...';
+    const { data: result, error } = await supa.functions.invoke('stripe-portal', { body: { returnUrl: window.location.href } });
+    btn.disabled = false; btn.textContent = original;
+    if(error || result?.error){ showToast(result?.error || 'Não foi possível abrir o portal de faturas.'); return; }
+    window.open(result.url, '_blank');
+  });
 }
 
 function renderConfig(view){
