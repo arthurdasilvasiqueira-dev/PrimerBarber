@@ -157,6 +157,12 @@
     font-size:12.5px; margin-bottom:16px; border:1px solid rgba(193,123,106,.25); line-height:1.5;
   }
   @media (max-width:480px){ .auth-inner{padding:28px 22px 26px;} .auth-title{font-size:22px;} }
+  .legal-content h2{font-size:16px;font-weight:600;margin:26px 0 10px;color:var(--gold-bright);}
+  .legal-content h2:first-child{margin-top:0;}
+  .legal-content p{margin-bottom:12px;color:var(--muted);}
+  .legal-content ul{margin:0 0 12px 20px;color:var(--muted);}
+  .legal-content li{margin-bottom:6px;}
+  .legal-content b{color:var(--ink);}
 
   .tab-scroll{scrollbar-width:thin;}
   table{width:100%;border-collapse:collapse;}
@@ -3604,6 +3610,7 @@ function renderAuthScreen(mode, errorMsg){
       <div class="auth-field"><label>Senha</label><input id="au-pass" type="password" placeholder="Mínimo 6 caracteres"></div>
       <button class="btn btn-gold auth-submit" id="au-submit">${isLogin?'Entrar':'Criar conta grátis'}</button>
       <button class="btn btn-ghost auth-switch" id="au-switch">${isLogin?'Não tem conta? Criar uma':'Já tem conta? Entrar'}</button>
+      ${!isLogin?`<div style="text-align:center;font-size:11.5px;color:var(--muted-2);line-height:1.6;margin-top:4px;">Ao criar sua conta, você concorda com os<br><a href="?pagina=termos" target="_blank" style="color:var(--muted);">Termos de Uso</a> e a <a href="?pagina=privacidade" target="_blank" style="color:var(--muted);">Política de Privacidade</a>.</div>`:''}
     </div>
   `);
   document.getElementById('au-switch').addEventListener('click', ()=>renderAuthScreen(isLogin?'signup':'login'));
@@ -3715,9 +3722,144 @@ function renderPaywallUpgrade(fromRoute){
   document.getElementById('pw-back').addEventListener('click', ()=>{ route = fromRoute; render(); });
 }
 
+function renderLegalPage(type){
+  const isTermos = type==='termos';
+  const baseUrl = window.location.origin + window.location.pathname;
+  const content = isTermos ? `
+    <h1 class="font-display" style="font-size:26px;font-weight:600;margin-bottom:6px;">Termos de Uso</h1>
+    <p style="color:var(--muted-2);font-size:12.5px;margin-bottom:28px;">Última atualização: 24/08/2026</p>
+
+    <h2 class="font-display">1. Aceitação dos termos</h2>
+    <p>Ao criar uma conta ou utilizar o Primer Barber ("Plataforma", "Sistema" ou "Serviço"), você concorda com estes Termos de Uso. Se você estiver utilizando a Plataforma em nome de uma empresa, declara ter poderes para vinculá-la a este contrato.</p>
+
+    <h2 class="font-display">2. O que é o Primer Barber</h2>
+    <p>O Primer Barber é um sistema de gestão para barbearias, oferecido no formato de assinatura mensal (SaaS), que inclui, entre outras funcionalidades: agenda, cadastro de clientes e profissionais, controle de comissões, controle de caixa e estoque, clube de assinatura e agendamento online.</p>
+
+    <h2 class="font-display">3. Cadastro e conta</h2>
+    <ul>
+      <li>Você é responsável por manter a confidencialidade da senha da sua conta e por todas as atividades realizadas nela.</li>
+      <li>As informações fornecidas no cadastro devem ser verdadeiras, completas e mantidas atualizadas.</li>
+      <li>Cada barbearia (conta) é isolada das demais — você só tem acesso aos seus próprios dados.</li>
+    </ul>
+
+    <h2 class="font-display">4. Planos e pagamento</h2>
+    <ul>
+      <li>O Primer Barber oferece um período de teste gratuito de 14 dias.</li>
+      <li>Após o período de teste, o uso contínuo da Plataforma exige a contratação de um plano pago (Basic ou Pro), cobrado mensalmente de forma recorrente através do processador de pagamentos Stripe.</li>
+      <li>Os valores e o que está incluso em cada plano estão descritos na Plataforma e podem ser alterados mediante aviso prévio.</li>
+      <li>O cancelamento pode ser feito a qualquer momento pelo painel de assinatura. Não há reembolso proporcional de períodos já pagos, salvo quando exigido por lei.</li>
+      <li>Em caso de falha no pagamento, o acesso à Plataforma pode ser suspenso até a regularização.</li>
+    </ul>
+
+    <h2 class="font-display">5. Uso aceitável</h2>
+    <p>Ao usar o Primer Barber, você concorda em não:</p>
+    <ul>
+      <li>utilizar a Plataforma para fins ilegais ou não autorizados;</li>
+      <li>tentar acessar contas ou dados de outras barbearias sem autorização;</li>
+      <li>realizar engenharia reversa, copiar ou revender o sistema sem autorização;</li>
+      <li>inserir conteúdo ofensivo, ilegal ou que viole direitos de terceiros.</li>
+    </ul>
+
+    <h2 class="font-display">6. Seus dados e os dados dos seus clientes</h2>
+    <ul>
+      <li>Você é o responsável ("controlador", nos termos da LGPD) pelos dados pessoais dos seus clientes finais que inserir na Plataforma (nome, telefone, agendamentos, etc.).</li>
+      <li>O Primer Barber atua como operador desses dados, armazenando-os com segurança e utilizando-os apenas para viabilizar o funcionamento do sistema que você contratou.</li>
+      <li>Cabe a você garantir que possui base legal adequada (ex: consentimento ou execução de contrato) para tratar os dados dos seus próprios clientes.</li>
+    </ul>
+
+    <h2 class="font-display">7. Propriedade intelectual</h2>
+    <p>O código, design, marca e demais elementos da Plataforma pertencem ao Primer Barber. Você recebe uma licença de uso, não uma transferência de propriedade, ao assinar o serviço.</p>
+
+    <h2 class="font-display">8. Disponibilidade e limitação de responsabilidade</h2>
+    <ul>
+      <li>Fazemos o possível para manter a Plataforma disponível, mas não garantimos operação ininterrupta ou livre de falhas.</li>
+      <li>O Primer Barber não se responsabiliza por perdas financeiras decorrentes de indisponibilidade temporária, falhas de terceiros (como provedores de pagamento) ou uso indevido da Plataforma pelo usuário.</li>
+    </ul>
+
+    <h2 class="font-display">9. Cancelamento e encerramento</h2>
+    <p>Você pode cancelar sua assinatura a qualquer momento. Podemos suspender ou encerrar contas que violem estes Termos, mediante aviso, exceto em casos de uso ilegal ou risco à segurança da Plataforma, quando a suspensão pode ser imediata.</p>
+
+    <h2 class="font-display">10. Alterações destes termos</h2>
+    <p>Podemos atualizar estes Termos periodicamente. Mudanças relevantes serão comunicadas com antecedência razoável. O uso continuado da Plataforma após as alterações implica concordância com os novos termos.</p>
+
+    <h2 class="font-display">11. Lei aplicável e foro</h2>
+    <p>Estes Termos são regidos pelas leis brasileiras. Fica eleito o foro da comarca de Nova Friburgo/RJ para dirimir eventuais controvérsias.</p>
+
+    <h2 class="font-display">12. Contato</h2>
+    <p>Dúvidas sobre estes Termos podem ser enviadas para: <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--gold-bright);">primerbarbersuporte@gmail.com</a></p>
+  ` : `
+    <h1 class="font-display" style="font-size:26px;font-weight:600;margin-bottom:6px;">Política de Privacidade</h1>
+    <p style="color:var(--muted-2);font-size:12.5px;margin-bottom:28px;">Última atualização: 24/08/2026</p>
+
+    <h2 class="font-display">1. Quem somos</h2>
+    <p>O Primer Barber é um sistema de gestão para barbearias. Esta política explica como coletamos, usamos e protegemos dados pessoais ao operar a Plataforma.</p>
+
+    <h2 class="font-display">2. Quais dados coletamos</h2>
+    <p><b>Do dono/gerente da barbearia (titular da conta):</b></p>
+    <ul>
+      <li>Nome, e-mail e senha de acesso</li>
+      <li>Dados de pagamento (processados diretamente pelo Stripe — não armazenamos números de cartão)</li>
+      <li>Nome da barbearia, endereço, telefone e redes sociais (se preenchidos)</li>
+    </ul>
+    <p><b>Dos clientes finais da barbearia (inseridos pelo dono/gerente):</b></p>
+    <ul>
+      <li>Nome e telefone</li>
+      <li>Histórico de agendamentos e atendimentos</li>
+      <li>Dados de assinatura do clube (se aplicável)</li>
+    </ul>
+
+    <h2 class="font-display">3. Base legal e finalidade do tratamento</h2>
+    <p>Tratamos os dados acima com base na <b>execução do contrato</b> (para viabilizar o funcionamento do sistema contratado) e, quando aplicável, no <b>legítimo interesse</b> em manter a segurança e o bom funcionamento da Plataforma.</p>
+    <p>Os dados são usados para: criar e manter sua conta e o acesso ao sistema; processar pagamentos da assinatura; viabilizar as funcionalidades da Plataforma (agenda, clube de assinatura, comissões, etc.); enviar comunicações essenciais sobre sua conta.</p>
+
+    <h2 class="font-display">4. Compartilhamento de dados</h2>
+    <p>Compartilhamos dados apenas com prestadores de serviço necessários para o funcionamento da Plataforma:</p>
+    <ul>
+      <li><b>Stripe</b> — processamento de pagamentos das assinaturas do sistema</li>
+      <li><b>Supabase</b> — armazenamento seguro do banco de dados</li>
+      <li><b>Asaas</b> (quando o dono da barbearia ativa essa integração) — processamento de cobranças recorrentes aos clientes finais da própria barbearia</li>
+    </ul>
+    <p>Não vendemos dados pessoais a terceiros.</p>
+
+    <h2 class="font-display">5. Onde os dados ficam armazenados</h2>
+    <p>Os dados são armazenados em servidores do Supabase, com controles de acesso restritos por conta — cada barbearia só acessa os próprios dados.</p>
+
+    <h2 class="font-display">6. Por quanto tempo guardamos os dados</h2>
+    <p>Mantemos os dados enquanto sua conta estiver ativa. Após o cancelamento, os dados podem ser mantidos por um período adicional para cumprimento de obrigações legais ou resolução de disputas, sendo excluídos ou anonimizados depois disso.</p>
+
+    <h2 class="font-display">7. Seus direitos (LGPD)</h2>
+    <p>Você (ou, no caso dos clientes finais, a barbearia responsável por eles) pode solicitar a qualquer momento: confirmação de que tratamos seus dados; acesso aos dados armazenados; correção de dados incompletos ou desatualizados; exclusão dos dados, quando aplicável; portabilidade dos dados a outro fornecedor; informações sobre com quem compartilhamos os dados.</p>
+    <p>Solicitações podem ser feitas para: <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--gold-bright);">primerbarbersuporte@gmail.com</a></p>
+
+    <h2 class="font-display">8. Segurança</h2>
+    <p>Adotamos medidas técnicas razoáveis para proteger os dados, incluindo controle de acesso por login, criptografia em trânsito (HTTPS) e isolamento de dados entre contas. Nenhum sistema é 100% livre de riscos, e nos comprometemos a agir rapidamente em caso de incidente de segurança.</p>
+
+    <h2 class="font-display">9. Cookies e dados de navegação</h2>
+    <p>A Plataforma pode utilizar armazenamento local do navegador para manter sua sessão de login ativa. Não utilizamos cookies de rastreamento publicitário.</p>
+
+    <h2 class="font-display">10. Alterações desta política</h2>
+    <p>Esta política pode ser atualizada periodicamente. Mudanças relevantes serão comunicadas com antecedência razoável.</p>
+
+    <h2 class="font-display">11. Contato</h2>
+    <p>Dúvidas sobre esta Política de Privacidade ou solicitações relacionadas aos seus dados podem ser enviadas para: <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--gold-bright);">primerbarbersuporte@gmail.com</a></p>
+  `;
+  document.getElementById('app').innerHTML = `
+    <div class="auth-bg" style="align-items:flex-start;padding-top:48px;">
+      <div class="auth-card" style="max-width:680px;">
+        <div class="auth-inner" style="padding:38px 44px 44px;">
+          <a href="${baseUrl}" style="display:inline-block;margin-bottom:22px;font-size:13px;color:var(--muted);text-decoration:none;">&larr; Voltar</a>
+          <div style="font-size:14.5px;line-height:1.75;color:var(--ink);" class="legal-content">${content}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 async function boot(){
   if(!supa){ renderConfigMissing(); return; }
   const urlParams = new URLSearchParams(window.location.search);
+  const legalPage = urlParams.get('pagina');
+  if(legalPage==='termos' || legalPage==='privacidade'){ renderLegalPage(legalPage); return; }
   const bookSlug = urlParams.get('agendar');
   if(bookSlug){ await renderPublicBooking(bookSlug); return; }
   const { data: { session } } = await supa.auth.getSession();
