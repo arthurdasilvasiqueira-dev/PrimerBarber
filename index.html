@@ -711,6 +711,7 @@ const NAV_GROUPS = [
     {id:'fidelidade', label:'Fidelidade', icon:ICON.heart},
   ]},
   {label:'Sistema', items:[
+    {id:'minha-assinatura', label:'Minha Assinatura', icon:ICON.shield},
     {id:'config', label:'Integração Asaas', icon:ICON.gear},
     {id:'notafiscal', label:'Notas Fiscais', icon:ICON.receipt},
   ]},
@@ -873,6 +874,7 @@ function renderView(){
   if(route==='servicos') return renderServicos(view);
   if(route==='clube') return renderClube(view);
   if(route==='config') return renderConfig(view);
+  if(route==='minha-assinatura') return renderMinhaAssinatura(view);
   if(route==='clientes') return renderClientes(view);
   if(route==='estoque') return renderEstoque(view);
   if(route==='relatorios') return renderRelatorios(view);
@@ -2163,6 +2165,62 @@ function memberModal(existing){
 }
 
 /* ============ CONFIG ASAAS ============ */
+/* ============ MINHA ASSINATURA ============ */
+function renderMinhaAssinatura(view){
+  const shop = currentShop;
+  const limits = planLimits(shop);
+  const statusInfo = {
+    trialing: {label:'Em teste grátis', tone:'warn'},
+    active: {label:'Ativa', tone:'ok'},
+    past_due: {label:'Pagamento atrasado', tone:'bad'},
+    canceled: {label:'Cancelada', tone:'bad'},
+  }[shop.subscription_status] || {label: shop.subscription_status, tone:'muted'};
+
+  let periodInfo = '';
+  if(shop.subscription_status==='trialing' && shop.trial_ends_at){
+    const daysLeft = Math.max(0, Math.ceil((new Date(shop.trial_ends_at) - new Date())/86400000));
+    periodInfo = `Seu teste grátis termina em ${new Date(shop.trial_ends_at).toLocaleDateString('pt-BR')} (${daysLeft} dia(s) restante(s)).`;
+  } else if(shop.subscription_status==='active' && shop.current_period_end){
+    periodInfo = `Próxima renovação em ${new Date(shop.current_period_end).toLocaleDateString('pt-BR')}.`;
+  } else if(shop.subscription_status==='past_due'){
+    periodInfo = 'Houve um problema com o último pagamento. Verifique seu método de pagamento no Stripe para evitar a perda de acesso.';
+  } else if(shop.subscription_status==='canceled'){
+    periodInfo = 'Sua assinatura foi cancelada. Assine novamente para recuperar o acesso.';
+  }
+
+  view.innerHTML = `
+    ${pageHeader('Minha Assinatura', 'Plano contratado, status do pagamento e limites do sistema')}
+
+    <div class="card" style="padding:24px;margin-bottom:20px;max-width:560px;border-color:var(--gold);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
+        <div>
+          <div style="font-size:11.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Plano atual</div>
+          <div class="font-display" style="font-size:24px;font-weight:600;color:var(--gold-bright);">${limits.label}</div>
+        </div>
+        <span class="pill pill-${statusInfo.tone}" style="font-size:13px;padding:6px 14px;">${statusInfo.label}</span>
+      </div>
+      ${periodInfo ? `<div style="font-size:13px;color:var(--muted);margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">${periodInfo}</div>` : ''}
+    </div>
+
+    <div class="card" style="padding:22px;margin-bottom:20px;max-width:560px;">
+      <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:14px;">O que está incluso no seu plano</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:13.5px;">
+          <span style="color:var(--muted);">Profissionais cadastrados</span>
+          <span class="font-mono">${state.professionals.length}${limits.maxProfessionals===Infinity?' (ilimitado)':' de '+limits.maxProfessionals}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:13.5px;">
+          <span style="color:var(--muted);">Clube de Assinatura</span>
+          <span class="pill ${limits.club?'pill-ok':'pill-muted'}">${limits.club?'Ativado':'Não incluso no Basic'}</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-gold" id="btn-change-plan">Trocar de plano</button>
+  `;
+  view.querySelector('#btn-change-plan').addEventListener('click', ()=>renderPaywallUpgrade('minha-assinatura'));
+}
+
 function renderConfig(view){
   const a = state.asaas;
   const sum = asaasSummary();
@@ -3538,7 +3596,7 @@ function renderPaywallUpgrade(fromRoute){
     ${planPickerHtml(currentShop)}
     <button class="btn btn-ghost" id="pw-back" style="justify-content:center;width:100%;margin-top:14px;">Voltar</button>
   `);
-  document.getElementById('pw-back').addEventListener('click', ()=>{ route = fromRoute==='clube'?'dashboard':route; render(); });
+  document.getElementById('pw-back').addEventListener('click', ()=>{ route = fromRoute; render(); });
 }
 
 async function boot(){
