@@ -906,6 +906,7 @@ function viewDashboard(){
   const faturamentoServicos = done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0);
   const commissionsPending = state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
   const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
+  const overdueMembers = state.subscriptionMembers.filter(m=>m.status==='atrasado').length;
   const mrr = state.subscriptionMembers.filter(m=>m.status!=='cancelado').reduce((a,m)=>{
     const plan = state.subscriptionPlans.find(p=>p.id===m.planId); return a+(plan?plan.price:0);
   },0);
@@ -917,6 +918,7 @@ function viewDashboard(){
       ${statCard('Saldo do caixa', session?BRL(totals.balance):'—', session?`Entradas ${BRL(totals.in)} · Saídas ${BRL(totals.out)}`:'Nenhum caixa aberto', session?'ok':'bad')}
       ${statCard('Comissões pendentes', BRL(commissionsPending), 'a pagar aos profissionais', commissionsPending>0?'warn':'ok')}
       ${statCard('Clube de assinatura', activeMembers+' membros ativos', 'MRR '+BRL(mrr), 'ok')}
+      ${statCard('Assinantes em atraso', overdueMembers, overdueMembers>0?'precisam de cobrança':'nenhum em atraso', overdueMembers>0?'bad':'ok')}
     </div>
 
     <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start;" class="dash-grid">
@@ -943,6 +945,26 @@ function viewDashboard(){
         </div>
       </div>
     </div>
+
+    ${overdueMembers>0 ? `
+    <div class="card" style="padding:20px;margin-top:16px;border-color:var(--bad);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div class="font-display" style="font-size:17px;font-weight:600;">${ICON.bell} Assinantes em atraso</div>
+        <span class="pill pill-bad">${overdueMembers}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${state.subscriptionMembers.filter(m=>m.status==='atrasado').map(m=>{
+          const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
+          const text = `Olá ${m.name}! Notamos que sua mensalidade do ${plan?plan.name:'clube'} está em atraso. Pode regularizar quando puder? Qualquer dúvida estamos à disposição.`;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="font-size:13.5px;">
+              <b>${m.name}</b> <span style="color:var(--muted-2);font-size:11.5px;">— ${plan?plan.name:'plano removido'} · venceu em ${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</span>
+            </div>
+            ${messageChannelRow(m.phone, text)}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
   `;
 }
 function statCard(label, value, sub, tone){
