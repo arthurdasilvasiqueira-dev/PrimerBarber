@@ -856,7 +856,7 @@ function navAllowedForSession(){
   if(isOwnerLevel()) return NAV.map(n=>n.id);
   if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque'];
   // profissional: acesso restrito à própria agenda, comissões e mensagens
-  return ['dashboard','agenda','espera','clientes','mensagens','comissoes'];
+  return ['dashboard','agenda','espera','mensagens','comissoes'];
 }
 
 /* ============ ROOT RENDER ============ */
@@ -1006,6 +1006,12 @@ function openProfileSwitchModal(){
 
 function renderView(){
   const view = document.getElementById('view');
+  // Trava de segurança: se a rota atual não é permitida para este perfil,
+  // volta pro painel (evita acesso direto a telas restritas).
+  if(!navAllowedForSession().includes(route)){
+    route = 'dashboard';
+    return view.innerHTML = viewDashboard();
+  }
   if(route==='dashboard') return view.innerHTML = viewDashboard();
   if(route==='agenda') return renderAgenda(view);
   if(route==='caixa') return renderCaixa(view);
@@ -1139,6 +1145,78 @@ function agendaRow(a){
 }
 
 /* ============ AGENDA ============ */
+/* Agenda em grade: horas na lateral, profissionais em colunas — como um
+   quadro de horários de verdade. */
+function agendaGridView(dateISO, profList){
+  const appts = state.appointments.filter(a=>a.date===dateISO && a.status!=='cancelado');
+  // Faixa de horários: cobre a jornada de todos os profissionais do dia
+  let minH = 23, maxH = 1;
+  profList.forEach(p=>{
+    const [sh] = (p.workStart||'09:00').split(':').map(Number);
+    const [eh] = (p.workEnd||'19:00').split(':').map(Number);
+    minH = Math.min(minH, sh); maxH = Math.max(maxH, eh);
+  });
+  appts.forEach(a=>{
+    const h = parseInt(a.time.split(':')[0]);
+    minH = Math.min(minH, h); maxH = Math.max(maxH, h+1);
+  });
+  if(minH>maxH){ minH = 8; maxH = 20; }
+  const hours = [];
+  for(let h=minH; h<=maxH; h++) hours.push(h);
+  const SLOT_H = 56; // altura de 1 hora, em pixels
+
+  const colFor = (prof)=>{
+    const list = appts.filter(a=>a.professionalId===prof.id);
+    return list.map(a=>{
+      const [h,m] = a.time.split(':').map(Number);
+      const svc = serviceById(a.serviceId);
+      const dur = svc?.duration || 30;
+      const top = ((h - minH) + m/60) * SLOT_H;
+      const height = Math.max(26, (dur/60) * SLOT_H - 3);
+      const done = a.status==='concluido';
+      return `<div title="${esc(a.client)} — ${esc(svc?svc.name:'')}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${done?'var(--ok)':'var(--gold)'};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:default;">
+        <div class="font-mono" style="font-size:10px;color:var(--muted-2);">${a.time}${svc?` · ${dur}min`:''}</div>
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>
+        ${height>44 && svc?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(svc.name)}</div>`:''}
+      </div>`;
+    }).join('');
+  };
+
+  return `
+    <div class="card" style="padding:0;overflow-x:auto;margin-bottom:20px;">
+      <div style="min-width:${120 + profList.length*170}px;">
+        <div style="display:flex;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:2;">
+          <div style="width:60px;flex-shrink:0;"></div>
+          ${profList.map(p=>`
+            <div style="flex:1;min-width:170px;padding:12px 10px;display:flex;align-items:center;gap:9px;border-left:1px solid var(--border);">
+              <div style="width:34px;height:34px;border-radius:50%;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted-2);">
+                ${p.photoDataUrl ? `<img src="${p.photoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.team}
+              </div>
+              <div style="min-width:0;">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div>
+                <div style="font-size:10.5px;color:var(--muted-2);">${isProfessionalWorking(p, dateISO)?`${p.workStart}–${p.workEnd}`:'Folga'}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="display:flex;position:relative;">
+          <div style="width:60px;flex-shrink:0;">
+            ${hours.map(h=>`<div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);padding:4px 8px;" class="font-mono">
+              <span style="font-size:11px;color:var(--muted-2);">${String(h).padStart(2,'0')}:00</span>
+            </div>`).join('')}
+          </div>
+          ${profList.map(p=>`
+            <div style="flex:1;min-width:170px;position:relative;border-left:1px solid var(--border);background:${isProfessionalWorking(p, dateISO)?'transparent':'repeating-linear-gradient(45deg, transparent, transparent 8px, var(--panel-2) 8px, var(--panel-2) 16px)'};">
+              ${hours.map(()=>`<div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);"></div>`).join('')}
+              ${colFor(p)}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function weeklyByProfessionalTable(){
   const days = weekDates();
   const dayLabels = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
@@ -1248,9 +1326,23 @@ function renderAgenda(view){
       </div>
     ` : ''}
 
-    ${!isProfView && isToday ? weeklyByProfessionalTable() : ''}
-    ${state.professionals.length===0 ? emptyState('Cadastre profissionais antes de agendar.') : ''}
-    ${appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
+    ${state.professionals.length===0 ? emptyState('Cadastre profissionais antes de agendar.') : `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="display:flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
+          <button class="agenda-mode" data-mode="grade" style="padding:7px 14px;font-size:12.5px;border:none;cursor:pointer;background:${agendaMode==='grade'?'var(--gold)':'transparent'};color:${agendaMode==='grade'?'#1a1610':'var(--muted)'};">${ICON.clock} Grade</button>
+          <button class="agenda-mode" data-mode="lista" style="padding:7px 14px;font-size:12.5px;border:none;cursor:pointer;background:${agendaMode==='lista'?'var(--gold)':'transparent'};color:${agendaMode==='lista'?'#1a1610':'var(--muted)'};">${ICON.listPlus} Lista</button>
+          ${!isProfView?`<button class="agenda-mode" data-mode="semana" style="padding:7px 14px;font-size:12.5px;border:none;cursor:pointer;background:${agendaMode==='semana'?'var(--gold)':'transparent'};color:${agendaMode==='semana'?'#1a1610':'var(--muted)'};">${ICON.chart} Semana</button>`:''}
+        </div>
+      </div>
+    `}
+
+    ${state.professionals.length>0 && agendaMode==='semana' && !isProfView ? weeklyByProfessionalTable() : ''}
+
+    ${state.professionals.length>0 && agendaMode==='grade'
+      ? agendaGridView(viewDate, isProfView ? state.professionals.filter(p=>p.id===myId) : state.professionals)
+      : ''}
+
+    ${agendaMode==='lista' ? (appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
       <div style="display:flex;flex-direction:column;gap:10px;">
         ${appts.map(a=>{
           const s = serviceById(a.serviceId);
@@ -1278,9 +1370,10 @@ function renderAgenda(view){
           </div>`;
         }).join('')}
       </div>
-    `}
+    `) : ''}
   `;
   view.querySelector('#btn-new-appt')?.addEventListener('click', openApptModal);
+  view.querySelectorAll('.agenda-mode').forEach(b=>b.addEventListener('click', ()=>{ agendaMode = b.dataset.mode; renderAgenda(view); }));
   view.querySelectorAll('.wk-day').forEach(b=>b.addEventListener('click', ()=>{ agendaDate = b.dataset.day; renderAgenda(view); }));
   view.querySelector('#wk-prev')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(-1); renderAgenda(view); });
   view.querySelector('#wk-next')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(1); renderAgenda(view); });
@@ -1975,10 +2068,15 @@ function renderProfissionais(view){
           const rt = ratingStats(p.id);
           return `<div class="card" style="padding:16px 18px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-              <div>
-                <div style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
-                <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${esc(p.phone)||'Sem telefone'}</div>
-                <span class="pill pill-muted" style="margin-top:6px;display:inline-block;">${roleLabel(p.accessRole)}</span>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="width:46px;height:46px;border-radius:50%;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted-2);">
+                  ${p.photoDataUrl ? `<img src="${p.photoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.team}
+                </div>
+                <div>
+                  <div style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
+                  <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${esc(p.phone)||'Sem telefone'}</div>
+                  <span class="pill pill-muted" style="margin-top:6px;display:inline-block;">${roleLabel(p.accessRole)}</span>
+                </div>
               </div>
               <span class="pill pill-warn font-mono">${p.commission}%</span>
             </div>
@@ -2023,6 +2121,18 @@ function profModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
+        <div>
+          <label>Foto do profissional</label>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="prof-photo-preview" style="width:64px;height:64px;border-radius:50%;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted-2);">
+              ${existing?.photoDataUrl ? `<img src="${existing.photoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.team}
+            </div>
+            <input type="file" id="f-photo-file" accept="image/*" style="display:none;">
+            <button class="btn btn-ghost" id="btn-photo-pick" type="button">${ICON.upload} Escolher foto</button>
+            <button class="btn btn-ghost" id="btn-photo-remove" type="button" style="color:var(--bad);border-color:var(--bad);display:${existing?.photoDataUrl?'inline-flex':'none'};">${ICON.trash}</button>
+          </div>
+          <div style="font-size:10.5px;color:var(--muted-2);margin-top:5px;">Aparece na agenda e na página pública de agendamento. Máx. 300KB.</div>
+        </div>
         <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" placeholder="Nome completo" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
         <div>
@@ -2072,6 +2182,23 @@ function profModal(existing){
     </div>
   `, root=>{
     let currentTimeOff = [...timeOff];
+    let currentPhoto = existing?.photoDataUrl || '';
+    root.querySelector('#btn-photo-pick').addEventListener('click', ()=>root.querySelector('#f-photo-file').click());
+    root.querySelector('#f-photo-file').addEventListener('change', e=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      readImageAsDataURL(file, 300*1024, dataUrl=>{
+        currentPhoto = dataUrl;
+        root.querySelector('#prof-photo-preview').innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;">`;
+        root.querySelector('#btn-photo-remove').style.display = 'inline-flex';
+      });
+      e.target.value = '';
+    });
+    root.querySelector('#btn-photo-remove').addEventListener('click', ()=>{
+      currentPhoto = '';
+      root.querySelector('#prof-photo-preview').innerHTML = ICON.team;
+      root.querySelector('#btn-photo-remove').style.display = 'none';
+    });
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#btn-add-timeoff').addEventListener('click', ()=>{
       const d = root.querySelector('#f-timeoff-date').value;
@@ -2102,7 +2229,7 @@ function profModal(existing){
         if(inp.value!=='') serviceOverrides[inp.dataset.override] = parseFloat(inp.value);
       });
       if(!name){ showToast('Informe o nome.'); return; }
-      const data = {name, phone, accessRole, commission, pin, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
+      const data = {name, phone, accessRole, commission, pin, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
         if(isEdit){ Object.assign(existing, data); }
         else{ s.professionals.push({id:uid(), ...data}); }
@@ -2707,50 +2834,133 @@ function readSpreadsheetFile(file, onRows){
   else reader.readAsText(file, 'UTF-8');
 }
 
+/* Acha em qual coluna está cada informação, lendo o cabeçalho da planilha.
+   Assim funciona com qualquer formato de exportação, em qualquer ordem. */
+function mapColumns(headerRow, mapping){
+  const norm = s => String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  const header = headerRow.map(norm);
+  const found = {};
+  Object.entries(mapping).forEach(([key, aliases])=>{
+    let idx = -1;
+    // Testa os apelidos na ordem de prioridade: o primeiro da lista vence.
+    // Assim "Telefone" ganha de "Zap" quando as duas colunas existem.
+    for(const a of aliases){
+      const exact = header.findIndex(h => h === a);
+      if(exact >= 0){ idx = exact; break; }
+      const partial = header.findIndex(h => h && h.includes(a));
+      if(partial >= 0){ idx = partial; break; }
+    }
+    found[key] = idx;
+  });
+  return found;
+}
+function cellValue(row, idx){
+  if(idx==null || idx < 0) return '';
+  let v = row[idx];
+  if(v==null) return '';
+  v = String(v).trim();
+  // Excel às vezes guarda telefone/número como 5522981296800.0
+  if(/^\d+\.0$/.test(v)) v = v.slice(0,-2);
+  return v;
+}
+
 function importClientsFromRows(rows){
   if(!rows || rows.length===0){ showToast('Arquivo vazio.'); return; }
-  const headerLower = rows[0].map(h=>String(h).toLowerCase());
-  if(headerLower.some(h=>h.includes('nome'))) rows = rows.slice(1);
-  let added=0, updated=0;
+
+  // Procura a linha de cabeçalho (a primeira que tenha uma coluna "nome")
+  const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  let headerIdx = rows.findIndex(r => r.some(c => norm(c)==='nome' || norm(c)==='cliente' || norm(c)==='nome do cliente'));
+  if(headerIdx === -1) headerIdx = 0;
+
+  const cols = mapColumns(rows[headerIdx], {
+    name:     ['nome do cliente','nome','cliente'],
+    phone:    ['telefone','celular','whatsapp','zap','fone','contato'],
+    birthday: ['aniversario','nascimento','data de nascimento'],
+    points:   ['pontos','moedas','fidelidade'],
+    notes:    ['observacoes','observacao','obs','tags','anotacoes'],
+  });
+
+  if(cols.name < 0){
+    showToast('Não encontrei uma coluna "Nome" na planilha. Verifique o cabeçalho.');
+    return;
+  }
+
+  const dataRows = rows.slice(headerIdx+1);
+  let added=0, updated=0, skipped=0;
   update(s=>{
-    rows.forEach(r=>{
-      const [name, phone, birthdayRaw, pointsRaw, notes] = r;
-      if(!name || !String(name).trim()) return;
+    dataRows.forEach(r=>{
+      const name = cellValue(r, cols.name);
+      if(!name){ skipped++; return; }
+      const phone = cellValue(r, cols.phone);
+      const birthdayRaw = cellValue(r, cols.birthday);
+      const pointsRaw = cellValue(r, cols.points);
+      const notes = cellValue(r, cols.notes);
+
       let birthday = '';
-      const m = String(birthdayRaw||'').match(/^(\d{1,2})\/(\d{1,2})$/);
+      const m = birthdayRaw.match(/^(\d{1,2})[\/\-](\d{1,2})/);
       if(m) birthday = m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
       const points = parseInt(pointsRaw)||0;
-      const existing = s.clients.find(c=>c.name.trim().toLowerCase()===String(name).trim().toLowerCase());
+
+      const existing = s.clients.find(c=>c.name.trim().toLowerCase()===name.toLowerCase());
       if(existing){
-        Object.assign(existing, {phone:phone||existing.phone, birthday:birthday||existing.birthday, points: pointsRaw?points:existing.points, notes:notes||existing.notes});
+        Object.assign(existing, {
+          phone: phone||existing.phone,
+          birthday: birthday||existing.birthday,
+          points: pointsRaw ? points : existing.points,
+          notes: notes||existing.notes,
+        });
         updated++;
       }else{
-        s.clients.push({id:uid(), name:String(name).trim(), phone:phone||'', birthday, points, notes:notes||''});
+        s.clients.push({id:uid(), name, phone, birthday, points, notes});
         added++;
       }
     });
   });
-  showToast(`Importação concluída: ${added} novo(s), ${updated} atualizado(s).`);
+  showToast(`Importação concluída: ${added} novo(s), ${updated} atualizado(s)${skipped?`, ${skipped} linha(s) sem nome ignorada(s)`:''}.`);
 }
 
 function importServicesFromRows(rows){
   if(!rows || rows.length===0){ showToast('Arquivo vazio.'); return; }
-  const headerLower = rows[0].map(h=>String(h).toLowerCase());
-  if(headerLower.some(h=>h.includes('serv') || h.includes('nome'))) rows = rows.slice(1);
+  const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  let headerIdx = rows.findIndex(r => r.some(c => ['nome','servico','serviço','descricao'].includes(norm(c))));
+  if(headerIdx === -1) headerIdx = 0;
+
+  const cols = mapColumns(rows[headerIdx], {
+    name:     ['nome do servico','servico','nome','descricao'],
+    price:    ['valor','preco','preço'],
+    duration: ['duracao','duração','tempo','minutos'],
+    fichas:   ['ficha','fichas','clube'],
+  });
+
+  if(cols.name < 0){
+    showToast('Não encontrei uma coluna com o nome do serviço. Verifique o cabeçalho.');
+    return;
+  }
+
+  const dataRows = rows.slice(headerIdx+1);
   let added=0, updated=0;
   update(s=>{
-    rows.forEach(r=>{
-      const [name, priceRaw, durationRaw, fichasRaw] = r;
-      if(!name || !String(name).trim()) return;
-      const price = parseFloat(String(priceRaw||'').replace(/[^\d,.-]/g,'').replace(',','.')) || 0;
+    dataRows.forEach(r=>{
+      const name = cellValue(r, cols.name);
+      if(!name) return;
+      const priceRaw = cellValue(r, cols.price);
+      const durationRaw = cellValue(r, cols.duration);
+      const fichasRaw = cellValue(r, cols.fichas);
+      const price = parseFloat(priceRaw.replace(/[^\d,.-]/g,'').replace(',','.')) || 0;
       const duration = parseInt(durationRaw) || 30;
       const clubFichas = parseInt(fichasRaw) || 0;
-      const existing = s.services.find(x=>x.name.trim().toLowerCase()===String(name).trim().toLowerCase());
+
+      const existing = s.services.find(x=>x.name.trim().toLowerCase()===name.toLowerCase());
       if(existing){
-        Object.assign(existing, {price: priceRaw?price:existing.price, duration: durationRaw?duration:existing.duration, clubFichas: fichasRaw?clubFichas:existing.clubFichas});
+        Object.assign(existing, {
+          price: priceRaw ? price : existing.price,
+          duration: durationRaw ? duration : existing.duration,
+          clubFichas: fichasRaw ? clubFichas : existing.clubFichas,
+        });
         updated++;
       }else{
-        s.services.push({id:uid(), name:String(name).trim(), price, duration, requireDeposit:false, depositType:'percentual', depositValue:30, clubFichas});
+        s.services.push({id:uid(), name, price, duration, requireDeposit:false, depositType:'percentual', depositValue:30, clubFichas});
         added++;
       }
     });
@@ -3765,6 +3975,9 @@ function renderPublicBookingScreen(step1Only){
             ${professionals.map(p=>`
               <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:${pubBooking.professionalId===p.id?'var(--panel-2)':'transparent'};">
                 <input type="radio" name="pb-prof" value="${p.id}" ${pubBooking.professionalId===p.id?'checked':''} style="width:auto;">
+                <div style="width:38px;height:38px;border-radius:50%;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted-2);">
+                  ${p.photoDataUrl ? `<img src="${p.photoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.team}
+                </div>
                 <div style="font-size:13.5px;">${esc(p.name)}</div>
               </label>
             `).join('') || '<div style="font-size:12.5px;color:var(--muted);">Nenhum profissional disponível ainda.</div>'}
@@ -3853,6 +4066,7 @@ async function submitPublicBooking(){
 /* ============ ACESSO DA EQUIPE (link ?equipe) ============ */
 let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
 let agendaDate = null; // dia visível na agenda (não é salvo no banco)
+let agendaMode = 'grade'; // 'grade' (quadro de horários) ou 'lista'
 
 async function renderTeamLogin(slug, errorMsg){
   const app = document.getElementById('app');
