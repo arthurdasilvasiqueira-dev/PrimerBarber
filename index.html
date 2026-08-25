@@ -506,6 +506,26 @@ function sessionTotals(session){
   return {in:inn, out, balance: session.openingAmount + inn - out};
 }
 function todaysAppointments(){ return state.appointments.filter(a=>a.date===todayISO()).sort((a,b)=>a.time.localeCompare(b.time)); }
+function clubMemberForClient(clientName){
+  if(!clientName) return null;
+  return state.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===clientName.trim().toLowerCase()) || null;
+}
+function clubStarBadge(clientName){
+  const m = clubMemberForClient(clientName);
+  if(!m) return '';
+  if(m.status==='pago') return `<span title="Assinante do clube — em dia" style="color:var(--gold-bright);display:inline-flex;">${ICON.star}</span>`;
+  if(m.status==='atrasado') return `<span title="Assinante do clube — mensalidade atrasada" style="color:var(--bad);display:inline-flex;">${ICON.star}</span>`;
+  return '';
+}
+function clubOverdueWaButton(clientName, phone){
+  const m = clubMemberForClient(clientName);
+  if(!m || m.status!=='atrasado') return '';
+  const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
+  let text = `Olá ${m.name}! Notamos que sua mensalidade do ${plan?plan.name:'clube'} está em atraso.`;
+  if(m.invoiceUrl) text += ` Você pode regularizar por aqui: ${m.invoiceUrl}`;
+  else text += ' Pode regularizar quando puder? Qualquer dúvida estamos à disposição.';
+  return messageChannelRow(phone||m.phone, text);
+}
 function weekDates(){
   const now = new Date();
   const day = (now.getDay()+6)%7; // 0 = segunda
@@ -1078,7 +1098,7 @@ function agendaRow(a){
   return `<div style="display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:9px;background:var(--panel-2);">
     <div class="font-mono" style="font-size:13px;color:var(--gold-bright);min-width:44px;">${a.time}</div>
     <div style="flex:1;min-width:0;">
-      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.client)} <span style="color:var(--muted-2);">— ${esc(s?s.name:'')}</span></div>
+      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.client)} ${clubStarBadge(a.client)} <span style="color:var(--muted-2);">— ${esc(s?s.name:'')}</span></div>
       <div style="font-size:12px;color:var(--muted);">${esc(profName(a.professionalId))}</div>
     </div>
     ${statusPill}
@@ -1152,9 +1172,10 @@ function renderAgenda(view){
           return `<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
             <div class="font-mono" style="font-size:15px;color:var(--gold-bright);min-width:50px;">${a.time}</div>
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
-              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${s?s.name:'Serviço removido'} · ${profName(a.professionalId)} ${s?`· ${ICON.clock} ${s.duration} min`:''}</div>
-              ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+a.rating.comment:''}</div>` : ''}
+              <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${clubStarBadge(a.client)} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
+              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${s?esc(s.name):'Serviço removido'} · ${esc(profName(a.professionalId))} ${s?`· ${ICON.clock} ${s.duration} min`:''}</div>
+              ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+esc(a.rating.comment):''}</div>` : ''}
+              ${clubMemberForClient(a.client)?.status==='atrasado' ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="pill pill-bad" style="font-size:11px;">Clube em atraso — cobrança em valor cheio</span>${clubOverdueWaButton(a.client)}</div>` : ''}
             </div>
             ${depositPill(a)}
             <div class="font-mono" style="font-size:14px;color:var(--muted);">${s?BRL(s.price):'—'}</div>
@@ -1256,8 +1277,26 @@ function concludeAppt(id){
     appt.status='concluido';
     const service = serviceById(appt.serviceId);
     const sess = s.cashSessions.find(c=>c.status==='aberto');
-    const netAmount = appt.depositStatus==='pago' ? Math.max(0, service.price - appt.depositAmount) : service.price;
-    sess.entries.push({id:uid(), type:'entrada', desc:`${service.name} — ${appt.client}${appt.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
+
+    // Se o cliente é assinante do clube e está em dia, o serviço pode ser
+    // gratuito (se estiver incluso no plano) ou ter desconto — mas se
+    // estiver em atraso, cobra o valor cheio normalmente.
+    const member = s.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
+    let basePrice = service.price;
+    let priceNote = '';
+    if(member && member.status==='pago'){
+      const plan = s.subscriptionPlans.find(p=>p.id===member.planId);
+      if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
+        basePrice = 0;
+        priceNote = ' (incluso no clube)';
+      } else if(plan && plan.discountPercent>0){
+        basePrice = service.price * (1 - plan.discountPercent/100);
+        priceNote = ` (${plan.discountPercent}% desconto clube)`;
+      }
+    }
+
+    const netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
+    sess.entries.push({id:uid(), type:'entrada', desc:`${service.name} — ${appt.client}${priceNote}${appt.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
     const client = s.clients.find(c=>c.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
     if(client) maybeAwardReferral(client);
   });
@@ -1275,6 +1314,7 @@ function openApptModal(){
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Cliente</label><input id="f-client" placeholder="Nome do cliente" style="width:100%;"></div>
+        <div id="club-note" style="font-size:12px;"></div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Horário</label><input id="f-time" type="time" style="width:100%;"></div>
           <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${todayISO()}" style="width:100%;"></div>
@@ -1302,6 +1342,19 @@ function openApptModal(){
     root.querySelector('#f-service').addEventListener('change', updateNotes);
     root.querySelector('#f-prof').addEventListener('change', updateNotes);
     root.querySelector('#f-date').addEventListener('change', updateNotes);
+    root.querySelector('#f-client').addEventListener('input', ()=>{
+      const m = clubMemberForClient(root.querySelector('#f-client').value);
+      const note = root.querySelector('#club-note');
+      if(m && m.status==='atrasado'){
+        note.style.color = 'var(--bad)';
+        note.textContent = `⚠ ${m.name} está com o clube de assinatura em atraso — o serviço será cobrado em valor cheio, sem desconto/inclusão do plano.`;
+      } else if(m && m.status==='pago'){
+        note.style.color = 'var(--ok)';
+        note.textContent = `✓ ${m.name} é assinante do clube e está em dia.`;
+      } else {
+        note.textContent = '';
+      }
+    });
     updateNotes();
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-submit').addEventListener('click', ()=>{
@@ -2507,7 +2560,7 @@ function renderClientes(view){
           const st = clientStats(c.name);
           const referrals = state.clients.filter(x=>x.referredBy && x.referredBy.trim().toLowerCase()===c.name.trim().toLowerCase()).length;
           return `<tr>
-            <td style="font-weight:500;">${esc(c.name)}${c.referredBy?`<div style="font-size:11px;color:var(--muted-2);font-weight:400;">${ICON.gift} indicado por ${esc(c.referredBy)}</div>`:''}${c.notes?`<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;max-width:220px;">${esc(c.notes)}</div>`:''}</td>
+            <td style="font-weight:500;">${esc(c.name)} ${clubStarBadge(c.name)}${c.referredBy?`<div style="font-size:11px;color:var(--muted-2);font-weight:400;">${ICON.gift} indicado por ${esc(c.referredBy)}</div>`:''}${c.notes?`<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;max-width:220px;">${esc(c.notes)}</div>`:''}</td>
             <td class="font-mono" style="color:var(--muted);">${esc(c.phone)||'—'}</td>
             <td class="font-mono" style="color:${referrals>0?'var(--gold-bright)':'var(--muted-2)'};">${referrals>0?referrals+' indicado(s)':'—'}</td>
             <td class="font-mono">${st.visits}</td>
