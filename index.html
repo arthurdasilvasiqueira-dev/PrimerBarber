@@ -259,6 +259,15 @@ const supa = (SUPABASE_URL.startsWith('http'))
 
 /* ============ STATE ============ */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+// Escapa texto antes de inserir na tela, para impedir que nomes/telefones
+// digitados por qualquer pessoa (inclusive visitantes anônimos no link
+// público de agendamento) rodem como código na tela de quem for ver.
+function esc(str){
+  if(str==null) return '';
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 const todayISO = () => new Date().toISOString().slice(0,10);
 const BRL = n => (Number(n)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const STORAGE_KEY = 'barberpro-state-v1';
@@ -915,7 +924,7 @@ function openProfileSwitchModal(){
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${state.professionals.map(p=>`
           <div style="display:flex;gap:8px;align-items:center;">
-            <div style="flex:1;font-size:13.5px;">${p.name} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
+            <div style="flex:1;font-size:13.5px;">${esc(p.name)} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
             <input type="password" maxlength="4" placeholder="PIN" data-pin-for="${p.id}" style="width:70px;text-align:center;">
             <button class="btn btn-ghost" style="padding:8px 10px;" data-login-prof="${p.id}">Entrar</button>
           </div>
@@ -1018,7 +1027,7 @@ function viewDashboard(){
           ${state.professionals.map(p=>{
             const c = commissionOwed(p.id);
             return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;">
-              <span style="color:var(--ink);">${p.name}</span>
+              <span style="color:var(--ink);">${esc(p.name)}</span>
               <span class="font-mono" style="color:${c.owed>0?'var(--warn)':'var(--muted-2)'};">${BRL(c.owed)}</span>
             </div>`;
           }).join('')}
@@ -1038,7 +1047,7 @@ function viewDashboard(){
           const text = `Olá ${m.name}! Notamos que sua mensalidade do ${plan?plan.name:'clube'} está em atraso. Pode regularizar quando puder? Qualquer dúvida estamos à disposição.`;
           return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
             <div style="font-size:13.5px;">
-              <b>${m.name}</b> <span style="color:var(--muted-2);font-size:11.5px;">— ${plan?plan.name:'plano removido'} · venceu em ${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</span>
+              <b>${esc(m.name)}</b> <span style="color:var(--muted-2);font-size:11.5px;">— ${esc(plan?plan.name:'plano removido')} · venceu em ${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</span>
             </div>
             ${messageChannelRow(m.phone, text)}
           </div>`;
@@ -1069,8 +1078,8 @@ function agendaRow(a){
   return `<div style="display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:9px;background:var(--panel-2);">
     <div class="font-mono" style="font-size:13px;color:var(--gold-bright);min-width:44px;">${a.time}</div>
     <div style="flex:1;min-width:0;">
-      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.client} <span style="color:var(--muted-2);">— ${s?s.name:''}</span></div>
-      <div style="font-size:12px;color:var(--muted);">${profName(a.professionalId)}</div>
+      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.client)} <span style="color:var(--muted-2);">— ${esc(s?s.name:'')}</span></div>
+      <div style="font-size:12px;color:var(--muted);">${esc(profName(a.professionalId))}</div>
     </div>
     ${statusPill}
   </div>`;
@@ -1101,7 +1110,7 @@ function weeklyByProfessionalTable(){
             const counts = days.map(d=>clientsPerProfPerDay(p.id, d));
             const total = counts.reduce((a,c)=>a+c,0);
             return `<tr>
-              <td style="font-weight:500;">${p.name}</td>
+              <td style="font-weight:500;">${esc(p.name)}</td>
               ${counts.map((c,i)=>`<td style="text-align:center;${days[i]===todayStr?'background:rgba(201,162,75,.08);':''}">
                 ${c>0?`<span class="pill pill-warn font-mono">${c}</span>`:`<span style="color:var(--muted-2);">–</span>`}
               </td>`).join('')}
@@ -1143,7 +1152,7 @@ function renderAgenda(view){
           return `<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
             <div class="font-mono" style="font-size:15px;color:var(--gold-bright);min-width:50px;">${a.time}</div>
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:14.5px;">${a.client} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
+              <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
               <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${s?s.name:'Serviço removido'} · ${profName(a.professionalId)} ${s?`· ${ICON.clock} ${s.duration} min`:''}</div>
               ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+a.rating.comment:''}</div>` : ''}
             </div>
@@ -1270,8 +1279,8 @@ function openApptModal(){
           <div style="flex:1;"><label>Horário</label><input id="f-time" type="time" style="width:100%;"></div>
           <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${todayISO()}" style="width:100%;"></div>
         </div>
-        <div><label>Profissional</label><select id="f-prof" style="width:100%;">${state.professionals.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
-        <div><label>Serviço</label><select id="f-service" style="width:100%;">${state.services.map(s=>`<option value="${s.id}">${s.name} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}</select></div>
+        <div><label>Profissional</label><select id="f-prof" style="width:100%;">${state.professionals.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        <div><label>Serviço</label><select id="f-service" style="width:100%;">${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}</select></div>
         <div id="deposit-note" style="font-size:12px;color:var(--warn);"></div>
         <div id="availability-note" style="font-size:12px;color:var(--muted-2);"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:6px;">Agendar</button>
@@ -1342,7 +1351,7 @@ function renderCaixa(view){
           <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;">
             <div style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};">${e.type==='entrada'?ICON.arrowUp:ICON.arrowDown}</div>
             <div style="flex:1;">
-              <div style="font-size:13.5px;">${e.desc}</div>
+              <div style="font-size:13.5px;">${esc(e.desc)}</div>
               <div style="font-size:11.5px;color:var(--muted-2);">${e.time} ${e.auto?'· automático':'· manual'}</div>
             </div>
             <div class="font-mono" style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};font-size:14px;">${e.type==='entrada'?'+':'−'} ${BRL(e.amount)}</div>
@@ -1522,7 +1531,7 @@ function renderComissoes(view){
       <div style="display:flex;flex-direction:column;gap:10px;">
         ${pendingWithdrawals.map(w=>`
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
-            <div style="font-size:13px;"><b>${profName(w.professionalId)}</b> pediu ${BRL(w.amount)}${w.note?` — <span style="color:var(--muted);">${w.note}</span>`:''}</div>
+            <div style="font-size:13px;"><b>${profName(w.professionalId)}</b> pediu ${BRL(w.amount)}${w.note?` — <span style="color:var(--muted);">${esc(w.note)}</span>`:''}</div>
             <div style="display:flex;gap:6px;flex-shrink:0;">
               <button class="btn btn-gold" data-approve-withdrawal="${w.id}" style="padding:6px 10px;font-size:12px;">Marcar como pago</button>
               <button class="btn btn-ghost" data-decline-withdrawal="${w.id}" style="padding:6px 10px;font-size:12px;">Recusar</button>
@@ -1536,7 +1545,7 @@ function renderComissoes(view){
       ${visibleProfs.length===0 ? emptyState('Cadastre profissionais para ver comissões.') : visibleProfs.map(p=>{
         const c = commissionOwed(p.id);
         return `<div class="card" style="padding:16px 18px;">
-          <div style="font-weight:600;font-size:15px;margin-bottom:10px;">${p.name} <span style="font-weight:400;font-size:12px;color:var(--muted-2);">— comissão base de ${p.commission}%</span></div>
+          <div style="font-weight:600;font-size:15px;margin-bottom:10px;">${esc(p.name)} <span style="font-weight:400;font-size:12px;color:var(--muted-2);">— comissão base de ${p.commission}%</span></div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;">
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
               <div>
@@ -1580,7 +1589,7 @@ function renderComissoes(view){
         ${fichasBreakdown.rows.map(r=>`
           <div class="card" style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
             <div>
-              <span style="font-weight:600;font-size:14px;">${r.prof.name}</span>
+              <span style="font-weight:600;font-size:14px;">${esc(r.prof.name)}</span>
               <span style="font-size:12px;color:var(--muted-2);"> — ${r.fichas} ficha(s) · ${fichasBreakdown.totalFichas?((r.fichas/fichasBreakdown.totalFichas)*100).toFixed(1):'0'}%</span>
             </div>
             <div class="font-mono" style="color:var(--gold-bright);font-size:14.5px;">${BRL(r.value)}</div>
@@ -1731,7 +1740,7 @@ function closeClubMonthModal(){
       <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Confirmar paga a comissão do pote do clube a todos os profissionais abaixo, de uma vez.</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
         ${rows.map(r=>`<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:8px 12px;background:var(--panel-2);border-radius:8px;">
-          <span>${r.prof.name}</span><span class="font-mono" style="color:var(--gold-bright);">${BRL(r.owed)}</span>
+          <span>${esc(r.prof.name)}</span><span class="font-mono" style="color:var(--gold-bright);">${BRL(r.owed)}</span>
         </div>`).join('')}
         <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;padding:8px 12px;">
           <span>Total do fechamento</span><span class="font-mono">${BRL(total)}</span>
@@ -1768,8 +1777,8 @@ function renderProfissionais(view){
           return `<div class="card" style="padding:16px 18px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
               <div>
-                <div style="font-weight:600;font-size:15px;">${p.name}</div>
-                <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${p.phone||'Sem telefone'}</div>
+                <div style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
+                <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">${esc(p.phone)||'Sem telefone'}</div>
                 <span class="pill pill-muted" style="margin-top:6px;display:inline-block;">${roleLabel(p.accessRole)}</span>
               </div>
               <span class="pill pill-warn font-mono">${p.commission}%</span>
@@ -1810,8 +1819,8 @@ function profModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome</label><input id="f-name" value="${existing?.name||''}" placeholder="Nome completo" style="width:100%;"></div>
-        <div><label>Telefone</label><input id="f-phone" value="${existing?.phone||''}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" placeholder="Nome completo" style="width:100%;"></div>
+        <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
         <div>
           <label>Nível de acesso ao sistema</label>
           <select id="f-access-role" style="width:100%;">
@@ -1822,7 +1831,7 @@ function profModal(existing){
         </div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
-          <div style="flex:1;"><label>PIN de login (4 dígitos)</label><input id="f-pin" maxlength="4" value="${existing?.pin || String(1000+Math.floor(Math.random()*9000))}" style="width:100%;"></div>
+          <div style="flex:1;"><label>PIN de login (4 dígitos)</label><input id="f-pin" maxlength="4" value="${esc(existing?.pin) || String(1000+Math.floor(Math.random()*9000))}" style="width:100%;"></div>
         </div>
 
         <label>Dias de trabalho</label>
@@ -1849,7 +1858,7 @@ function profModal(existing){
         <label>Comissão por serviço (opcional — sobrescreve a base)</label>
         <div style="display:flex;flex-direction:column;gap:6px;">
           ${state.services.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-            <span style="font-size:13px;flex:1;">${s.name}</span>
+            <span style="font-size:13px;flex:1;">${esc(s.name)}</span>
             <input type="number" min="0" max="100" placeholder="${existing?.commission ?? 40}" data-override="${s.id}" value="${overrides[s.id]??''}" style="width:80px;">
           </div>`).join('')}
         </div>` : ''}
@@ -1908,7 +1917,7 @@ function renderServicos(view){
         <thead><tr><th>Serviço</th><th>Valor</th><th>Duração</th><th>Sinal</th><th>Fichas</th><th></th></tr></thead>
         <tbody>
         ${state.services.map(s=>`<tr>
-          <td style="font-weight:500;">${s.name}</td>
+          <td style="font-weight:500;">${esc(s.name)}</td>
           <td class="font-mono">${BRL(s.price)}</td>
           <td class="font-mono" style="color:var(--muted);">${s.duration} min</td>
           <td>${s.requireDeposit ? `<span class="pill pill-warn font-mono">${ICON.timer} ${BRL(depositAmountFor(s))}</span>` : '<span class="pill pill-muted">Não exige</span>'}</td>
@@ -1937,10 +1946,10 @@ function svcModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome do serviço</label><input id="f-name" value="${existing?.name||''}" placeholder="Ex: Corte Masculino" style="width:100%;"></div>
+        <div><label>Nome do serviço</label><input id="f-name" value="${esc(existing?.name)}" placeholder="Ex: Corte Masculino" style="width:100%;"></div>
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;"><label>Valor (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${existing?.price??''}" style="width:100%;"></div>
-          <div style="flex:1;"><label>Duração (min)</label><input id="f-dur" type="number" min="1" value="${existing?.duration??''}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Valor (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${esc(existing?.price)}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Duração (min)</label><input id="f-dur" type="number" min="1" value="${esc(existing?.duration)}" style="width:100%;"></div>
         </div>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-req-deposit" ${existing?.requireDeposit?'checked':''} style="width:auto;padding:0;"> Exigir sinal antecipado neste serviço</label>
         <div id="deposit-fields" style="display:${existing?.requireDeposit?'flex':'none'};gap:10px;">
@@ -2048,13 +2057,13 @@ function renderClube(view){
       ${state.subscriptionPlans.map(p=>`
         <div class="card" style="padding:16px 18px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <div style="font-weight:600;font-size:15px;">${p.name}</div>
-            ${p.category ? `<span class="pill" style="flex-shrink:0;">${p.category}</span>` : ''}
+            <div style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
+            ${p.category ? `<span class="pill" style="flex-shrink:0;">${esc(p.category)}</span>` : ''}
           </div>
           <div class="font-mono" style="font-size:19px;color:var(--gold-bright);margin:6px 0;">${BRL(p.price)}<span style="font-size:12px;color:var(--muted-2);">/mês</span></div>
-          ${p.includedServiceIds && p.includedServiceIds.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px;">Inclui: ${p.includedServiceIds.map(id=>serviceById(id)?.name).filter(Boolean).join(', ')}</div>` : ''}
+          ${p.includedServiceIds && p.includedServiceIds.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px;">Inclui: ${esc(p.includedServiceIds.map(id=>serviceById(id)?.name).filter(Boolean).join(', '))}</div>` : ''}
           ${p.discountPercent>0 ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px;">${p.discountPercent}% de desconto em serviços extras</div>` : ''}
-          ${p.benefits ? `<div style="font-size:12.5px;color:var(--muted);">${p.benefits}</div>` : ''}
+          ${p.benefits ? `<div style="font-size:12.5px;color:var(--muted);">${esc(p.benefits)}</div>` : ''}
           <div style="display:flex;gap:6px;margin-top:12px;">
             <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:6px;" data-edit-plan="${p.id}">${ICON.edit}</button>
             <button class="btn btn-ghost" style="padding:6px 9px;color:var(--bad);border-color:var(--bad);" data-del-plan="${p.id}">${ICON.trash}</button>
@@ -2072,8 +2081,8 @@ function renderClube(view){
         ${state.subscriptionMembers.map(m=>{
           const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
           return `<tr>
-            <td style="font-weight:500;">${m.name}<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;">${m.phone||''}</div></td>
-            <td>${plan?plan.name:'—'}</td>
+            <td style="font-weight:500;">${esc(m.name)}<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;">${esc(m.phone)}</div></td>
+            <td>${esc(plan?plan.name:'—')}</td>
             <td>${methodLabel(m)}</td>
             <td class="font-mono">${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</td>
             <td>${statusPillMember(m.status)}</td>
@@ -2133,18 +2142,18 @@ function planModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome do plano</label><input id="f-name" value="${existing?.name||''}" placeholder="Ex: Plano Ouro" style="width:100%;"></div>
-        <div><label>Categoria</label><input id="f-category" list="f-category-list" value="${existing?.category||''}" placeholder="Ex: Corte, Combo, Premium" style="width:100%;">
-          <datalist id="f-category-list">${[...new Set(state.subscriptionPlans.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${c}">`).join('')}</datalist>
+        <div><label>Nome do plano</label><input id="f-name" value="${esc(existing?.name)}" placeholder="Ex: Plano Ouro" style="width:100%;"></div>
+        <div><label>Categoria</label><input id="f-category" list="f-category-list" value="${esc(existing?.category)}" placeholder="Ex: Corte, Combo, Premium" style="width:100%;">
+          <datalist id="f-category-list">${[...new Set(state.subscriptionPlans.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
         </div>
-        <div><label>Valor mensal (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${existing?.price??''}" style="width:100%;"></div>
+        <div><label>Valor mensal (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${esc(existing?.price)}" style="width:100%;"></div>
         <div>
           <label>Serviços incluídos no plano</label>
           <div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;padding:10px;">
             ${state.services.length===0 ? '<div style="font-size:12px;color:var(--muted);">Cadastre serviços primeiro.</div>' : state.services.map(s=>`
               <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
                 <input type="checkbox" class="f-service-check" value="${s.id}" ${selectedIds.has(s.id)?'checked':''} style="width:auto;">
-                ${s.name} — ${BRL(s.price)}
+                ${esc(s.name)} — ${BRL(s.price)}
               </label>
             `).join('')}
           </div>
@@ -2152,7 +2161,7 @@ function planModal(existing){
         <div><label>Desconto do assinante em serviços extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Aplicado quando o assinante contrata um serviço fora dos incluídos no plano.</div>
         </div>
-        <div><label>Benefícios (texto livre, opcional)</label><input id="f-benefits" value="${existing?.benefits||''}" placeholder="Ex: prioridade na agenda" style="width:100%;"></div>
+        <div><label>Benefícios (texto livre, opcional)</label><input id="f-benefits" value="${esc(existing?.benefits)}" placeholder="Ex: prioridade na agenda" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Criar plano'}</button>
       </div>
     </div>
@@ -2184,9 +2193,9 @@ function memberModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome</label><input id="f-name" value="${existing?.name||''}" style="width:100%;"></div>
-        <div><label>Telefone</label><input id="f-phone" value="${existing?.phone||''}" style="width:100%;"></div>
-        <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${p.name} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
+        <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
+        <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
+        <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
         <div><label>Forma de pagamento</label><select id="f-method" style="width:100%;">
           <option value="asaas" ${!existing||existing.paymentMethod==='asaas'?'selected':''}>Pix / Cartão (via Asaas)</option>
           <option value="dinheiro" ${existing?.paymentMethod==='dinheiro'?'selected':''}>Dinheiro</option>
@@ -2273,8 +2282,8 @@ function renderMinhaAssinatura(view){
     <div class="card" style="padding:22px;margin-bottom:20px;max-width:560px;">
       <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:14px;">Perfil da conta</div>
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <div><label>Seu nome (dono/gerente)</label><input id="f-owner-name" value="${state.ownerName||''}" placeholder="Como podemos te chamar" style="width:100%;"></div>
-        <div><label>Email cadastrado</label><input value="${shop.email||''}" disabled style="width:100%;opacity:.7;"></div>
+        <div><label>Seu nome (dono/gerente)</label><input id="f-owner-name" value="${esc(state.ownerName)}" placeholder="Como podemos te chamar" style="width:100%;"></div>
+        <div><label>Email cadastrado</label><input value="${esc(shop.email)}" disabled style="width:100%;opacity:.7;"></div>
         <button class="btn btn-ghost" id="btn-save-owner-name" style="width:fit-content;">Salvar nome</button>
       </div>
       <div class="divider-blade" style="margin:18px 0;"></div>
@@ -2498,8 +2507,8 @@ function renderClientes(view){
           const st = clientStats(c.name);
           const referrals = state.clients.filter(x=>x.referredBy && x.referredBy.trim().toLowerCase()===c.name.trim().toLowerCase()).length;
           return `<tr>
-            <td style="font-weight:500;">${c.name}${c.referredBy?`<div style="font-size:11px;color:var(--muted-2);font-weight:400;">${ICON.gift} indicado por ${c.referredBy}</div>`:''}${c.notes?`<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;max-width:220px;">${c.notes}</div>`:''}</td>
-            <td class="font-mono" style="color:var(--muted);">${c.phone||'—'}</td>
+            <td style="font-weight:500;">${esc(c.name)}${c.referredBy?`<div style="font-size:11px;color:var(--muted-2);font-weight:400;">${ICON.gift} indicado por ${esc(c.referredBy)}</div>`:''}${c.notes?`<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;max-width:220px;">${esc(c.notes)}</div>`:''}</td>
+            <td class="font-mono" style="color:var(--muted);">${esc(c.phone)||'—'}</td>
             <td class="font-mono" style="color:${referrals>0?'var(--gold-bright)':'var(--muted-2)'};">${referrals>0?referrals+' indicado(s)':'—'}</td>
             <td class="font-mono">${st.visits}</td>
             <td class="font-mono">${BRL(st.total)}</td>
@@ -2537,14 +2546,14 @@ function clientModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome</label><input id="f-name" value="${existing?.name||''}" style="width:100%;"></div>
-        <div><label>Telefone</label><input id="f-phone" value="${existing?.phone||''}" style="width:100%;"></div>
+        <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
+        <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
         <div><label>Aniversário (dia/mês)</label><input id="f-bday" type="text" placeholder="DD/MM" value="${existing?.birthday?existing.birthday.split('-').reverse().join('/'):''}" style="width:100%;"></div>
         <div><label>${ICON.gift} Indicado por (programa de indicação)</label><select id="f-referred" style="width:100%;">
           <option value="">Ninguém / não sei</option>
-          ${state.clients.filter(c=>c.id!==existing?.id).map(c=>`<option value="${c.name}" ${existing?.referredBy===c.name?'selected':''}>${c.name}</option>`).join('')}
+          ${state.clients.filter(c=>c.id!==existing?.id).map(c=>`<option value="${esc(c.name)}" ${existing?.referredBy===c.name?'selected':''}>${esc(c.name)}</option>`).join('')}
         </select></div>
-        <div><label>Observações</label><input id="f-notes" value="${existing?.notes||''}" placeholder="Preferências do cliente" style="width:100%;"></div>
+        <div><label>Observações</label><input id="f-notes" value="${esc(existing?.notes)}" placeholder="Preferências do cliente" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
       </div>
     </div>
@@ -2581,7 +2590,7 @@ function renderEstoque(view){
         <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th></th></tr></thead>
         <tbody>
         ${state.products.map(p=>`<tr>
-          <td style="font-weight:500;">${p.name}</td>
+          <td style="font-weight:500;">${esc(p.name)}</td>
           <td class="font-mono">${p.stock<=p.minStock?`<span class="pill pill-bad">${p.stock}</span>`:p.stock}</td>
           <td class="font-mono" style="color:var(--muted);">${p.minStock}</td>
           <td class="font-mono" style="color:var(--muted);">${BRL(p.cost)}</td>
@@ -2608,7 +2617,7 @@ function productModal(existing){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome do produto</label><input id="f-name" value="${existing?.name||''}" style="width:100%;"></div>
+        <div><label>Nome do produto</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Estoque atual</label><input id="f-stock" type="number" min="0" value="${existing?.stock??0}" style="width:100%;"></div>
           <div style="flex:1;"><label>Estoque mínimo</label><input id="f-min" type="number" min="0" value="${existing?.minStock??0}" style="width:100%;"></div>
@@ -2673,7 +2682,7 @@ function renderRelatorios(view){
         ${byProf.length===0?emptyState('Sem dados ainda.'):byProf.map(b=>`
           <div style="margin-bottom:12px;">
             <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-              <span>${b.name}</span><span class="font-mono" style="color:var(--gold-bright);">${BRL(b.value)}</span>
+              <span>${esc(b.name)}</span><span class="font-mono" style="color:var(--gold-bright);">${BRL(b.value)}</span>
             </div>
             <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
               <div style="height:100%;width:${(b.value/maxProf*100).toFixed(0)}%;background:var(--gold);border-radius:99px;"></div>
@@ -2686,7 +2695,7 @@ function renderRelatorios(view){
         ${bySvc.length===0?emptyState('Sem dados ainda.'):bySvc.map(b=>`
           <div style="margin-bottom:12px;">
             <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-              <span>${b.name}</span><span class="font-mono" style="color:var(--muted);">${b.count}×</span>
+              <span>${esc(b.name)}</span><span class="font-mono" style="color:var(--muted);">${b.count}×</span>
             </div>
             <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
               <div style="height:100%;width:${(b.count/maxSvc*100).toFixed(0)}%;background:var(--ok);border-radius:99px;"></div>
@@ -2702,7 +2711,7 @@ function renderRelatorios(view){
         <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:14px;">No-show por profissional</div>
         ${ns.byProf.filter(b=>b.total>0).length===0 ? emptyState('Sem dados suficientes ainda.') : ns.byProf.filter(b=>b.total>0).map(b=>`
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-top:1px solid var(--border);">
-            <span>${b.prof.name}</span>
+            <span>${esc(b.prof.name)}</span>
             <span class="font-mono" style="color:${b.rate>10?'var(--bad)':'var(--muted)'};">${b.faltas}/${b.total} · ${b.rate.toFixed(0)}%</span>
           </div>
         `).join('')}
@@ -2712,7 +2721,7 @@ function renderRelatorios(view){
         ${state.professionals.map(p=>{
           const rt = ratingStats(p.id);
           return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-top:1px solid var(--border);">
-            <span>${p.name}</span>
+            <span>${esc(p.name)}</span>
             ${rt.count>0 ? `<span style="color:var(--gold-bright);display:flex;align-items:center;gap:4px;">${ICON.star} <span class="font-mono">${rt.avg.toFixed(1)}</span> <span style="color:var(--muted-2);font-size:11px;">(${rt.count})</span></span>` : `<span style="color:var(--muted-2);font-size:12px;">sem avaliações</span>`}
           </div>`;
         }).join('')}
@@ -2762,7 +2771,7 @@ function renderFidelidade(view){
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px;">
         ${birthdays.map(c=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;">
           <div style="color:var(--gold-bright);">${ICON.cake}</div>
-          <div style="flex:1;"><div style="font-size:13.5px;font-weight:500;">${c.name}</div><div style="font-size:12px;color:var(--muted);">${c.phone||''}</div></div>
+          <div style="flex:1;"><div style="font-size:13.5px;font-weight:500;">${esc(c.name)}</div><div style="font-size:12px;color:var(--muted);">${esc(c.phone)}</div></div>
           <span class="pill pill-warn font-mono">${monthDayLabel(c.birthday)}</span>
         </div>`).join('')}
       </div>
@@ -2776,7 +2785,7 @@ function renderFidelidade(view){
         ${state.clients.map(c=>{
           const pct = Math.min(100, (c.points/L.redeemThreshold)*100);
           return `<tr>
-            <td style="font-weight:500;">${c.name}</td>
+            <td style="font-weight:500;">${esc(c.name)}</td>
             <td class="font-mono" style="color:var(--gold-bright);">${c.points}</td>
             <td><div style="height:7px;width:120px;background:var(--panel-2);border-radius:99px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--gold);"></div></div></td>
             <td style="text-align:right;"><button class="btn btn-ghost" style="padding:6px 10px;" data-add-points="${c.id}">+10 pts</button></td>
@@ -2884,8 +2893,8 @@ async function loadBookingRequests(view){
   listEl.innerHTML = data.map(r=>`
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
       <div style="font-size:13px;">
-        <b>${r.client_name}</b> — ${r.service_name} com ${r.professional_name}<br>
-        <span style="color:var(--muted);font-size:11.5px;">${r.date} às ${r.time} · ${r.client_phone}</span>
+        <b>${esc(r.client_name)}</b> — ${esc(r.service_name)} com ${esc(r.professional_name)}<br>
+        <span style="color:var(--muted);font-size:11.5px;">${esc(r.date)} às ${esc(r.time)} · ${esc(r.client_phone)}</span>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
         <button class="btn btn-gold" data-accept="${r.id}" style="padding:6px 10px;font-size:12px;">Aceitar</button>
@@ -2939,8 +2948,8 @@ function notifDropdownContent(){
   if(!notifState.items.length) return `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center;">Nenhum agendamento novo.</div>`;
   return notifState.items.map(r=>`
     <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
-      <div style="font-size:13px;"><b>${r.client_name}</b> agendou</div>
-      <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${r.service_name} com ${r.professional_name} · ${new Date(r.date+'T'+r.time).toLocaleDateString('pt-BR')} às ${r.time}</div>
+      <div style="font-size:13px;"><b>${esc(r.client_name)}</b> agendou</div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${esc(r.service_name)} com ${esc(r.professional_name)} · ${new Date(r.date+'T'+r.time).toLocaleDateString('pt-BR')} às ${esc(r.time)}</div>
       <div style="display:flex;gap:6px;">
         <button class="btn btn-gold" data-notif-accept="${r.id}" style="padding:5px 10px;font-size:11.5px;">Aceitar</button>
         <button class="btn btn-ghost" data-notif-decline="${r.id}" style="padding:5px 10px;font-size:11.5px;">Recusar</button>
@@ -2985,7 +2994,7 @@ function renderMensagens(view){
           const text = fillTemplate(T.confirmation, {cliente:a.client, servico:s?s.name:'', data:new Date(a.date+'T00:00').toLocaleDateString('pt-BR'), hora:a.time, profissional:profName(a.professionalId)});
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:13.5px;">${a.client}</div>
+              <div style="font-weight:600;font-size:13.5px;">${esc(a.client)}</div>
               <div style="font-size:12px;color:var(--muted);">${new Date(a.date+'T00:00').toLocaleDateString('pt-BR')} às ${a.time} · ${s?s.name:''}</div>
             </div>
             ${messageChannelRow(phone, text)}
@@ -3007,7 +3016,7 @@ function renderMensagens(view){
           const text = fillTemplate(T.reminder, {cliente:a.client, servico:s?s.name:'', hora:a.time, profissional:profName(a.professionalId)});
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:13.5px;">${a.client}</div>
+              <div style="font-weight:600;font-size:13.5px;">${esc(a.client)}</div>
               <div style="font-size:12px;color:var(--muted);">Hoje às ${a.time} · ${s?s.name:''}</div>
             </div>
             ${messageChannelRow(phone, text)}
@@ -3028,7 +3037,7 @@ function renderMensagens(view){
           const text = fillTemplate(T.winback, {cliente:x.client.name, dias:x.daysSince});
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:13.5px;">${x.client.name}</div>
+              <div style="font-weight:600;font-size:13.5px;">${esc(x.client.name)}</div>
               <div style="font-size:12px;color:var(--bad);">${x.daysSince} dias sem visita</div>
             </div>
             ${messageChannelRow(x.client.phone, text)}
@@ -3042,7 +3051,7 @@ function renderMensagens(view){
       <div style="display:flex;flex-direction:column;gap:12px;max-width:520px;">
         <div><label>Cliente</label><select id="f-upsell-client" style="width:100%;">
           <option value="">Selecione um cliente</option>
-          ${state.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+          ${state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
         </select></div>
         <div><label>Sugerir</label>
           <div style="display:flex;gap:8px;">
@@ -3084,7 +3093,7 @@ function renderMensagens(view){
           ${state.messageLog.slice().reverse().slice(0,20).map(l=>`<tr>
             <td class="font-mono" style="color:var(--muted);">${new Date(l.date).toLocaleString('pt-BR')}</td>
             <td>${l.clientName}</td>
-            <td>${l.note}</td>
+            <td>${esc(l.note)}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -3170,7 +3179,7 @@ function renderWaitlist(view){
             <div style="flex:1;min-width:180px;">
               <div style="font-weight:600;font-size:13.5px;">${w.clientName}</div>
               <div style="font-size:12px;color:var(--muted);">${s?s.name:'Qualquer serviço'} · ${w.professionalId?profName(w.professionalId):'Qualquer profissional'} ${w.preferredDate?'· '+new Date(w.preferredDate+'T00:00').toLocaleDateString('pt-BR'):''}</div>
-              ${w.note?`<div style="font-size:11.5px;color:var(--muted-2);">${w.note}</div>`:''}
+              ${w.note?`<div style="font-size:11.5px;color:var(--muted-2);">${esc(w.note)}</div>`:''}
             </div>
             ${messageChannelRow(w.phone, text)}
             <button class="btn btn-ghost" style="padding:8px 9px;color:var(--bad);border-color:var(--bad);" data-del-wait="${w.id}">${ICON.trash}</button>
@@ -3195,8 +3204,8 @@ function waitlistModal(){
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Cliente</label><input id="f-name" placeholder="Nome do cliente" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" placeholder="(00) 00000-0000" style="width:100%;"></div>
-        <div><label>Serviço desejado (opcional)</label><select id="f-service" style="width:100%;"><option value="">Qualquer serviço</option>${state.services.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select></div>
-        <div><label>Profissional preferido (opcional)</label><select id="f-prof" style="width:100%;"><option value="">Qualquer profissional</option>${state.professionals.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
+        <div><label>Serviço desejado (opcional)</label><select id="f-service" style="width:100%;"><option value="">Qualquer serviço</option>${state.services.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+        <div><label>Profissional preferido (opcional)</label><select id="f-prof" style="width:100%;"><option value="">Qualquer profissional</option>${state.professionals.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
         <div><label>Data preferida (opcional)</label><input id="f-date" type="date" style="width:100%;"></div>
         <div><label>Observação</label><input id="f-note" placeholder="Ex: prefere fim de tarde" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">Adicionar</button>
@@ -3260,11 +3269,11 @@ function renderNotaFiscal(view){
           const already = state.nfeLog.find(l=>l.entryId===e.id);
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;">
-              <div style="font-size:13.5px;font-weight:500;">${e.desc}</div>
+              <div style="font-size:13.5px;font-weight:500;">${esc(e.desc)}</div>
               <div style="font-size:11.5px;color:var(--muted-2);">${e.time}</div>
             </div>
             <div class="font-mono" style="font-size:14px;">${BRL(e.amount)}</div>
-            ${already ? `<span class="pill pill-ok">${ICON.receipt} Nota registrada</span>` : `<button class="btn btn-ghost" data-emit="${e.id}" data-desc="${e.desc}" data-amount="${e.amount}">${ICON.receipt} Emitir nota</button>`}
+            ${already ? `<span class="pill pill-ok">${ICON.receipt} Nota registrada</span>` : `<button class="btn btn-ghost" data-emit="${e.id}" data-desc="${esc(e.desc)}" data-amount="${e.amount}">${ICON.receipt} Emitir nota</button>`}
           </div>`;
         }).join('')}
       </div>
@@ -3274,7 +3283,7 @@ function renderNotaFiscal(view){
     ${state.nfeLog.length===0 ? emptyState('Nenhuma nota emitida ainda.') : `
       <table>
         <thead><tr><th>Data</th><th>Descrição</th><th>Valor</th></tr></thead>
-        <tbody>${state.nfeLog.slice().reverse().map(l=>`<tr><td class="font-mono" style="color:var(--muted);">${new Date(l.date).toLocaleString('pt-BR')}</td><td>${l.desc}</td><td class="font-mono">${BRL(l.amount)}</td></tr>`).join('')}</tbody>
+        <tbody>${state.nfeLog.slice().reverse().map(l=>`<tr><td class="font-mono" style="color:var(--muted);">${new Date(l.date).toLocaleString('pt-BR')}</td><td>${esc(l.desc)}</td><td class="font-mono">${BRL(l.amount)}</td></tr>`).join('')}</tbody>
       </table>
     `}
   `;
@@ -3313,7 +3322,7 @@ function renderConfiguracoes(view){
     <div class="card" style="padding:20px;margin-bottom:20px;max-width:560px;">
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:14px;">Identidade</div>
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <div><label>Nome da barbearia</label><input id="f-shop-name" value="${sp.name}" style="width:100%;"></div>
+        <div><label>Nome da barbearia</label><input id="f-shop-name" value="${esc(sp.name)}" style="width:100%;"></div>
 
         <div>
           <label>Logo</label>
@@ -3340,20 +3349,20 @@ function renderConfiguracoes(view){
           <div style="font-size:11px;color:var(--muted-2);margin-top:6px;">Imagens até ~600KB. Prefira arquivos leves (JPG comprimido) para o app carregar rápido.</div>
         </div>
 
-        <div><label>Bio / descrição curta</label><textarea id="f-shop-bio" rows="2" style="width:100%;resize:vertical;">${sp.bio}</textarea></div>
-        <div><label>Endereço</label><input id="f-shop-address" value="${sp.address}" placeholder="Rua, número, bairro, cidade" style="width:100%;"></div>
-        <div><label>Telefone / WhatsApp de contato</label><input id="f-shop-phone" value="${sp.phone}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>Bio / descrição curta</label><textarea id="f-shop-bio" rows="2" style="width:100%;resize:vertical;">${esc(sp.bio)}</textarea></div>
+        <div><label>Endereço</label><input id="f-shop-address" value="${esc(sp.address)}" placeholder="Rua, número, bairro, cidade" style="width:100%;"></div>
+        <div><label>Telefone / WhatsApp de contato</label><input id="f-shop-phone" value="${esc(sp.phone)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
       </div>
     </div>
 
     <div class="card" style="padding:20px;margin-bottom:20px;max-width:560px;">
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:14px;">Redes sociais</div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>${ICON.instagram} Instagram</label><input id="f-social-instagram" value="${sp.social.instagram}" placeholder="@suabarbearia ou link" style="width:100%;"></div>
-        <div><label>${ICON.facebook} Facebook</label><input id="f-social-facebook" value="${sp.social.facebook}" placeholder="Link da página" style="width:100%;"></div>
-        <div><label>${ICON.tiktok} TikTok</label><input id="f-social-tiktok" value="${sp.social.tiktok}" placeholder="@suabarbearia ou link" style="width:100%;"></div>
-        <div><label>${ICON.chat} WhatsApp</label><input id="f-social-whatsapp" value="${sp.social.whatsapp}" placeholder="(00) 00000-0000" style="width:100%;"></div>
-        <div><label>${ICON.globe} Site</label><input id="f-social-website" value="${sp.social.website}" placeholder="https://" style="width:100%;"></div>
+        <div><label>${ICON.instagram} Instagram</label><input id="f-social-instagram" value="${esc(sp.social.instagram)}" placeholder="@suabarbearia ou link" style="width:100%;"></div>
+        <div><label>${ICON.facebook} Facebook</label><input id="f-social-facebook" value="${esc(sp.social.facebook)}" placeholder="Link da página" style="width:100%;"></div>
+        <div><label>${ICON.tiktok} TikTok</label><input id="f-social-tiktok" value="${esc(sp.social.tiktok)}" placeholder="@suabarbearia ou link" style="width:100%;"></div>
+        <div><label>${ICON.chat} WhatsApp</label><input id="f-social-whatsapp" value="${esc(sp.social.whatsapp)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>${ICON.globe} Site</label><input id="f-social-website" value="${esc(sp.social.website)}" placeholder="https://" style="width:100%;"></div>
       </div>
     </div>
 
@@ -3367,10 +3376,10 @@ function renderConfiguracoes(view){
           <div style="width:44px;height:44px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-28px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
             ${sp.logoDataUrl ? `<img src="${sp.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.scissors}
           </div>
-          <div class="font-display" style="font-size:15px;font-weight:600;">${sp.name}</div>
+          <div class="font-display" style="font-size:15px;font-weight:600;">${esc(sp.name)}</div>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${sp.bio||'Sem bio cadastrada.'}</div>
-        ${sp.address?`<div style="font-size:11.5px;color:var(--muted-2);margin-bottom:4px;">${sp.address}</div>`:''}
+        ${sp.address?`<div style="font-size:11.5px;color:var(--muted-2);margin-bottom:4px;">${esc(sp.address)}</div>`:''}
         <div style="display:flex;gap:8px;margin-top:8px;">
           ${sp.social.instagram?`<span class="pill pill-muted">${ICON.instagram}</span>`:''}
           ${sp.social.facebook?`<span class="pill pill-muted">${ICON.facebook}</span>`:''}
@@ -3454,10 +3463,10 @@ function renderPublicBookingScreen(step1Only){
               <div style="width:42px;height:42px;border-radius:9px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;margin-top:-26px;box-shadow:0 2px 8px rgba(0,0,0,.4);">
                 ${info.logoDataUrl ? `<img src="${info.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ''}
               </div>
-              <div class="font-display" style="font-size:16px;font-weight:600;">${info.name || 'Barbearia'}</div>
+              <div class="font-display" style="font-size:16px;font-weight:600;">${esc(info.name) || 'Barbearia'}</div>
             </div>
-            ${info.bio ? `<div style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5;">${info.bio}</div>` : ''}
-            ${info.address ? `<div style="font-size:11.5px;color:var(--muted-2);margin-top:6px;">📍 ${info.address}</div>` : ''}
+            ${info.bio ? `<div style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5;">${esc(info.bio)}</div>` : ''}
+            ${info.address ? `<div style="font-size:11.5px;color:var(--muted-2);margin-top:6px;">📍 ${esc(info.address)}</div>` : ''}
             ${(info.social && Object.values(info.social).some(v=>v)) || info.phone ? `
               <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
                 ${info.phone ? `<a href="https://wa.me/55${info.phone.replace(/\D/g,'')}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.chat} WhatsApp</a>` : ''}
@@ -3477,7 +3486,7 @@ function renderPublicBookingScreen(step1Only){
               <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:${pubBooking.serviceId===s.id?'var(--panel-2)':'transparent'};">
                 <input type="radio" name="pb-service" value="${s.id}" ${pubBooking.serviceId===s.id?'checked':''} style="width:auto;">
                 <div style="flex:1;">
-                  <div style="font-size:13.5px;">${s.name}</div>
+                  <div style="font-size:13.5px;">${esc(s.name)}</div>
                   <div style="font-size:11.5px;color:var(--muted);">${BRL(s.price)} · ${s.duration}min</div>
                 </div>
               </label>
@@ -3489,7 +3498,7 @@ function renderPublicBookingScreen(step1Only){
             ${professionals.map(p=>`
               <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:${pubBooking.professionalId===p.id?'var(--panel-2)':'transparent'};">
                 <input type="radio" name="pb-prof" value="${p.id}" ${pubBooking.professionalId===p.id?'checked':''} style="width:auto;">
-                <div style="font-size:13.5px;">${p.name}</div>
+                <div style="font-size:13.5px;">${esc(p.name)}</div>
               </label>
             `).join('') || '<div style="font-size:12.5px;color:var(--muted);">Nenhum profissional disponível ainda.</div>'}
           </div>
