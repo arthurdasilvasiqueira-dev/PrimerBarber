@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#161310;
@@ -474,6 +475,15 @@ function migrateState(){
 async function persist(){
   if(!supa || !currentShop) return;
   try{
+    if(teamSession){
+      // Equipe logada por PIN — grava por uma função que revalida o PIN
+      const { data: res, error } = await supa.rpc('team_save', {
+        p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId,
+        p_pin: teamSession.pin, p_data: state
+      });
+      if(error || res?.error) console.error('Falha ao salvar', error || res.error);
+      return;
+    }
     const slug = state?.onlineBooking?.slug || null;
     const { error } = await supa.from('shops').update({ data: state, booking_slug: slug || null }).eq('id', currentShop.id);
     if(error) console.error('Falha ao salvar', error);
@@ -499,11 +509,29 @@ function showToast(msg){
 function profName(id){ return state.professionals.find(p=>p.id===id)?.name || '—'; }
 function serviceById(id){ return state.services.find(s=>s.id===id); }
 function openSession(){ return state.cashSessions.find(c=>c.status==='aberto') || null; }
+const PAYMENT_METHODS = [
+  {id:'dinheiro', label:'Dinheiro', inDrawer:true},
+  {id:'pix', label:'PIX', inDrawer:false},
+  {id:'debito', label:'Cartão de débito', inDrawer:false},
+  {id:'credito', label:'Cartão de crédito', inDrawer:false},
+];
+function methodLabelPay(id){ return (PAYMENT_METHODS.find(m=>m.id===id)||{}).label || 'Dinheiro'; }
 function sessionTotals(session){
-  if(!session) return {in:0,out:0,balance:0};
-  const inn = session.entries.filter(e=>e.type==='entrada').reduce((a,e)=>a+Number(e.amount),0);
-  const out = session.entries.filter(e=>e.type==='saida').reduce((a,e)=>a+Number(e.amount),0);
-  return {in:inn, out, balance: session.openingAmount + inn - out};
+  if(!session) return {in:0,out:0,balance:0,byMethod:{},cashIn:0,cashOut:0};
+  const entries = session.entries;
+  const inn = entries.filter(e=>e.type==='entrada').reduce((a,e)=>a+Number(e.amount),0);
+  const out = entries.filter(e=>e.type==='saida').reduce((a,e)=>a+Number(e.amount),0);
+  // Detalhamento por forma de pagamento (entradas)
+  const byMethod = {};
+  PAYMENT_METHODS.forEach(m=>{ byMethod[m.id] = 0; });
+  entries.filter(e=>e.type==='entrada').forEach(e=>{
+    const m = e.method || 'dinheiro';
+    byMethod[m] = (byMethod[m]||0) + Number(e.amount);
+  });
+  // O caixa físico (gaveta) só conta o que entrou/saiu em dinheiro
+  const cashIn = entries.filter(e=>e.type==='entrada' && (e.method||'dinheiro')==='dinheiro').reduce((a,e)=>a+Number(e.amount),0);
+  const cashOut = entries.filter(e=>e.type==='saida' && (e.method||'dinheiro')==='dinheiro').reduce((a,e)=>a+Number(e.amount),0);
+  return {in:inn, out, byMethod, cashIn, cashOut, balance: session.openingAmount + cashIn - cashOut};
 }
 function todaysAppointments(){ return state.appointments.filter(a=>a.date===todayISO()).sort((a,b)=>a.time.localeCompare(b.time)); }
 function clubMemberForClient(clientName){
@@ -896,6 +924,11 @@ function render(){
   app.querySelector('#btn-logout').addEventListener('click', async ()=>{
     if(notifState.channel){ supa.removeChannel(notifState.channel); notifState.channel=null; }
     notifState.items = []; notifState.open = false;
+    if(teamSession){
+      const slug = state?.onlineBooking?.slug;
+      teamSession = null; currentShop = null; state = null;
+      if(slug){ renderTeamLogin(slug); return; }
+    }
     await supa.auth.signOut(); currentShop=null; state=null; boot();
   });
   app.querySelectorAll('.theme-toggle-btn').forEach(b=>b.addEventListener('click', ()=>{
@@ -1159,13 +1192,65 @@ function renderAgenda(view){
   autoExpireUnpaidDeposits();
   const isProfView = userSession.role==='profissional';
   const myId = userSession.professionalId;
-  let appts = todaysAppointments();
+  if(!agendaDate) agendaDate = todayISO();
+  const viewDate = agendaDate;
+  const isToday = viewDate === todayISO();
+  let appts = state.appointments.filter(a=>a.date===viewDate).sort((a,b)=>a.time.localeCompare(b.time));
   if(isProfView) appts = appts.filter(a=>a.professionalId===myId);
+
+  // Dias da semana em que a data selecionada está
+  const sel = new Date(viewDate+'T12:00');
+  const dow = (sel.getDay()+6)%7; // 0 = segunda
+  const monday = new Date(sel); monday.setDate(sel.getDate()-dow);
+  const weekDays = Array.from({length:7}, (_,i)=>{
+    const d = new Date(monday); d.setDate(monday.getDate()+i);
+    return d.toISOString().slice(0,10);
+  });
+  const shiftWeek = (delta)=>{
+    const d = new Date(viewDate+'T12:00'); d.setDate(d.getDate()+delta*7);
+    return d.toISOString().slice(0,10);
+  };
+  const dayLabel = new Date(viewDate+'T12:00').toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'});
+  const doneCount = appts.filter(a=>a.status==='concluido').length;
+  const revenue = appts.filter(a=>a.status==='concluido').reduce((t,a)=>{ const s=serviceById(a.serviceId); return t+(s?s.price:0); },0);
+
   view.innerHTML = `
-    ${pageHeader('Agenda', 'Horários de hoje, '+new Date().toLocaleDateString('pt-BR'), `<button class="btn btn-gold" id="btn-new-appt">${ICON.plus} Novo agendamento</button>`)}
-    ${!isProfView ? weeklyByProfessionalTable() : ''}
+    ${pageHeader('Agenda', dayLabel.charAt(0).toUpperCase()+dayLabel.slice(1), `<button class="btn btn-gold" id="btn-new-appt">${ICON.plus} Novo agendamento</button>`)}
+
+    <div class="card" style="padding:14px 16px;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="wk-prev" style="padding:7px 11px;">‹ Semana anterior</button>
+        <button class="btn btn-ghost" id="wk-today" style="padding:7px 11px;${isToday?'border-color:var(--gold);color:var(--gold-bright);':''}">Hoje</button>
+        <button class="btn btn-ghost" id="wk-next" style="padding:7px 11px;">Próxima semana ›</button>
+        <div style="flex:1;"></div>
+        <input type="date" id="wk-picker" value="${viewDate}" style="padding:7px 10px;">
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;">
+        ${weekDays.map(d=>{
+          const dd = new Date(d+'T12:00');
+          const count = state.appointments.filter(a=>a.date===d && (!isProfView || a.professionalId===myId) && a.status!=='cancelado').length;
+          const selected = d===viewDate;
+          const today = d===todayISO();
+          return `<button class="btn btn-ghost wk-day" data-day="${d}" style="flex-direction:column;gap:2px;padding:9px 4px;${selected?'background:var(--gold);color:#1a1610;border-color:var(--gold);':today?'border-color:var(--gold);':''}">
+            <span style="font-size:10px;text-transform:uppercase;opacity:.75;">${['seg','ter','qua','qui','sex','sáb','dom'][(dd.getDay()+6)%7]}</span>
+            <span style="font-size:15px;font-weight:600;">${String(dd.getDate()).padStart(2,'0')}</span>
+            <span style="font-size:9.5px;opacity:.75;">${count>0?count+(count===1?' hor.':' hor.'):'—'}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    ${appts.length>0 ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;">
+        ${statCard('Agendamentos', appts.length, 'neste dia', 'ok')}
+        ${statCard('Concluídos', doneCount, doneCount===appts.length?'todos atendidos':'de '+appts.length, doneCount>0?'ok':'warn')}
+        ${statCard('Faturamento', BRL(revenue), 'atendimentos concluídos', 'ok')}
+      </div>
+    ` : ''}
+
+    ${!isProfView && isToday ? weeklyByProfessionalTable() : ''}
     ${state.professionals.length===0 ? emptyState('Cadastre profissionais antes de agendar.') : ''}
-    ${appts.length===0 ? emptyState('Nenhum horário para hoje.', 'Toque em "Novo agendamento" para começar.') : `
+    ${appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
       <div style="display:flex;flex-direction:column;gap:10px;">
         ${appts.map(a=>{
           const s = serviceById(a.serviceId);
@@ -1196,6 +1281,11 @@ function renderAgenda(view){
     `}
   `;
   view.querySelector('#btn-new-appt')?.addEventListener('click', openApptModal);
+  view.querySelectorAll('.wk-day').forEach(b=>b.addEventListener('click', ()=>{ agendaDate = b.dataset.day; renderAgenda(view); }));
+  view.querySelector('#wk-prev')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(-1); renderAgenda(view); });
+  view.querySelector('#wk-next')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(1); renderAgenda(view); });
+  view.querySelector('#wk-today')?.addEventListener('click', ()=>{ agendaDate = todayISO(); renderAgenda(view); });
+  view.querySelector('#wk-picker')?.addEventListener('change', e=>{ if(e.target.value){ agendaDate = e.target.value; renderAgenda(view); } });
   view.querySelectorAll('[data-conclude]').forEach(b=>b.addEventListener('click', ()=>concludeAppt(b.dataset.conclude)));
   view.querySelectorAll('[data-mark-deposit]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{ s.appointments.find(a=>a.id===b.dataset.markDeposit).depositStatus='pago'; });
@@ -1272,35 +1362,60 @@ function requestReviewModal(apptId){
 function concludeAppt(id){
   const session = openSession();
   if(!session){ showToast('Abra o caixa antes de concluir atendimentos.'); route='caixa'; render(); return; }
-  update(s=>{
-    const appt = s.appointments.find(a=>a.id===id);
-    appt.status='concluido';
-    const service = serviceById(appt.serviceId);
-    const sess = s.cashSessions.find(c=>c.status==='aberto');
+  const appt = state.appointments.find(a=>a.id===id);
+  const service = serviceById(appt.serviceId);
+  if(!service){ showToast('Serviço não encontrado.'); return; }
 
-    // Se o cliente é assinante do clube e está em dia, o serviço pode ser
-    // gratuito (se estiver incluso no plano) ou ter desconto — mas se
-    // estiver em atraso, cobra o valor cheio normalmente.
-    const member = s.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
-    let basePrice = service.price;
-    let priceNote = '';
-    if(member && member.status==='pago'){
-      const plan = s.subscriptionPlans.find(p=>p.id===member.planId);
-      if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
-        basePrice = 0;
-        priceNote = ' (incluso no clube)';
-      } else if(plan && plan.discountPercent>0){
-        basePrice = service.price * (1 - plan.discountPercent/100);
-        priceNote = ` (${plan.discountPercent}% desconto clube)`;
-      }
+  // Calcula o valor considerando o clube de assinatura
+  const member = state.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
+  let basePrice = service.price;
+  let priceNote = '';
+  if(member && member.status==='pago'){
+    const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
+    if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
+      basePrice = 0; priceNote = ' (incluso no clube)';
+    } else if(plan && plan.discountPercent>0){
+      basePrice = service.price * (1 - plan.discountPercent/100);
+      priceNote = ` (${plan.discountPercent}% desconto clube)`;
     }
+  } else if(member && member.status==='atrasado'){
+    priceNote = ' (clube em atraso — valor cheio)';
+  }
+  const netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
 
-    const netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
-    sess.entries.push({id:uid(), type:'entrada', desc:`${service.name} — ${appt.client}${priceNote}${appt.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
-    const client = s.clients.find(c=>c.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
-    if(client) maybeAwardReferral(client);
+  const finish = (method)=>{
+    update(s=>{
+      const ap = s.appointments.find(a=>a.id===id);
+      ap.status='concluido';
+      ap.paymentMethod = method;
+      const sess = s.cashSessions.find(c=>c.status==='aberto');
+      sess.entries.push({id:uid(), type:'entrada', method, desc:`${service.name} — ${ap.client}${priceNote}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
+      const client = s.clients.find(c=>c.name.trim().toLowerCase()===ap.client.trim().toLowerCase());
+      if(client) maybeAwardReferral(client);
+    });
+    closeModal();
+    showToast(`Atendimento concluído — ${BRL(netAmount)} em ${methodLabelPay(method)}.`);
+  };
+
+  if(netAmount<=0){ finish('dinheiro'); return; }
+
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Concluir atendimento</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:6px;">${esc(appt.client)} · ${esc(service.name)}${priceNote}</div>
+      <div class="font-mono" style="font-size:26px;color:var(--gold-bright);margin-bottom:18px;">${BRL(netAmount)}</div>
+      <label>Forma de pagamento</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+        ${PAYMENT_METHODS.map(m=>`<button class="btn btn-ghost pay-method" data-method="${m.id}" style="justify-content:center;padding:14px 10px;font-size:13.5px;">${m.label}</button>`).join('')}
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelectorAll('.pay-method').forEach(b=>b.addEventListener('click', ()=>finish(b.dataset.method)));
   });
-  showToast('Atendimento concluído e lançado no caixa.');
 }
 function openApptModal(){
   if(state.professionals.length===0 || state.services.length===0){
@@ -1386,11 +1501,25 @@ function renderCaixa(view){
     ${pageHeader('Caixa', 'Fluxo de caixa do dia', session ? `<button class="btn btn-ghost" id="btn-close-cash" style="border-color:var(--bad);color:var(--bad);">Fechar caixa</button>` : `<button class="btn btn-gold" id="btn-open-cash">${ICON.plus} Abrir caixa</button>`)}
 
     ${!session ? emptyState('O caixa de hoje ainda não foi aberto.', 'Abra o caixa informando o valor inicial em dinheiro.') : `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px;">
         ${statCard('Abertura', BRL(session.openingAmount), 'às '+new Date(session.openedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), 'ok')}
-        ${statCard('Entradas', BRL(totals.in), 'no dia', 'ok')}
+        ${statCard('Faturamento do dia', BRL(totals.in), 'todas as formas de pagamento', 'ok')}
         ${statCard('Saídas', BRL(totals.out), 'no dia', 'bad')}
-        ${statCard('Saldo atual', BRL(totals.balance), 'abertura + entradas − saídas', 'ok')}
+        ${statCard('Dinheiro na gaveta', BRL(totals.balance), 'abertura + dinheiro − saídas', 'ok')}
+      </div>
+
+      <div class="card" style="padding:16px 18px;margin-bottom:22px;">
+        <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:12px;">Entradas por forma de pagamento</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px;">
+          ${PAYMENT_METHODS.map(m=>`
+            <div>
+              <div style="font-size:11.5px;color:var(--muted-2);display:flex;align-items:center;gap:5px;">
+                ${m.label}${m.inDrawer?`<span style="font-size:9.5px;color:var(--gold-bright);">na gaveta</span>`:''}
+              </div>
+              <div class="font-mono" style="font-size:17px;color:${totals.byMethod[m.id]>0?(m.inDrawer?'var(--gold-bright)':'var(--ink)'):'var(--muted-2)'};">${BRL(totals.byMethod[m.id]||0)}</div>
+            </div>
+          `).join('')}
+        </div>
       </div>
 
       <div style="display:flex;gap:10px;margin-bottom:18px;">
@@ -1405,7 +1534,7 @@ function renderCaixa(view){
             <div style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};">${e.type==='entrada'?ICON.arrowUp:ICON.arrowDown}</div>
             <div style="flex:1;">
               <div style="font-size:13.5px;">${esc(e.desc)}</div>
-              <div style="font-size:11.5px;color:var(--muted-2);">${e.time} ${e.auto?'· automático':'· manual'}</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">${e.time} · ${methodLabelPay(e.method)} ${e.auto?'· automático':'· manual'}</div>
             </div>
             <div class="font-mono" style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};font-size:14px;">${e.type==='entrada'?'+':'−'} ${BRL(e.amount)}</div>
           </div>
@@ -1510,6 +1639,10 @@ function addEntryModal(type){
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Descrição</label><input id="f-desc" placeholder="${isIn?'Ex: Venda de produto':'Ex: Compra de material'}" style="width:100%;"></div>
         <div><label>Valor</label><input id="f-amount" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;"></div>
+        <div><label>Forma de pagamento</label><select id="f-method" style="width:100%;">
+          ${PAYMENT_METHODS.map(m=>`<option value="${m.id}">${m.label}</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Só o que for em dinheiro entra no saldo físico da gaveta.</div></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">Lançar</button>
       </div>
     </div>
@@ -1518,9 +1651,10 @@ function addEntryModal(type){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const desc = root.querySelector('#f-desc').value.trim();
       const amount = parseFloat(root.querySelector('#f-amount').value);
+      const method = root.querySelector('#f-method').value;
       if(!desc || isNaN(amount) || amount<=0){ showToast('Preencha descrição e valor.'); return; }
       update(s=>{
-        s.cashSessions.find(c=>c.status==='aberto').entries.push({id:uid(), type, desc, amount, time:new Date().toTimeString().slice(0,5), auto:false});
+        s.cashSessions.find(c=>c.status==='aberto').entries.push({id:uid(), type, method, desc, amount, time:new Date().toTimeString().slice(0,5), auto:false});
       });
       closeModal();
     });
@@ -1823,6 +1957,18 @@ function renderProfissionais(view){
   view.innerHTML = `
     ${pageHeader('Profissionais', state.professionals.length+' cadastrado(s)'+(limits.maxProfessionals!==Infinity?` de ${limits.maxProfessionals} (plano ${limits.label})`:''), `<button class="btn btn-gold" id="btn-new-prof" ${atLimit?'disabled title="Limite do plano Basic atingido"':''}>${ICON.plus} Novo profissional</button>`)}
     ${atLimit ? `<div class="pill pill-warn" style="display:block;margin-bottom:14px;padding:10px 14px;">Você atingiu o limite de ${limits.maxProfessionals} profissionais do plano Basic. <a href="#" id="lnk-upgrade-prof" style="color:var(--gold-bright);text-decoration:underline;">Assine o plano Pro</a> para cadastrar profissionais ilimitados.</div>` : ''}
+    ${isOwnerLevel() && state.onlineBooking?.slug ? `
+      <div class="card" style="padding:16px 18px;margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+          <div style="min-width:0;">
+            <div style="font-size:12px;color:var(--muted-2);margin-bottom:5px;">Link de acesso da equipe — cada profissional entra pelo próprio celular usando o PIN dele</div>
+            <div class="font-mono" style="font-size:12.5px;color:var(--gold-bright);word-break:break-all;">${window.location.origin}${window.location.pathname}?equipe=${esc(state.onlineBooking.slug)}</div>
+          </div>
+          <button class="btn btn-ghost" id="btn-copy-team-link" style="flex-shrink:0;">${ICON.copy} Copiar link</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:10px;">Use PINs de 6 a 8 dígitos e evite sequências óbvias — quem tiver o link e o PIN entra na visão daquele profissional.</div>
+      </div>
+    ` : ''}
     ${state.professionals.length===0 ? emptyState('Nenhum profissional cadastrado.') : `
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
         ${state.professionals.map(p=>{
@@ -1855,6 +2001,11 @@ function renderProfissionais(view){
     profModal();
   });
   view.querySelector('#lnk-upgrade-prof')?.addEventListener('click', (e)=>{ e.preventDefault(); renderPaywallUpgrade('profissionais'); });
+  view.querySelector('#btn-copy-team-link')?.addEventListener('click', ()=>{
+    const link = `${window.location.origin}${window.location.pathname}?equipe=${state.onlineBooking.slug}`;
+    navigator.clipboard?.writeText(link);
+    showToast('Link da equipe copiado.');
+  });
   view.querySelectorAll('[data-edit-prof]').forEach(b=>b.addEventListener('click', ()=>profModal(state.professionals.find(p=>p.id===b.dataset.editProf))));
   view.querySelectorAll('[data-del-prof]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{ s.professionals = s.professionals.filter(p=>p.id!==b.dataset.delProf); });
@@ -1884,7 +2035,7 @@ function profModal(existing){
         </div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
-          <div style="flex:1;"><label>PIN de login (4 dígitos)</label><input id="f-pin" maxlength="4" value="${esc(existing?.pin) || String(1000+Math.floor(Math.random()*9000))}" style="width:100%;"></div>
+          <div style="flex:1;"><label>PIN de login (4 a 8 dígitos)</label><input id="f-pin" maxlength="8" inputmode="numeric" value="${esc(existing?.pin) || String(100000+Math.floor(Math.random()*900000))}" style="width:100%;"><div style="font-size:10.5px;color:var(--muted-2);margin-top:4px;">Usado no link de acesso da equipe. Quanto mais dígitos, mais seguro.</div></div>
         </div>
 
         <label>Dias de trabalho</label>
@@ -1964,7 +2115,14 @@ function profModal(existing){
 /* ============ SERVIÇOS ============ */
 function renderServicos(view){
   view.innerHTML = `
-    ${pageHeader('Serviços', state.services.length+' cadastrado(s)', `<button class="btn btn-gold" id="btn-new-svc">${ICON.plus} Novo serviço</button>`)}
+    ${pageHeader('Serviços', state.services.length+' cadastrado(s)', `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input type="file" id="f-import-svc" accept=".csv,.xlsx,.xls,.xlsm" style="display:none;">
+        <button class="btn btn-ghost" id="btn-import-svc">${ICON.arrowUp} Importar planilha</button>
+        <button class="btn btn-gold" id="btn-new-svc">${ICON.plus} Novo serviço</button>
+      </div>
+    `)}
+    <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Importação aceita Excel (.xlsx) ou CSV. Colunas esperadas, nesta ordem: Serviço, Valor, Duração (min), Fichas do clube.</div>
     ${state.services.length===0 ? emptyState('Nenhum serviço cadastrado.') : `
       <table>
         <thead><tr><th>Serviço</th><th>Valor</th><th>Duração</th><th>Sinal</th><th>Fichas</th><th></th></tr></thead>
@@ -1985,6 +2143,13 @@ function renderServicos(view){
     `}
   `;
   view.querySelector('#btn-new-svc').addEventListener('click', ()=>svcModal());
+  view.querySelector('#btn-import-svc').addEventListener('click', ()=>view.querySelector('#f-import-svc').click());
+  view.querySelector('#f-import-svc').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    readSpreadsheetFile(file, importServicesFromRows);
+    e.target.value = '';
+  });
   view.querySelectorAll('[data-edit-svc]').forEach(b=>b.addEventListener('click', ()=>svcModal(state.services.find(s=>s.id===b.dataset.editSvc))));
   view.querySelectorAll('[data-del-svc]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{ s.services = s.services.filter(sv=>sv.id!==b.dataset.delSvc); });
@@ -2513,28 +2678,79 @@ function parseCSVLine(line, delim){
   out.push(cur);
   return out.map(v=>v.trim());
 }
-function importClientsFromCSV(text){
-  const lines = text.split(/\r?\n/).filter(l=>l.trim().length>0);
-  if(lines.length===0){ showToast('Arquivo vazio.'); return; }
-  const delim = lines[0].includes(';') ? ';' : ',';
-  let rows = lines.map(l=>parseCSVLine(l, delim));
-  const headerLower = rows[0].map(h=>h.toLowerCase());
+/* Lê um arquivo (.xlsx, .xls ou .csv) e devolve as linhas como matriz. */
+function readSpreadsheetFile(file, onRows){
+  const isExcel = /\.(xlsx|xls|xlsm)$/i.test(file.name);
+  const reader = new FileReader();
+  reader.onerror = () => showToast('Não foi possível ler o arquivo.');
+  reader.onload = () => {
+    try{
+      if(isExcel){
+        if(typeof XLSX==='undefined'){ showToast('Leitor de Excel não carregou. Verifique sua conexão e recarregue a página.'); return; }
+        const wb = XLSX.read(new Uint8Array(reader.result), {type:'array'});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, blankrows:false, defval:''});
+        onRows(rows.map(r=>r.map(cell=>String(cell??'').trim())));
+      } else {
+        const text = reader.result;
+        const lines = String(text).split(/\r?\n/).filter(l=>l.trim().length>0);
+        if(lines.length===0){ showToast('Arquivo vazio.'); return; }
+        const delim = lines[0].includes(';') ? ';' : ',';
+        onRows(lines.map(l=>parseCSVLine(l, delim)));
+      }
+    }catch(err){
+      console.error(err);
+      showToast('Não foi possível interpretar o arquivo. Verifique o formato.');
+    }
+  };
+  if(isExcel) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file, 'UTF-8');
+}
+
+function importClientsFromRows(rows){
+  if(!rows || rows.length===0){ showToast('Arquivo vazio.'); return; }
+  const headerLower = rows[0].map(h=>String(h).toLowerCase());
   if(headerLower.some(h=>h.includes('nome'))) rows = rows.slice(1);
   let added=0, updated=0;
   update(s=>{
     rows.forEach(r=>{
       const [name, phone, birthdayRaw, pointsRaw, notes] = r;
-      if(!name) return;
+      if(!name || !String(name).trim()) return;
       let birthday = '';
-      const m = (birthdayRaw||'').match(/^(\d{1,2})\/(\d{1,2})$/);
+      const m = String(birthdayRaw||'').match(/^(\d{1,2})\/(\d{1,2})$/);
       if(m) birthday = m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
       const points = parseInt(pointsRaw)||0;
-      const existing = s.clients.find(c=>c.name.trim().toLowerCase()===name.trim().toLowerCase());
+      const existing = s.clients.find(c=>c.name.trim().toLowerCase()===String(name).trim().toLowerCase());
       if(existing){
         Object.assign(existing, {phone:phone||existing.phone, birthday:birthday||existing.birthday, points: pointsRaw?points:existing.points, notes:notes||existing.notes});
         updated++;
       }else{
-        s.clients.push({id:uid(), name:name.trim(), phone:phone||'', birthday, points, notes:notes||''});
+        s.clients.push({id:uid(), name:String(name).trim(), phone:phone||'', birthday, points, notes:notes||''});
+        added++;
+      }
+    });
+  });
+  showToast(`Importação concluída: ${added} novo(s), ${updated} atualizado(s).`);
+}
+
+function importServicesFromRows(rows){
+  if(!rows || rows.length===0){ showToast('Arquivo vazio.'); return; }
+  const headerLower = rows[0].map(h=>String(h).toLowerCase());
+  if(headerLower.some(h=>h.includes('serv') || h.includes('nome'))) rows = rows.slice(1);
+  let added=0, updated=0;
+  update(s=>{
+    rows.forEach(r=>{
+      const [name, priceRaw, durationRaw, fichasRaw] = r;
+      if(!name || !String(name).trim()) return;
+      const price = parseFloat(String(priceRaw||'').replace(/[^\d,.-]/g,'').replace(',','.')) || 0;
+      const duration = parseInt(durationRaw) || 30;
+      const clubFichas = parseInt(fichasRaw) || 0;
+      const existing = s.services.find(x=>x.name.trim().toLowerCase()===String(name).trim().toLowerCase());
+      if(existing){
+        Object.assign(existing, {price: priceRaw?price:existing.price, duration: durationRaw?duration:existing.duration, clubFichas: fichasRaw?clubFichas:existing.clubFichas});
+        updated++;
+      }else{
+        s.services.push({id:uid(), name:String(name).trim(), price, duration, requireDeposit:false, depositType:'percentual', depositValue:30, clubFichas});
         added++;
       }
     });
@@ -2545,13 +2761,13 @@ function renderClientes(view){
   view.innerHTML = `
     ${pageHeader('Clientes', state.clients.length+' cadastrado(s)', `
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <input type="file" id="f-import-file" accept=".csv" style="display:none;">
-        <button class="btn btn-ghost" id="btn-import-client">${ICON.arrowUp} Importar CSV</button>
+        <input type="file" id="f-import-file" accept=".csv,.xlsx,.xls,.xlsm" style="display:none;">
+        <button class="btn btn-ghost" id="btn-import-client">${ICON.arrowUp} Importar planilha</button>
         <button class="btn btn-ghost" id="btn-export-client">${ICON.arrowDown} Exportar CSV</button>
         <button class="btn btn-gold" id="btn-new-client">${ICON.plus} Novo cliente</button>
       </div>
     `)}
-    <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Importação espera colunas: Nome, Telefone, Aniversario(DD/MM), Pontos, Observacoes — separadas por vírgula ou ponto e vírgula.</div>
+    <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Aceita Excel (.xlsx) ou CSV. Colunas esperadas, nesta ordem: Nome, Telefone, Aniversario(DD/MM), Pontos, Observacoes.</div>
     ${state.clients.length===0 ? emptyState('Nenhum cliente cadastrado ainda.') : `
       <table>
         <thead><tr><th>Cliente</th><th>Contato</th><th>Indicações</th><th>Visitas</th><th>Total gasto</th><th>Última visita</th><th></th></tr></thead>
@@ -2582,10 +2798,8 @@ function renderClientes(view){
   view.querySelector('#f-import-file').addEventListener('change', (e)=>{
     const file = e.target.files[0];
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = () => importClientsFromCSV(reader.result);
-    reader.onerror = () => showToast('Não foi possível ler o arquivo.');
-    reader.readAsText(file, 'UTF-8');
+    readSpreadsheetFile(file, importClientsFromRows);
+    e.target.value = '';
   });
   view.querySelectorAll('[data-edit-client]').forEach(b=>b.addEventListener('click', ()=>clientModal(state.clients.find(c=>c.id===b.dataset.editClient))));
   view.querySelectorAll('[data-del-client]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.clients = s.clients.filter(c=>c.id!==b.dataset.delClient); })));
@@ -3636,6 +3850,63 @@ async function submitPublicBooking(){
 }
 
 
+/* ============ ACESSO DA EQUIPE (link ?equipe) ============ */
+let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
+let agendaDate = null; // dia visível na agenda (não é salvo no banco)
+
+async function renderTeamLogin(slug, errorMsg){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13px;">Carregando...</div></div></div>`;
+  const { data, error } = await supa.rpc('get_shop_team', { p_slug: slug });
+  if(error || !data || !data.shop_id){
+    app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13.5px;">Link de acesso não encontrado.</div></div></div>`;
+    return;
+  }
+  const team = data.team || [];
+  app.innerHTML = `
+    <div class="auth-bg">
+      <div class="auth-card">
+        <div class="auth-inner">
+          ${data.logo ? `<img src="${data.logo}" style="width:56px;height:56px;object-fit:contain;display:block;margin:0 auto 14px;">` : ''}
+          <div class="auth-eyebrow">Acesso da equipe</div>
+          <div class="auth-title font-display" style="font-weight:600;font-size:22px;">${esc(data.shop_name||'Barbearia')}</div>
+          <div class="auth-subtitle">Escolha seu nome e digite seu PIN.</div>
+          ${errorMsg?`<div class="auth-error">${esc(errorMsg)}</div>`:''}
+          ${team.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13px;">Nenhum profissional cadastrado ainda.</div>` : `
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              ${team.map(p=>`
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13.5px;font-weight:500;">${esc(p.name)}</div>
+                    <div style="font-size:11px;color:var(--muted-2);">${roleLabel(p.accessRole)}</div>
+                  </div>
+                  <input type="password" inputmode="numeric" maxlength="8" placeholder="PIN" data-team-pin="${p.id}" style="width:84px;text-align:center;">
+                  <button class="btn btn-gold" style="padding:9px 12px;" data-team-login="${p.id}">Entrar</button>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+  app.querySelectorAll('[data-team-login]').forEach(b=>b.addEventListener('click', async ()=>{
+    const profId = b.dataset.teamLogin;
+    const pin = app.querySelector(`[data-team-pin="${profId}"]`).value.trim();
+    if(!pin){ renderTeamLogin(slug, 'Digite seu PIN.'); return; }
+    b.disabled = true; b.textContent = '...';
+    const { data: res, error: err } = await supa.rpc('team_login', { p_shop_id: data.shop_id, p_prof_id: profId, p_pin: pin });
+    b.disabled = false; b.textContent = 'Entrar';
+    if(err || !res || res.error){ renderTeamLogin(slug, res?.error || 'Não foi possível entrar.'); return; }
+    teamSession = { shopId: data.shop_id, profId, pin };
+    currentShop = { id: data.shop_id, data: res.data, plan: 'pro', subscription_status: 'active', email: '' };
+    const prof = (res.data.professionals||[]).find(p=>p.id===profId);
+    userSession = { role: prof?.accessRole || 'profissional', professionalId: profId };
+    route = 'dashboard';
+    await loadState();
+  }));
+}
+
 function authShell(inner){
   document.getElementById('app').innerHTML = `
     <div class="auth-bg">
@@ -3924,6 +4195,8 @@ async function boot(){
   if(legalPage==='termos' || legalPage==='privacidade'){ renderLegalPage(legalPage); return; }
   const bookSlug = urlParams.get('agendar');
   if(bookSlug){ await renderPublicBooking(bookSlug); return; }
+  const teamSlug = urlParams.get('equipe');
+  if(teamSlug){ await renderTeamLogin(teamSlug); return; }
   const { data: { session } } = await supa.auth.getSession();
   if(!session){ renderAuthScreen('login'); return; }
   let shop = await ensureShop();
