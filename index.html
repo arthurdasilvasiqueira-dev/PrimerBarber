@@ -24,22 +24,36 @@
     --bad:#c17b6a;
     --bad-bg:#2a201c;
     --warn:#d0a94f;
+    /* painel lateral — no tema escuro acompanha o resto */
+    --side-bg:#1b1712;
+    --side-ink:#f3eee4;
+    --side-muted:#a79c89;
+    --side-muted-2:#7d745f;
+    --side-border:#3a3223;
+    --side-hover:#2a2319;
   }
   :root[data-theme="light"]{
-    --bg:#f7f4ee;
+    --bg:#f4f4f5;
     --panel:#ffffff;
-    --panel-2:#f1ece0;
-    --border:#e2d8c3;
-    --gold:#a9793a;
-    --gold-bright:#8a5f28;
-    --ink:#221d15;
-    --muted:#6b6252;
-    --muted-2:#8f8571;
-    --ok:#3d7a45;
-    --ok-bg:#e6f0e3;
-    --bad:#a8402d;
-    --bad-bg:#f6e3de;
-    --warn:#8a6210;
+    --panel-2:#f0f0f1;
+    --border:#e0e0e2;
+    --gold:#b8912f;
+    --gold-bright:#8f6f19;
+    --ink:#14161a;
+    --muted:#5c6067;
+    --muted-2:#8b9098;
+    --ok:#2f7a3f;
+    --ok-bg:#e8f2ea;
+    --bad:#b03328;
+    --bad-bg:#fbe9e7;
+    --warn:#8a6a10;
+    /* painel lateral segue preto mesmo no tema claro */
+    --side-bg:#101215;
+    --side-ink:#f5f5f6;
+    --side-muted:#a3a8b0;
+    --side-muted-2:#767c86;
+    --side-border:#262a30;
+    --side-hover:#1c2026;
   }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;}
@@ -69,9 +83,13 @@
 
   .divider-blade{height:2px;border-radius:2px;background:linear-gradient(90deg, transparent, var(--gold) 15%, var(--gold-bright) 50%, var(--gold) 85%, transparent);opacity:.55;}
 
-  .nav-item{display:flex;align-items:center;gap:11px;padding:10px 14px;border-radius:10px;color:var(--muted);font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;border:1px solid transparent;}
-  .nav-item:hover{color:var(--ink);background:var(--panel-2);}
-  .nav-item.active{color:var(--gold-bright);background:var(--panel-2);border-color:var(--border);}
+  .nav-item{display:flex;align-items:center;gap:11px;padding:10px 14px;border-radius:10px;color:var(--side-muted);font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;border:1px solid transparent;}
+  .nav-item:hover{color:var(--side-ink);background:var(--side-hover);}
+  .nav-item.active{color:#e3c078;background:var(--side-hover);border-color:var(--side-border);}
+  /* dentro do painel lateral, o texto segue a paleta escura */
+  .sidebar{color:var(--side-ink);}
+  .sidebar .btn-ghost{border-color:var(--side-border);color:var(--side-muted);}
+  .sidebar .btn-ghost:hover{border-color:#c9a24b;color:#e3c078;}
   .nav-item svg{flex-shrink:0;}
 
   .pill{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;letter-spacing:.02em;}
@@ -867,14 +885,14 @@ function render(){
   const activeProf = userSession.professionalId ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
   app.innerHTML = `
     <div style="display:flex;min-height:100vh;">
-      <aside class="sidebar" style="width:236px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);padding:22px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;">
+      <aside class="sidebar" style="width:236px;flex-shrink:0;background:var(--side-bg);border-right:1px solid var(--side-border);padding:22px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;gap:9px;padding:0 8px 22px;">
-          <div style="width:34px;height:34px;border-radius:9px;background:var(--panel-2);display:flex;align-items:center;justify-content:center;padding:5px;">
+          <div style="width:34px;height:34px;border-radius:9px;background:var(--side-hover);display:flex;align-items:center;justify-content:center;padding:5px;">
             <img src="${APP_LOGO_ICON}" style="width:100%;height:100%;object-fit:contain;">
           </div>
           <div>
             <div class="font-display" style="font-size:19px;font-weight:600;line-height:1;">Primer Barber</div>
-            <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-top:2px;">Gestão de barbearia</div>
+            <div style="font-size:10.5px;color:var(--side-muted-2);letter-spacing:.08em;text-transform:uppercase;margin-top:2px;">Gestão de barbearia</div>
           </div>
         </div>
         <nav style="display:flex;flex-direction:column;gap:14px;flex:1;">
@@ -882,7 +900,7 @@ function render(){
             const items = g.items.filter(n=>navAllowedForSession().includes(n.id));
             if(items.length===0) return '';
             return `<div>
-              <div style="font-size:10.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.08em;padding:0 10px;margin-bottom:5px;">${g.label}</div>
+              <div style="font-size:10.5px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.08em;padding:0 10px;margin-bottom:5px;">${g.label}</div>
               <div style="display:flex;flex-direction:column;gap:3px;">
                 ${items.map(n=>`<div class="nav-item ${route===n.id?'active':''}" data-route="${n.id}">${n.icon}<span>${n.label}</span></div>`).join('')}
               </div>
@@ -891,21 +909,21 @@ function render(){
         </nav>
         <div class="divider-blade" style="margin:16px 6px;"></div>
         <div style="padding:0 8px;margin-bottom:12px;">
-          <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Status do caixa</div>
+          <div style="font-size:11px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Status do caixa</div>
           <div class="pill ${cashOpen?'pill-ok':'pill-bad'}">${cashOpen?'Caixa aberto':'Caixa fechado'}</div>
         </div>
         <div style="padding:0 8px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;">Tema</div>
-          <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-            <button class="theme-toggle-btn" data-theme-choice="dark" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference!=='light'?'var(--gold)':'var(--panel-2)'};color:${state.themePreference!=='light'?'#1a1610':'var(--muted)'};">Escuro</button>
-            <button class="theme-toggle-btn" data-theme-choice="light" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference==='light'?'var(--gold)':'var(--panel-2)'};color:${state.themePreference==='light'?'#1a1610':'var(--muted)'};">Claro</button>
+          <div style="font-size:11px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.06em;">Tema</div>
+          <div style="display:flex;border:1px solid var(--side-border);border-radius:8px;overflow:hidden;">
+            <button class="theme-toggle-btn" data-theme-choice="dark" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference!=='light'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference!=='light'?'#1a1610':'var(--side-muted)'};">Escuro</button>
+            <button class="theme-toggle-btn" data-theme-choice="light" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference==='light'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference==='light'?'#1a1610':'var(--side-muted)'};">Claro</button>
           </div>
         </div>
-        <div style="padding:10px 8px 0;border-top:1px solid var(--border);">
-          <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 6px;">${ICON.shield} Perfil ativo</div>
+        <div style="padding:10px 8px 0;border-top:1px solid var(--side-border);">
+          <div style="font-size:11px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 6px;">${ICON.shield} Perfil ativo</div>
           <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${userSession.role==='dono' ? 'Dono / Gerente' : (activeProf?.name || 'Profissional') + (userSession.role==='admin'?' · Admin':userSession.role==='recepcionista'?' · Recepcionista':'')}</div>
           <button class="btn btn-ghost" id="btn-switch-profile" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;margin-bottom:6px;">Trocar perfil</button>
-          <button class="btn btn-ghost" id="btn-logout" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;color:var(--muted);">Sair</button>
+          <button class="btn btn-ghost" id="btn-logout" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;">Sair</button>
         </div>
       </aside>
       <main style="flex:1;padding:26px 30px 60px;max-width:1180px;">
@@ -2468,11 +2486,18 @@ async function syncAsaas(){
   }
   showToast('Sincronizando com o Asaas...');
   const { data: result, error } = await supa.functions.invoke('asaas-sync', { body: { action:'sync_status' } });
-  if(error || result?.error){ showToast(result?.error || 'Não foi possível sincronizar com o Asaas.'); return; }
+  if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
+  if(result?.error){ showToast(result.error); return; }
+  if(result?.note){ showToast(result.note); return; }
   update(s=>{
     (result.results||[]).forEach(r=>{
       const m = s.subscriptionMembers.find(x=>x.id===r.memberId);
-      if(m){ m.status = r.status; m.lastPaymentDate = r.lastPaymentDate; m.lastPaymentAmount = r.lastPaymentAmount; }
+      if(m){
+        m.status = r.status;
+        m.lastPaymentDate = r.lastPaymentDate;
+        m.lastPaymentAmount = r.lastPaymentAmount;
+        if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
+      }
     });
   });
   showToast(`Sincronizado — ${(result.results||[]).length} assinante(s) atualizados.`);
@@ -2581,7 +2606,8 @@ function memberModal(existing){
           body: { action:'create_subscription', memberId: newMemberId, memberName:name, memberPhone:phone, planPrice:plan.price, planName:plan.name }
         });
         submitBtn.disabled = false; submitBtn.textContent = isEdit?'Salvar':'Adicionar membro';
-        if(error || result?.error){ showToast(result?.error || 'Não foi possível criar a cobrança no Asaas.'); return; }
+        if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
+        if(result?.error){ showToast(result.error); return; }
         update(s=>{ s.subscriptionMembers.push({id:newMemberId, asaasChargeId:'', asaasSubscriptionId:result.subscriptionId, asaasCustomerId:result.customerId, invoiceUrl:result.invoiceUrl, lastPaymentDate:null, lastPaymentAmount:0, ...data}); });
         showToast('Assinante cadastrado e cobrança recorrente criada no Asaas.');
         closeModal();
@@ -2735,9 +2761,13 @@ function renderConfig(view){
             <option value="production" ${a.env==='production'?'selected':''}>Produção</option>
           </select>
         </div>
-        <div><label>API Key do Asaas</label><input id="f-key" type="password" value="${a.apiKey}" placeholder="$aact_..." style="width:100%;"></div>
-        <div><label>Wallet ID</label><input id="f-wallet" value="${a.walletId}" placeholder="00000000-0000-0000-0000-000000000000" style="width:100%;"></div>
-        <button class="btn btn-gold" id="f-save" style="justify-content:center;width:fit-content;">Salvar configuração</button>
+        <div><label>API Key do Asaas</label><input id="f-key" type="password" value="${esc(a.apiKey)}" placeholder="$aact_..." style="width:100%;"></div>
+        <div><label>Wallet ID (opcional)</label><input id="f-wallet" value="${esc(a.walletId)}" placeholder="deixe em branco se não souber" style="width:100%;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-gold" id="f-save" style="justify-content:center;">Salvar configuração</button>
+          <button class="btn btn-ghost" id="f-test" style="justify-content:center;">${ICON.check} Testar conexão</button>
+        </div>
+        <div id="asaas-test-result" style="font-size:12.5px;line-height:1.6;"></div>
       </div>
     </div>
 
@@ -2762,6 +2792,26 @@ function renderConfig(view){
       s.asaas.walletId = view.querySelector('#f-wallet').value.trim();
     });
     showToast('Configuração salva.');
+  });
+  view.querySelector('#f-test').addEventListener('click', async (e)=>{
+    const btn = e.currentTarget;
+    const out = view.querySelector('#asaas-test-result');
+    if(!state.asaas.apiKey){
+      out.innerHTML = `<span style="color:var(--bad);">Salve a API Key primeiro (botão "Salvar configuração").</span>`;
+      return;
+    }
+    btn.disabled = true; out.innerHTML = '<span style="color:var(--muted);">Testando conexão com o Asaas...</span>';
+    const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'test_connection' } });
+    btn.disabled = false;
+    if(error){
+      out.innerHTML = `<span style="color:var(--bad);">Não foi possível chamar o servidor: ${esc(error.message||'erro desconhecido')}. Verifique se a função asaas-sync foi publicada.</span>`;
+      return;
+    }
+    if(res?.error){
+      out.innerHTML = `<span style="color:var(--bad);">${esc(res.error)}</span>`;
+      return;
+    }
+    out.innerHTML = `<span style="color:var(--ok);">✓ Conectado com sucesso ao Asaas (${res.env==='production'?'Produção':'Sandbox'}) — conta: <b>${esc(res.accountName)}</b></span>`;
   });
   view.querySelector('#f-sync').addEventListener('click', syncAsaas);
   view.querySelector('[data-goto="clube"]')?.addEventListener('click', ()=>{ route='clube'; render(); });
