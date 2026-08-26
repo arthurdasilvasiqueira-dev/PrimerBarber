@@ -4347,27 +4347,64 @@ function drawPublicPlans(){
 
         <h2 class="font-display" style="font-size:22px;font-weight:600;margin-bottom:18px;text-align:center;">Conheça nossos planos</h2>
 
-        ${plans.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13.5px;padding:40px 0;">Nenhum plano disponível no momento.</div>` : `
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:18px;">
-            ${plans.map(p=>`
-              <div class="card" style="padding:24px 22px;position:relative;display:flex;flex-direction:column;${p.featured?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold);':''}">
-                ${p.featured?`<div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--gold);color:#12140f;font-size:11px;font-weight:700;padding:4px 14px;border-radius:999px;white-space:nowrap;">★ Melhor opção</div>`:''}
-                <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:14px;${p.featured?'margin-top:6px;':''}">${esc(p.name)}</div>
-                ${(p.benefitsList||[]).length ? `
-                  <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;">Incluso:</div>
-                  <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:20px;flex:1;">
-                    ${p.benefitsList.map(b=>`<div style="display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted);line-height:1.5;"><span style="color:var(--gold-bright);flex-shrink:0;">✓</span><span>${esc(b)}</span></div>`).join('')}
-                  </div>
-                ` : `<div style="flex:1;"></div>`}
-                <div style="margin-bottom:16px;">
-                  <span class="font-mono" style="font-size:30px;font-weight:600;color:var(--gold-bright);">${BRL(p.price)}</span>
+        ${plans.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13.5px;padding:40px 0;">Nenhum plano disponível no momento.</div>` : (()=>{
+          // Ordena pelos mais assinados. Só entram no "Top" os planos que
+          // realmente têm assinantes — plano sem ninguém não vira Top 1.
+          const ordenados = [...plans].sort((a,b)=>{
+            const d = (b.subscribers||0) - (a.subscribers||0);
+            if(d!==0) return d;
+            if(a.featured !== b.featured) return a.featured ? -1 : 1;
+            return 0;
+          });
+          const comAssinantes = ordenados.filter(p=>(p.subscribers||0) > 0);
+          const top = comAssinantes.slice(0,3);
+          const resto = ordenados.filter(p=>!top.includes(p));
+
+          const cardHtml = (p, rank)=>{
+            const medal = rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':'';
+            const destaque = rank<=3 && rank>0;
+            return `
+              <div class="card" style="padding:26px 22px 22px;position:relative;display:flex;flex-direction:column;${destaque?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold);':''}">
+                ${destaque ? `<div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--gold);color:#12140f;font-size:11px;font-weight:700;padding:4px 14px;border-radius:999px;white-space:nowrap;">${medal} Top ${rank} mais assinado</div>`
+                  : (p.featured ? `<div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--panel-2);color:var(--gold-bright);border:1px solid var(--gold);font-size:11px;font-weight:700;padding:4px 14px;border-radius:999px;white-space:nowrap;">★ Melhor opção</div>` : '')}
+
+                <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:4px;">${esc(p.name)}</div>
+                ${p.category?`<div style="font-size:11px;color:var(--muted-2);margin-bottom:12px;">${esc(p.category)}</div>`:'<div style="margin-bottom:12px;"></div>'}
+
+                <div style="margin-bottom:6px;">
+                  <span class="font-mono" style="font-size:32px;font-weight:600;color:var(--gold-bright);">${BRL(p.price)}</span>
                   <span style="font-size:12.5px;color:var(--muted-2);">/mês</span>
                 </div>
+                ${(p.subscribers||0)>0?`<div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">${p.subscribers} assinante${p.subscribers>1?'s':''}</div>`:'<div style="margin-bottom:16px;"></div>'}
+
+                ${(p.benefitsList||[]).length ? `
+                  <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:18px;flex:1;">
+                    <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;">Incluso:</div>
+                    <div style="display:flex;flex-direction:column;gap:7px;">
+                      ${p.benefitsList.map(b=>`<div style="display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted);line-height:1.5;"><span style="color:var(--gold-bright);flex-shrink:0;">✓</span><span>${esc(b)}</span></div>`).join('')}
+                    </div>
+                  </div>
+                ` : `<div style="flex:1;"></div>`}
+
                 <button class="btn btn-gold pp-subscribe" data-plan="${esc(p.id)}" style="justify-content:center;width:100%;">ASSINAR</button>
+              </div>`;
+          };
+
+          return `
+            ${top.length ? `
+              <div style="text-align:center;font-size:12px;color:var(--muted-2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:20px;">Os mais escolhidos pelos nossos clientes</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:18px;margin-bottom:${resto.length?'38px':'0'};">
+                ${top.map((p,i)=>cardHtml(p, i+1)).join('')}
               </div>
-            `).join('')}
-          </div>
-        `}
+            ` : ''}
+            ${resto.length ? `
+              ${top.length?`<div style="text-align:center;font-size:12px;color:var(--muted-2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:20px;">Outros planos</div>`:''}
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:18px;">
+                ${resto.map(p=>cardHtml(p, 0)).join('')}
+              </div>
+            ` : ''}
+          `;
+        })()}
       </div>
     </div>
   `;
