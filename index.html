@@ -93,6 +93,7 @@
   .sidebar .btn-ghost{border-color:var(--side-border);color:var(--side-muted);}
   .sidebar .btn-ghost:hover{border-color:#c9a24b;color:#e3c078;}
   .nav-item svg{flex-shrink:0;}
+  .grid-slot:hover{background:rgba(201,162,75,.16);box-shadow:inset 0 0 0 1px var(--gold);}
 
   .pill{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;letter-spacing:.02em;}
   .pill-ok{background:var(--ok-bg);color:var(--ok);}
@@ -428,6 +429,11 @@ let route = 'dashboard';
 let toastTimer = null;
 let userSession = {role:'dono', professionalId:null}; // não persistido — apenas separa a visão por login
 function isOwnerLevel(){ return userSession.role==='dono' || userSession.role==='admin'; }
+// Só quem "atende clientes" aparece como barbeiro na agenda, no
+// agendamento online, nas comissões e no pote do clube.
+function servingProfessionals(){
+  return (state.professionals||[]).filter(p=>p.servesClients!==false);
+}
 function roleLabel(r){ return r==='admin' ? 'Admin' : r==='recepcionista' ? 'Recepcionista' : 'Profissional'; }
 
 async function loadState(){
@@ -461,6 +467,10 @@ function migrateState(){
   };
   if(state.shopProfile.hours==null) state.shopProfile.hours = '';
   if(state.shopProfile.clubAbout==null) state.shopProfile.clubAbout = '';
+  // profissionais já cadastrados: recepcionista não atende, o resto sim
+  (state.professionals||[]).forEach(p=>{
+    if(p.servesClients==null) p.servesClients = (p.accessRole!=='recepcionista');
+  });
   (state.subscriptionPlans||[]).forEach(p=>{
     if(!Array.isArray(p.benefitsList)) p.benefitsList = [];
     if(p.featured==null) p.featured = false;
@@ -806,7 +816,7 @@ function clubFichasBreakdown(){
   const potBarbearia = potTotal - potStaff;
   const byProf = {};
   entries.forEach(e=>{ byProf[e.appt.professionalId] = (byProf[e.appt.professionalId]||0) + e.fichas; });
-  const rows = state.professionals.map(p=>{
+  const rows = servingProfessionals().map(p=>{
     const fichas = byProf[p.id] || 0;
     const value = totalFichas>0 ? potStaff*(fichas/totalFichas) : 0;
     return {prof:p, fichas, value};
@@ -886,7 +896,7 @@ function navAllowedForSession(){
   if(isOwnerLevel()) return NAV.map(n=>n.id);
   if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque'];
   // profissional: acesso restrito à própria agenda, comissões e mensagens
-  return ['dashboard','agenda','espera','mensagens','comissoes'];
+  return ['dashboard','agenda','espera','comissoes'];
 }
 
 /* ============ ROOT RENDER ============ */
@@ -1077,12 +1087,19 @@ function pageHeader(title, subtitle, actionHtml=''){
 
 /* ============ DASHBOARD ============ */
 function viewDashboard(){
+  const isProfView = userSession.role==='profissional';
+  const myId = userSession.professionalId;
   const session = openSession();
   const totals = sessionTotals(session);
-  const appts = todaysAppointments();
+  // O profissional vê apenas os próprios atendimentos e a própria comissão
+  const appts = isProfView
+    ? todaysAppointments().filter(a=>a.professionalId===myId)
+    : todaysAppointments();
   const done = appts.filter(a=>a.status==='concluido');
   const faturamentoServicos = done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0);
-  const commissionsPending = state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
+  const commissionsPending = isProfView
+    ? commissionOwed(myId).owed
+    : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
   const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
   const overdueMembers = state.subscriptionMembers.filter(m=>m.status==='atrasado').length;
   const mrr = state.subscriptionMembers.filter(m=>m.status!=='cancelado').reduce((a,m)=>{
@@ -1092,14 +1109,14 @@ function viewDashboard(){
   return `
     ${pageHeader('Painel', new Date().toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'}))}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:22px;">
-      ${statCard('Faturamento em serviços hoje', BRL(faturamentoServicos), `${done.length} atendimento(s) concluído(s)`, 'ok')}
-      ${statCard('Saldo do caixa', session?BRL(totals.balance):'—', session?`Entradas ${BRL(totals.in)} · Saídas ${BRL(totals.out)}`:'Nenhum caixa aberto', session?'ok':'bad')}
-      ${statCard('Comissões pendentes', BRL(commissionsPending), 'a pagar aos profissionais', commissionsPending>0?'warn':'ok')}
-      ${statCard('Clube de assinatura', activeMembers+' membros ativos', 'MRR '+BRL(mrr), 'ok')}
-      ${statCard('Assinantes em atraso', overdueMembers, overdueMembers>0?'precisam de cobrança':'nenhum em atraso', overdueMembers>0?'bad':'ok')}
+      ${statCard(isProfView?'Seu faturamento hoje':'Faturamento em serviços hoje', BRL(faturamentoServicos), `${done.length} atendimento(s) concluído(s)`, 'ok')}
+      ${!isProfView ? statCard('Saldo do caixa', session?BRL(totals.balance):'—', session?`Entradas ${BRL(totals.in)} · Saídas ${BRL(totals.out)}`:'Nenhum caixa aberto', session?'ok':'bad') : ''}
+      ${statCard(isProfView?'Você tem a receber':'Comissões pendentes', BRL(commissionsPending), isProfView?'em comissões':'a pagar aos profissionais', commissionsPending>0?'warn':'ok')}
+      ${!isProfView ? statCard('Clube de assinatura', activeMembers+' membros ativos', 'MRR '+BRL(mrr), 'ok') : ''}
+      ${!isProfView ? statCard('Assinantes em atraso', overdueMembers, overdueMembers>0?'precisam de cobrança':'nenhum em atraso', overdueMembers>0?'bad':'ok') : ''}
     </div>
 
-    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start;" class="dash-grid">
+    <div style="display:grid;grid-template-columns:${isProfView?'1fr':'1.4fr 1fr'};gap:16px;align-items:start;" class="dash-grid">
       <div class="card" style="padding:20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <div class="font-display" style="font-size:17px;font-weight:600;">Agenda de hoje</div>
@@ -1110,10 +1127,11 @@ function viewDashboard(){
             ${appts.slice(0,6).map(a=>agendaRow(a)).join('')}
           </div>`}
       </div>
+      ${!isProfView ? `
       <div class="card" style="padding:20px;">
         <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:14px;">Comissões por profissional</div>
         <div style="display:flex;flex-direction:column;gap:10px;">
-          ${state.professionals.map(p=>{
+          ${state.professionals.filter(p=>p.servesClients!==false).map(p=>{
             const c = commissionOwed(p.id);
             return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;">
               <span style="color:var(--ink);">${esc(p.name)}</span>
@@ -1121,10 +1139,10 @@ function viewDashboard(){
             </div>`;
           }).join('')}
         </div>
-      </div>
+      </div>` : ''}
     </div>
 
-    ${overdueMembers>0 ? `
+    ${overdueMembers>0 && !isProfView ? `
     <div class="card" style="padding:20px;margin-top:16px;border-color:var(--bad);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div class="font-display" style="font-size:17px;font-weight:600;">${ICON.bell} Assinantes em atraso</div>
@@ -1237,7 +1255,12 @@ function agendaGridView(dateISO, profList){
           </div>
           ${profList.map(p=>`
             <div style="flex:1;min-width:170px;position:relative;border-left:1px solid var(--border);background:${isProfessionalWorking(p, dateISO)?'transparent':'repeating-linear-gradient(45deg, transparent, transparent 8px, var(--panel-2) 8px, var(--panel-2) 16px)'};">
-              ${hours.map(()=>`<div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);"></div>`).join('')}
+              ${hours.map(h=>`
+                <div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;">
+                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:00" style="flex:1;cursor:pointer;"></div>
+                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:30" style="flex:1;cursor:pointer;border-top:1px dashed var(--border);"></div>
+                </div>
+              `).join('')}
               ${colFor(p)}
             </div>
           `).join('')}
@@ -1369,7 +1392,7 @@ function renderAgenda(view){
     ${state.professionals.length>0 && agendaMode==='semana' && !isProfView ? weeklyByProfessionalTable() : ''}
 
     ${state.professionals.length>0 && agendaMode==='grade'
-      ? agendaGridView(viewDate, isProfView ? state.professionals.filter(p=>p.id===myId) : state.professionals)
+      ? agendaGridView(viewDate, isProfView ? state.professionals.filter(p=>p.id===myId) : servingProfessionals())
       : ''}
 
     ${agendaMode==='lista' ? (appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
@@ -1404,6 +1427,9 @@ function renderAgenda(view){
   `;
   view.querySelector('#btn-new-appt')?.addEventListener('click', openApptModal);
   view.querySelectorAll('.agenda-mode').forEach(b=>b.addEventListener('click', ()=>{ agendaMode = b.dataset.mode; renderAgenda(view); }));
+  view.querySelectorAll('.grid-slot').forEach(el=>el.addEventListener('click', ()=>{
+    openApptModal({ professionalId: el.dataset.prof, time: el.dataset.time, date: viewDate });
+  }));
   view.querySelectorAll('.wk-day').forEach(b=>b.addEventListener('click', ()=>{ agendaDate = b.dataset.day; renderAgenda(view); }));
   view.querySelector('#wk-prev')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(-1); renderAgenda(view); });
   view.querySelector('#wk-next')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(1); renderAgenda(view); });
@@ -1543,10 +1569,19 @@ function concludeAppt(id){
     root.querySelectorAll('.pay-method').forEach(b=>b.addEventListener('click', ()=>finish(b.dataset.method)));
   });
 }
-function openApptModal(){
-  if(state.professionals.length===0 || state.services.length===0){
-    showToast('Cadastre ao menos 1 profissional e 1 serviço primeiro.'); return;
+function servingProfissionaisOk(){
+  if(servingProfessionals().length===0 || state.services.length===0){
+    showToast('Cadastre ao menos 1 profissional que atende e 1 serviço primeiro.');
+    return false;
   }
+  return true;
+}
+function openApptModal(pre){
+  if(servingProfissionaisOk()===false) return;
+  // pre = { professionalId, time, date } quando vem de um clique na grade
+  const preProf = pre?.professionalId || '';
+  const preTime = pre?.time || '';
+  const preDate = pre?.date || todayISO();
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -1557,10 +1592,10 @@ function openApptModal(){
         <div><label>Cliente</label><input id="f-client" placeholder="Nome do cliente" style="width:100%;"></div>
         <div id="club-note" style="font-size:12px;"></div>
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;"><label>Horário</label><input id="f-time" type="time" style="width:100%;"></div>
-          <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${todayISO()}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Horário</label><input id="f-time" type="time" value="${preTime}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${preDate}" style="width:100%;"></div>
         </div>
-        <div><label>Profissional</label><select id="f-prof" style="width:100%;">${state.professionals.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        <div><label>Profissional</label><select id="f-prof" style="width:100%;">${servingProfessionals().map(p=>`<option value="${p.id}" ${preProf===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
         <div><label>Serviço</label><select id="f-service" style="width:100%;">${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}</select></div>
         <div id="deposit-note" style="font-size:12px;color:var(--warn);"></div>
         <div id="availability-note" style="font-size:12px;color:var(--muted-2);"></div>
@@ -1802,7 +1837,7 @@ function renderComissoes(view){
   const closed = monthAlreadyClosed(period);
   const potRows = state.professionals.map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
   const totalPotOwed = potRows.reduce((a,r)=>a+r.owed,0);
-  const visibleProfs = userSession.role==='profissional' ? state.professionals.filter(p=>p.id===userSession.professionalId) : state.professionals;
+  const visibleProfs = userSession.role==='profissional' ? state.professionals.filter(p=>p.id===userSession.professionalId) : servingProfessionals();
   const myProf = userSession.role==='profissional' ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
   const myWithdrawals = myProf ? state.withdrawalRequests.filter(w=>w.professionalId===myProf.id).slice().reverse() : [];
   const pendingWithdrawals = state.withdrawalRequests.filter(w=>w.status==='pendente').slice().reverse();
@@ -2201,6 +2236,11 @@ function profModal(existing){
             <option value="admin" ${existing?.accessRole==='admin'?'selected':''}>Dono / Admin — acesso completo ao sistema</option>
           </select>
         </div>
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:9px;">
+          <input type="checkbox" id="f-serves" ${existing ? (existing.servesClients!==false?'checked':'') : 'checked'} style="width:auto;">
+          <span>Atende clientes (aparece na agenda e no agendamento online)</span>
+        </label>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:-6px;">Desmarque para quem trabalha na barbearia mas não corta — recepção, gerente, etc. Quem está desmarcado não aparece como opção de barbeiro, nem nas comissões e no pote do clube.</div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
           <div style="flex:1;"><label>PIN de login (4 a 8 dígitos)</label><input id="f-pin" maxlength="8" inputmode="numeric" value="${esc(existing?.pin) || String(100000+Math.floor(Math.random()*900000))}" style="width:100%;"><div style="font-size:10.5px;color:var(--muted-2);margin-top:4px;">Usado no link de acesso da equipe. Quanto mais dígitos, mais seguro.</div></div>
@@ -2252,6 +2292,12 @@ function profModal(existing){
       });
       e.target.value = '';
     });
+    root.querySelector('#f-access-role').addEventListener('change', e=>{
+      // Recepcionista normalmente não atende; profissional sim.
+      const box = root.querySelector('#f-serves');
+      if(e.target.value==='recepcionista') box.checked = false;
+      else if(e.target.value==='profissional') box.checked = true;
+    });
     root.querySelector('#btn-photo-remove').addEventListener('click', ()=>{
       currentPhoto = '';
       root.querySelector('#prof-photo-preview').innerHTML = ICON.team;
@@ -2287,7 +2333,8 @@ function profModal(existing){
         if(inp.value!=='') serviceOverrides[inp.dataset.override] = parseFloat(inp.value);
       });
       if(!name){ showToast('Informe o nome.'); return; }
-      const data = {name, phone, accessRole, commission, pin, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
+      const servesClients = root.querySelector('#f-serves').checked;
+      const data = {name, phone, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
         if(isEdit){ Object.assign(existing, data); }
         else{ s.professionals.push({id:uid(), ...data}); }
@@ -4030,7 +4077,7 @@ function waitlistModal(){
         <div><label>Cliente</label><input id="f-name" placeholder="Nome do cliente" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" placeholder="(00) 00000-0000" style="width:100%;"></div>
         <div><label>Serviço desejado (opcional)</label><select id="f-service" style="width:100%;"><option value="">Qualquer serviço</option>${state.services.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-        <div><label>Profissional preferido (opcional)</label><select id="f-prof" style="width:100%;"><option value="">Qualquer profissional</option>${state.professionals.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        <div><label>Profissional preferido (opcional)</label><select id="f-prof" style="width:100%;"><option value="">Qualquer profissional</option>${servingProfessionals().map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
         <div><label>Data preferida (opcional)</label><input id="f-date" type="date" style="width:100%;"></div>
         <div><label>Observação</label><input id="f-note" placeholder="Ex: prefere fim de tarde" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">Adicionar</button>
