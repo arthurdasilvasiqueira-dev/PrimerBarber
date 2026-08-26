@@ -465,6 +465,8 @@ function migrateState(){
     if(!Array.isArray(p.benefitsList)) p.benefitsList = [];
     if(p.featured==null) p.featured = false;
     if(p.hidden==null) p.hidden = false;
+    // planos antigos passam a valer todos os dias por padrão
+    if(!Array.isArray(p.validDays)) p.validDays = [0,1,2,3,4,5,6];
   });
   if(!state.shopProfile.social) state.shopProfile.social = {instagram:'', facebook:'', tiktok:'', whatsapp:'', website:''};
   state.loyalty = state.loyalty || {pointsPerReal:1, redeemThreshold:100, redeemValue:20};
@@ -1493,7 +1495,10 @@ function concludeAppt(id){
   let priceNote = '';
   if(member && member.status==='pago'){
     const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-    if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
+    // O plano só vale nos dias marcados no cadastro dele
+    if(plan && !planValidOnDate(plan, appt.date)){
+      priceNote = ` (${planDaysLabel(plan.validDays).toLowerCase()} — hoje não vale, valor cheio)`;
+    } else if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
       basePrice = 0; priceNote = ' (incluso no clube)';
     } else if(plan && plan.discountPercent>0){
       basePrice = service.price * (1 - plan.discountPercent/100);
@@ -2072,6 +2077,31 @@ function closeClubMonthModal(){
 
 /* ============ PROFISSIONAIS ============ */
 const WEEKDAY_LABELS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const WEEKDAY_FULL = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+// Monta a frase de validade do plano a partir dos dias marcados.
+// Ex: [1,2,3,4] -> "Válido de segunda a quinta" | todos -> "Válido a semana toda"
+function planDaysLabel(days){
+  if(!Array.isArray(days) || days.length===0) return '';
+  const set = [...new Set(days)].sort((a,b)=>a-b);
+  if(set.length===7) return 'Válido a semana toda';
+  // ordem da semana começando na segunda (1..6, depois 0=domingo)
+  const ordem = [1,2,3,4,5,6,0];
+  const idx = set.map(d=>ordem.indexOf(d)).sort((a,b)=>a-b);
+  const sequencial = idx.every((v,i)=> i===0 || v === idx[i-1]+1);
+  if(sequencial && set.length>=2){
+    const ini = WEEKDAY_FULL[ordem[idx[0]]];
+    const fim = WEEKDAY_FULL[ordem[idx[idx.length-1]]];
+    return `Válido de ${ini} a ${fim}`;
+  }
+  if(set.length===1) return `Válido apenas às ${WEEKDAY_FULL[set[0]]}s`;
+  const nomes = idx.map(i=>WEEKDAY_FULL[ordem[i]]+'s');
+  return `Válido às ${nomes.slice(0,-1).join(', ')} e ${nomes[nomes.length-1]}`;
+}
+// O plano vale nesta data? (sem dias marcados = vale todos os dias)
+function planValidOnDate(plan, dateISO){
+  if(!plan || !Array.isArray(plan.validDays) || plan.validDays.length===0) return true;
+  return plan.validDays.includes(new Date(dateISO+'T12:00').getDay());
+}
 function renderProfissionais(view){
   const limits = planLimits(currentShop);
   const atLimit = state.professionals.length >= limits.maxProfessionals;
@@ -2633,8 +2663,19 @@ function planModal(existing){
             `).join('')}
           </div>
         </div>
-        <div><label>Desconto do assinante em serviços extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
-          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Aplicado quando o assinante contrata um serviço fora dos incluídos no plano.</div>
+        <div>
+          <label>Dias em que o plano é válido</label>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">
+            ${WEEKDAY_LABELS.map((lbl,idx)=>`<label style="display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--muted);cursor:pointer;">
+              <span>${lbl}</span>
+              <input type="checkbox" class="f-plan-day" data-day="${idx}" ${(existing?.validDays||[0,1,2,3,4,5,6]).includes(idx)?'checked':''} style="width:auto;">
+            </label>`).join('')}
+          </div>
+          <div id="plan-days-preview" style="font-size:11.5px;color:var(--gold-bright);"></div>
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Fora desses dias, o assinante paga o valor cheio. Essa frase aparece automaticamente na página pública.</div>
+        </div>
+        <div><label>Desconto do assinante em serviços e produtos extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Vale para qualquer serviço fora dos incluídos no plano e também para a venda de produtos.</div>
         </div>
         <div>
           <label>Benefícios para a página pública (um por linha)</label>
@@ -2649,6 +2690,12 @@ function planModal(existing){
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    const atualizaPreviewDias = ()=>{
+      const dias = [...root.querySelectorAll('.f-plan-day:checked')].map(el=>parseInt(el.dataset.day));
+      root.querySelector('#plan-days-preview').textContent = dias.length ? planDaysLabel(dias) : 'Nenhum dia marcado — o plano não valeria nunca.';
+    };
+    root.querySelectorAll('.f-plan-day').forEach(el=>el.addEventListener('change', atualizaPreviewDias));
+    atualizaPreviewDias();
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
       const category = root.querySelector('#f-category').value.trim();
@@ -2659,9 +2706,11 @@ function planModal(existing){
       const benefitsList = root.querySelector('#f-benefits-list').value.split('\n').map(l=>l.trim()).filter(Boolean);
       const featured = root.querySelector('#f-featured').checked;
       const hidden = root.querySelector('#f-hidden').checked;
+      const validDays = [...root.querySelectorAll('.f-plan-day:checked')].map(el=>parseInt(el.dataset.day));
       if(!name || isNaN(price)){ showToast('Preencha nome e valor.'); return; }
+      if(validDays.length===0){ showToast('Marque pelo menos um dia de validade do plano.'); return; }
       update(s=>{
-        const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden};
+        const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden, validDays};
         if(isEdit){ Object.assign(existing, dados); }
         else{ s.subscriptionPlans.push({id:uid(), ...dados}); }
       });
@@ -3292,6 +3341,7 @@ function renderEstoque(view){
           <td class="font-mono" style="color:var(--muted);">${BRL(p.cost)}</td>
           <td class="font-mono">${p.price>0?BRL(p.price):'—'}</td>
           <td style="text-align:right;white-space:nowrap;">
+            ${p.price>0 && p.stock>0 ? `<button class="btn btn-gold" style="padding:6px 10px;font-size:12px;" data-sell-product="${p.id}">${ICON.cash} Vender</button>` : ''}
             <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-product="${p.id}">${ICON.edit}</button>
             <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-product="${p.id}">${ICON.trash}</button>
           </td>
@@ -3301,8 +3351,87 @@ function renderEstoque(view){
     `}
   `;
   view.querySelector('#btn-new-product').addEventListener('click', ()=>productModal());
+  view.querySelectorAll('[data-sell-product]').forEach(b=>b.addEventListener('click', ()=>sellProductModal(state.products.find(p=>p.id===b.dataset.sellProduct))));
   view.querySelectorAll('[data-edit-product]').forEach(b=>b.addEventListener('click', ()=>productModal(state.products.find(p=>p.id===b.dataset.editProduct))));
   view.querySelectorAll('[data-del-product]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.products = s.products.filter(p=>p.id!==b.dataset.delProduct); })));
+}
+function sellProductModal(prod){
+  if(!prod) return;
+  if(!openSession()){ showToast('Abra o caixa antes de registrar vendas.'); route='caixa'; render(); return; }
+  const clientes = state.clients.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Vender produto</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(prod.name)} · ${prod.stock} em estoque</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div><label>Quantidade</label><input id="sp-qty" type="number" min="1" max="${prod.stock}" value="1" style="width:100%;"></div>
+        <div><label>Cliente (opcional — para aplicar desconto do clube)</label>
+          <select id="sp-client" style="width:100%;">
+            <option value="">Sem cliente identificado</option>
+            ${clientes.map(cl=>`<option value="${esc(cl.name)}">${esc(cl.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div id="sp-total" class="card" style="padding:14px 16px;background:var(--panel-2);"></div>
+        <label>Forma de pagamento</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          ${PAYMENT_METHODS.map(m=>`<button class="btn btn-ghost sp-pay" data-method="${m.id}" style="justify-content:center;padding:13px 10px;font-size:13px;">${m.label}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const calc = ()=>{
+      const qty = Math.max(1, Math.min(prod.stock, parseInt(root.querySelector('#sp-qty').value)||1));
+      const nome = root.querySelector('#sp-client').value;
+      const bruto = prod.price * qty;
+      let desconto = 0, nota = '';
+      const m = nome ? clubMemberForClient(nome) : null;
+      if(m && m.status==='pago'){
+        const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
+        if(plan && !planValidOnDate(plan, todayISO())){
+          nota = `${planDaysLabel(plan.validDays)} — hoje o desconto não vale.`;
+        } else if(plan && plan.discountPercent>0){
+          desconto = bruto * (plan.discountPercent/100);
+          nota = `Desconto de assinante: ${plan.discountPercent}% (${esc(plan.name)})`;
+        }
+      } else if(m && m.status==='atrasado'){
+        nota = 'Assinante em atraso — sem desconto.';
+      }
+      const total = bruto - desconto;
+      root.querySelector('#sp-total').innerHTML = `
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);"><span>${qty}× ${esc(prod.name)}</span><span class="font-mono">${BRL(bruto)}</span></div>
+        ${desconto>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto</span><span class="font-mono">− ${BRL(desconto)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+          <span style="font-size:13px;font-weight:600;">Total</span>
+          <span class="font-mono" style="font-size:21px;color:var(--gold-bright);">${BRL(total)}</span>
+        </div>
+        ${nota?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:8px;">${nota}</div>`:''}
+      `;
+      return {qty, total, nome, desconto};
+    };
+    root.querySelector('#sp-qty').addEventListener('input', calc);
+    root.querySelector('#sp-client').addEventListener('change', calc);
+    calc();
+    root.querySelectorAll('.sp-pay').forEach(b=>b.addEventListener('click', ()=>{
+      const {qty, total, nome, desconto} = calc();
+      const method = b.dataset.method;
+      update(s=>{
+        const p = s.products.find(x=>x.id===prod.id);
+        p.stock = Math.max(0, p.stock - qty);
+        const sess = s.cashSessions.find(x=>x.status==='aberto');
+        sess.entries.push({
+          id:uid(), type:'entrada', method,
+          desc:`${qty}× ${prod.name}${nome?' — '+nome:''}${desconto>0?' (com desconto do clube)':''}`,
+          amount: total, time:new Date().toTimeString().slice(0,5), auto:false,
+        });
+      });
+      closeModal();
+      showToast(`Venda registrada — ${BRL(total)} em ${methodLabelPay(method)}.`);
+    }));
+  });
 }
 function productModal(existing){
   const isEdit = !!existing;
@@ -4022,6 +4151,9 @@ function renderConfiguracoes(view){
 
         <div>
           <label>Logo</label>
+          <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--muted);line-height:1.6;">
+            📐 <b style="color:var(--ink);">Recomendado: 512 × 512 px</b> (quadrada) · máx. 600KB · PNG com fundo transparente fica melhor
+          </div>
           <div style="display:flex;align-items:center;gap:12px;">
             <div style="width:56px;height:56px;border-radius:10px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">
               ${sp.logoDataUrl ? `<img src="${sp.logoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.image}
@@ -4033,7 +4165,11 @@ function renderConfiguracoes(view){
         </div>
 
         <div>
-          <label>Banner (topo da página de agendamento)</label>
+          <label>Banner (topo da página de agendamento e de planos)</label>
+          <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--muted);line-height:1.6;">
+            📐 <b style="color:var(--ink);">Tamanho recomendado: 1200 × 400 px</b> (proporção 3:1) · máximo 600KB<br>
+            A imagem é ajustada para preencher a largura, então o miolo aparece sempre — evite texto muito perto das bordas.
+          </div>
           <div style="width:100%;height:100px;border-radius:10px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:8px;">
             ${sp.bannerDataUrl ? `<img src="${sp.bannerDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<span style="color:var(--muted-2);font-size:12px;">${ICON.image} Nenhum banner enviado</span>`}
           </div>
@@ -4329,22 +4465,6 @@ function drawPublicPlans(){
           </div>
         </div>
 
-        ${(d.clubAbout||d.bio) ? `
-          <div class="card" style="padding:22px 24px;margin-bottom:28px;">
-            <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:10px;">Sobre</div>
-            <div style="font-size:13.5px;color:var(--muted);line-height:1.75;white-space:pre-line;">${esc(d.clubAbout || d.bio)}</div>
-            ${(social.instagram||social.facebook||social.tiktok||waNumber||social.website) ? `
-              <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
-                ${waNumber?`<a href="https://wa.me/55${waNumber}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.chat} WhatsApp</a>`:''}
-                ${social.instagram?`<a href="${social.instagram.startsWith('http')?esc(social.instagram):'https://instagram.com/'+esc(social.instagram.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.instagram} Instagram</a>`:''}
-                ${social.facebook?`<a href="${esc(social.facebook)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.facebook} Facebook</a>`:''}
-                ${social.tiktok?`<a href="${social.tiktok.startsWith('http')?esc(social.tiktok):'https://tiktok.com/@'+esc(social.tiktok.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.tiktok} TikTok</a>`:''}
-                ${social.website?`<a href="${esc(social.website)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.globe} Site</a>`:''}
-              </div>
-            ` : ''}
-          </div>
-        ` : ''}
-
         <h2 class="font-display" style="font-size:22px;font-weight:600;margin-bottom:18px;text-align:center;">Conheça nossos planos</h2>
 
         ${plans.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13.5px;padding:40px 0;">Nenhum plano disponível no momento.</div>` : (()=>{
@@ -4377,6 +4497,16 @@ function drawPublicPlans(){
                 </div>
                 ${(p.subscribers||0)>0?`<div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">${p.subscribers} assinante${p.subscribers>1?'s':''}</div>`:'<div style="margin-bottom:16px;"></div>'}
 
+                ${(p.validDays||[]).length && (p.validDays||[]).length<7 ? `
+                  <div style="background:rgba(201,162,75,.1);border:1px solid rgba(201,162,75,.3);border-radius:8px;padding:8px 11px;margin-bottom:14px;font-size:12px;color:var(--gold-bright);font-weight:600;">
+                    🗓 ${esc(planDaysLabel(p.validDays))}
+                  </div>
+                ` : (p.validDays||[]).length===7 ? `
+                  <div style="background:var(--panel-2);border-radius:8px;padding:8px 11px;margin-bottom:14px;font-size:12px;color:var(--muted);">
+                    🗓 Válido a semana toda
+                  </div>
+                ` : ''}
+
                 ${(p.benefitsList||[]).length ? `
                   <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:18px;flex:1;">
                     <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;">Incluso:</div>
@@ -4405,6 +4535,22 @@ function drawPublicPlans(){
             ` : ''}
           `;
         })()}
+        ${(d.clubAbout||d.bio) ? `
+          <div class="card" style="padding:22px 24px;margin-top:38px;">
+            <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:10px;">Sobre</div>
+            <div style="font-size:13.5px;color:var(--muted);line-height:1.75;white-space:pre-line;">${esc(d.clubAbout || d.bio)}</div>
+            ${(social.instagram||social.facebook||social.tiktok||waNumber||social.website) ? `
+              <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+                ${waNumber?`<a href="https://wa.me/55${waNumber}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.chat} WhatsApp</a>`:''}
+                ${social.instagram?`<a href="${social.instagram.startsWith('http')?esc(social.instagram):'https://instagram.com/'+esc(social.instagram.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.instagram} Instagram</a>`:''}
+                ${social.facebook?`<a href="${esc(social.facebook)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.facebook} Facebook</a>`:''}
+                ${social.tiktok?`<a href="${social.tiktok.startsWith('http')?esc(social.tiktok):'https://tiktok.com/@'+esc(social.tiktok.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.tiktok} TikTok</a>`:''}
+                ${social.website?`<a href="${esc(social.website)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.globe} Site</a>`:''}
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+
       </div>
     </div>
   `;
