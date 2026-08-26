@@ -402,7 +402,7 @@ function blankShopData(){
     ownerName:'',
     shopProfile:{
       name:'Minha Barbearia', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'',
-      bio:'', address:'', phone:'',
+      bio:'', address:'', phone:'', hours:'', clubAbout:'',
       social:{instagram:'', facebook:'', tiktok:'', whatsapp:'', website:''},
     },
     asaas:{apiKey:'', walletId:'', env:'sandbox', enabled:false},
@@ -456,8 +456,16 @@ function migrateState(){
   state.nfeLog = state.nfeLog || [];
   state.shopProfile = state.shopProfile || {
     name:'Primer Barber', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'', bio:'', address:'', phone:'',
+    hours:'', clubAbout:'',
     social:{instagram:'', facebook:'', tiktok:'', whatsapp:'', website:''},
   };
+  if(state.shopProfile.hours==null) state.shopProfile.hours = '';
+  if(state.shopProfile.clubAbout==null) state.shopProfile.clubAbout = '';
+  (state.subscriptionPlans||[]).forEach(p=>{
+    if(!Array.isArray(p.benefitsList)) p.benefitsList = [];
+    if(p.featured==null) p.featured = false;
+    if(p.hidden==null) p.hidden = false;
+  });
   if(!state.shopProfile.social) state.shopProfile.social = {instagram:'', facebook:'', tiktok:'', whatsapp:'', website:''};
   state.loyalty = state.loyalty || {pointsPerReal:1, redeemThreshold:100, redeemValue:20};
   if(state.loyalty.referralBonusPoints==null) state.loyalty.referralBonusPoints = 30;
@@ -2364,6 +2372,40 @@ function methodLabel(m){
   if(m.paymentMethod==='dinheiro') return '<span class="pill pill-muted">Dinheiro</span>';
   return '<span class="pill pill-muted">'+ICON.link+' Pix/Cartão (Asaas)</span>';
 }
+async function loadSubscriptionRequests(view){
+  const listEl = view.querySelector('#sub-req-list');
+  const countEl = view.querySelector('#sub-req-count');
+  if(!listEl || !currentShop) return;
+  const { data, error } = await supa.from('subscription_requests')
+    .select('*').eq('shop_id', currentShop.id).eq('status','pendente').order('created_at',{ascending:false});
+  if(error){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Não foi possível carregar.</div>'; return; }
+  countEl.textContent = (data||[]).length + ' pendente(s)';
+  if(!data || !data.length){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Nenhum pedido pendente.</div>'; return; }
+  listEl.innerHTML = data.map(r=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+      <div style="font-size:13px;min-width:200px;">
+        <b>${esc(r.client_name)}</b> quer assinar <b>${esc(r.plan_name)}</b> (${BRL(r.plan_price)})<br>
+        <span style="color:var(--muted);font-size:11.5px;">${esc(r.client_phone)}${r.client_email?' · '+esc(r.client_email):''}${r.client_cpf?' · CPF '+esc(r.client_cpf):''}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+        ${messageChannelRow(r.client_phone, `Olá ${r.client_name}! Recebemos seu pedido de assinatura do ${r.plan_name}. Vou te enviar o link de pagamento.`)}
+        <button class="btn btn-gold" data-sub-accept="${r.id}" style="padding:6px 10px;font-size:12px;">Cadastrar assinante</button>
+        <button class="btn btn-ghost" data-sub-decline="${r.id}" style="padding:6px 10px;font-size:12px;">Recusar</button>
+      </div>
+    </div>
+  `).join('');
+  listEl.querySelectorAll('[data-sub-accept]').forEach(b=>b.addEventListener('click', async ()=>{
+    const req = data.find(r=>r.id===b.dataset.subAccept);
+    await supa.from('subscription_requests').update({status:'aceito'}).eq('id', req.id);
+    memberModal(null, {name:req.client_name, phone:req.client_phone, planId:req.plan_id});
+    loadSubscriptionRequests(view);
+  }));
+  listEl.querySelectorAll('[data-sub-decline]').forEach(b=>b.addEventListener('click', async ()=>{
+    await supa.from('subscription_requests').update({status:'recusado'}).eq('id', b.dataset.subDecline);
+    showToast('Pedido recusado.');
+    loadSubscriptionRequests(view);
+  }));
+}
 function renderClube(view){
   if(!planLimits(currentShop).club){
     view.innerHTML = `
@@ -2394,6 +2436,30 @@ function renderClube(view){
       ${statCard('Receita recorrente (MRR)', BRL(mrr), 'somando assinaturas não canceladas', 'ok')}
       ${statCard('Recebido este mês', BRL(recebidoMes), 'valor que efetivamente entrou (Asaas + dinheiro)', 'ok')}
       ${statCard('Planos disponíveis', state.subscriptionPlans.length, 'configurados', 'ok')}
+    </div>
+
+    ${state.onlineBooking?.slug ? `
+      <div class="card" style="padding:16px 18px;margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+          <div style="min-width:0;">
+            <div style="font-size:12px;color:var(--muted-2);margin-bottom:5px;">Página pública de planos — mande esse link para seus clientes assinarem</div>
+            <div class="font-mono" style="font-size:12.5px;color:var(--gold-bright);word-break:break-all;">${window.location.origin}${window.location.pathname}?planos=${esc(state.onlineBooking.slug)}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <a href="?planos=${esc(state.onlineBooking.slug)}" target="_blank" class="btn btn-ghost" style="text-decoration:none;">${ICON.globe} Ver página</a>
+            <button class="btn btn-ghost" id="btn-copy-plans-link">${ICON.copy} Copiar</button>
+          </div>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="card" style="padding:18px 20px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Pedidos de assinatura</div>
+        <span class="pill pill-warn" id="sub-req-count">carregando...</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted-2);margin-bottom:12px;">Clientes que pediram assinatura pela página pública, aguardando você criar a cobrança.</div>
+      <div id="sub-req-list">Carregando...</div>
     </div>
 
     <div class="card" style="padding:18px 20px;margin-bottom:26px;">
@@ -2467,6 +2533,11 @@ function renderClube(view){
   view.querySelector('#btn-new-plan').addEventListener('click', ()=>planModal());
   view.querySelector('#btn-new-member').addEventListener('click', ()=>memberModal());
   view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
+  view.querySelector('#btn-copy-plans-link')?.addEventListener('click', ()=>{
+    navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?planos=${state.onlineBooking.slug}`);
+    showToast('Link da página de planos copiado.');
+  });
+  loadSubscriptionRequests(view);
   view.querySelectorAll('[data-edit-plan]').forEach(b=>b.addEventListener('click', ()=>planModal(state.subscriptionPlans.find(p=>p.id===b.dataset.editPlan))));
   view.querySelectorAll('[data-del-plan]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionPlans = s.subscriptionPlans.filter(p=>p.id!==b.dataset.delPlan); })));
   view.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>memberModal(state.subscriptionMembers.find(m=>m.id===b.dataset.editMember))));
@@ -2565,7 +2636,14 @@ function planModal(existing){
         <div><label>Desconto do assinante em serviços extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Aplicado quando o assinante contrata um serviço fora dos incluídos no plano.</div>
         </div>
-        <div><label>Benefícios (texto livre, opcional)</label><input id="f-benefits" value="${esc(existing?.benefits)}" placeholder="Ex: prioridade na agenda" style="width:100%;"></div>
+        <div>
+          <label>Benefícios para a página pública (um por linha)</label>
+          <textarea id="f-benefits-list" rows="5" placeholder="Corte ilimitado&#10;Barba ilimitada&#10;15% de desconto em produtos&#10;Válido de Seg a Qui" style="width:100%;resize:vertical;">${esc((existing?.benefitsList||[]).join('\n'))}</textarea>
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Cada linha vira um item com ✓ na página de planos que seus clientes veem.</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;"><input type="checkbox" id="f-featured" ${existing?.featured?'checked':''} style="width:auto;"> Destacar como "Melhor opção" na página pública</label>
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;"><input type="checkbox" id="f-hidden" ${existing?.hidden?'checked':''} style="width:auto;"> Não mostrar este plano na página pública</label>
+        <div><label>Observação interna (opcional)</label><input id="f-benefits" value="${esc(existing?.benefits)}" placeholder="Só você vê isso" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Criar plano'}</button>
       </div>
     </div>
@@ -2578,18 +2656,24 @@ function planModal(existing){
       const discountPercent = parseFloat(root.querySelector('#f-discount').value)||0;
       const includedServiceIds = [...root.querySelectorAll('.f-service-check:checked')].map(c=>c.value);
       const benefits = root.querySelector('#f-benefits').value.trim();
+      const benefitsList = root.querySelector('#f-benefits-list').value.split('\n').map(l=>l.trim()).filter(Boolean);
+      const featured = root.querySelector('#f-featured').checked;
+      const hidden = root.querySelector('#f-hidden').checked;
       if(!name || isNaN(price)){ showToast('Preencha nome e valor.'); return; }
       update(s=>{
-        if(isEdit){ Object.assign(existing, {name, category, price, discountPercent, includedServiceIds, benefits}); }
-        else{ s.subscriptionPlans.push({id:uid(), name, category, price, discountPercent, includedServiceIds, benefits}); }
+        const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden};
+        if(isEdit){ Object.assign(existing, dados); }
+        else{ s.subscriptionPlans.push({id:uid(), ...dados}); }
       });
       closeModal();
     });
   });
 }
-function memberModal(existing){
+function memberModal(existing, prefill){
   if(state.subscriptionPlans.length===0){ showToast('Crie um plano antes de adicionar membros.'); return; }
   const isEdit = !!existing;
+  // prefill: usado quando o cadastro vem de um pedido da página pública
+  if(!isEdit && prefill) existing = prefill;
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -3964,6 +4048,8 @@ function renderConfiguracoes(view){
         <div><label>Bio / descrição curta</label><textarea id="f-shop-bio" rows="2" style="width:100%;resize:vertical;">${esc(sp.bio)}</textarea></div>
         <div><label>Endereço</label><input id="f-shop-address" value="${esc(sp.address)}" placeholder="Rua, número, bairro, cidade" style="width:100%;"></div>
         <div><label>Telefone / WhatsApp de contato</label><input id="f-shop-phone" value="${esc(sp.phone)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>Horário de funcionamento</label><input id="f-shop-hours" value="${esc(sp.hours)}" placeholder="Ex: Seg das 13h às 17h · Ter a Sáb das 9h às 19h" style="width:100%;"></div>
+        <div><label>Texto sobre o Clube de Assinatura</label><textarea id="f-shop-clubabout" rows="4" placeholder="Explique aqui como funcionam seus planos, regras e vantagens. Este texto aparece na página pública de planos." style="width:100%;resize:vertical;">${esc(sp.clubAbout)}</textarea></div>
       </div>
     </div>
 
@@ -4028,6 +4114,8 @@ function renderConfiguracoes(view){
       s.shopProfile.bio = view.querySelector('#f-shop-bio').value.trim();
       s.shopProfile.address = view.querySelector('#f-shop-address').value.trim();
       s.shopProfile.phone = view.querySelector('#f-shop-phone').value.trim();
+      s.shopProfile.hours = view.querySelector('#f-shop-hours').value.trim();
+      s.shopProfile.clubAbout = view.querySelector('#f-shop-clubabout').value.trim();
       s.shopProfile.social.instagram = view.querySelector('#f-social-instagram').value.trim();
       s.shopProfile.social.facebook = view.querySelector('#f-social-facebook').value.trim();
       s.shopProfile.social.tiktok = view.querySelector('#f-social-tiktok').value.trim();
@@ -4197,6 +4285,156 @@ async function submitPublicBooking(){
   document.getElementById('pb-done').style.display = 'block';
 }
 
+
+/* ============ PÁGINA PÚBLICA DE PLANOS (link ?planos) ============ */
+let planPageData = null;
+
+async function renderPublicPlans(slug){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13px;">Carregando planos...</div></div></div>`;
+  const { data, error } = await supa.rpc('get_public_shop_plans', { p_slug: slug });
+  if(error || !data || !data.shop_id){
+    app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13.5px;">Página de planos não encontrada.</div></div></div>`;
+    return;
+  }
+  planPageData = data;
+  drawPublicPlans();
+}
+
+function drawPublicPlans(){
+  const d = planPageData;
+  const plans = d.plans || [];
+  const social = d.social || {};
+  const bookingLink = d.bookingSlug ? `${window.location.origin}${window.location.pathname}?agendar=${d.bookingSlug}` : '';
+  const waNumber = (d.phone||'').replace(/\D/g,'');
+
+  document.getElementById('app').innerHTML = `
+    <div style="min-height:100vh;background:var(--bg);">
+      <div style="width:100%;height:180px;background:${d.banner?`url(${d.banner}) center/cover`:'linear-gradient(135deg, var(--panel-2), var(--panel))'};"></div>
+      <div style="max-width:1020px;margin:0 auto;padding:0 20px 60px;">
+        <div style="display:flex;align-items:flex-end;gap:16px;margin-top:-42px;margin-bottom:20px;flex-wrap:wrap;">
+          <div style="width:88px;height:88px;border-radius:18px;background:var(--panel);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:0 12px 30px -12px rgba(0,0,0,.5);">
+            ${d.logo ? `<img src="${d.logo}" style="width:100%;height:100%;object-fit:contain;padding:8px;">` : ''}
+          </div>
+          <div style="flex:1;min-width:200px;padding-bottom:4px;">
+            <h1 class="font-display" style="font-size:28px;font-weight:600;margin-bottom:6px;">${esc(d.name||'Barbearia')}</h1>
+            <div style="font-size:13px;color:var(--muted);line-height:1.7;">
+              ${d.address?`<div>📍 ${esc(d.address)}</div>`:''}
+              ${d.hours?`<div>🕐 ${esc(d.hours)}</div>`:''}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;padding-bottom:4px;">
+            ${bookingLink?`<a href="${bookingLink}" class="btn btn-gold" style="text-decoration:none;">Agende seu horário</a>`:''}
+            <button class="btn btn-ghost" id="pp-share">${ICON.copy} Compartilhar</button>
+          </div>
+        </div>
+
+        ${(d.clubAbout||d.bio) ? `
+          <div class="card" style="padding:22px 24px;margin-bottom:28px;">
+            <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:10px;">Sobre</div>
+            <div style="font-size:13.5px;color:var(--muted);line-height:1.75;white-space:pre-line;">${esc(d.clubAbout || d.bio)}</div>
+            ${(social.instagram||social.facebook||social.tiktok||waNumber||social.website) ? `
+              <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+                ${waNumber?`<a href="https://wa.me/55${waNumber}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.chat} WhatsApp</a>`:''}
+                ${social.instagram?`<a href="${social.instagram.startsWith('http')?esc(social.instagram):'https://instagram.com/'+esc(social.instagram.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.instagram} Instagram</a>`:''}
+                ${social.facebook?`<a href="${esc(social.facebook)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.facebook} Facebook</a>`:''}
+                ${social.tiktok?`<a href="${social.tiktok.startsWith('http')?esc(social.tiktok):'https://tiktok.com/@'+esc(social.tiktok.replace('@',''))}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.tiktok} TikTok</a>`:''}
+                ${social.website?`<a href="${esc(social.website)}" target="_blank" class="pill pill-muted" style="text-decoration:none;">${ICON.globe} Site</a>`:''}
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <h2 class="font-display" style="font-size:22px;font-weight:600;margin-bottom:18px;text-align:center;">Conheça nossos planos</h2>
+
+        ${plans.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13.5px;padding:40px 0;">Nenhum plano disponível no momento.</div>` : `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:18px;">
+            ${plans.map(p=>`
+              <div class="card" style="padding:24px 22px;position:relative;display:flex;flex-direction:column;${p.featured?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold);':''}">
+                ${p.featured?`<div style="position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--gold);color:#12140f;font-size:11px;font-weight:700;padding:4px 14px;border-radius:999px;white-space:nowrap;">★ Melhor opção</div>`:''}
+                <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:14px;${p.featured?'margin-top:6px;':''}">${esc(p.name)}</div>
+                ${(p.benefitsList||[]).length ? `
+                  <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;">Incluso:</div>
+                  <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:20px;flex:1;">
+                    ${p.benefitsList.map(b=>`<div style="display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted);line-height:1.5;"><span style="color:var(--gold-bright);flex-shrink:0;">✓</span><span>${esc(b)}</span></div>`).join('')}
+                  </div>
+                ` : `<div style="flex:1;"></div>`}
+                <div style="margin-bottom:16px;">
+                  <span class="font-mono" style="font-size:30px;font-weight:600;color:var(--gold-bright);">${BRL(p.price)}</span>
+                  <span style="font-size:12.5px;color:var(--muted-2);">/mês</span>
+                </div>
+                <button class="btn btn-gold pp-subscribe" data-plan="${esc(p.id)}" style="justify-content:center;width:100%;">ASSINAR</button>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+  document.getElementById('pp-share')?.addEventListener('click', ()=>{
+    const url = window.location.href;
+    if(navigator.share) navigator.share({title:d.name, url});
+    else { navigator.clipboard?.writeText(url); showToast('Link copiado!'); }
+  });
+  document.querySelectorAll('.pp-subscribe').forEach(b=>b.addEventListener('click', ()=>{
+    const plan = plans.find(p=>p.id===b.dataset.plan);
+    if(plan) publicSubscribeModal(plan);
+  }));
+}
+
+function publicSubscribeModal(plan){
+  const d = planPageData;
+  openModal(`
+    <div style="padding:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
+        <div>
+          <div class="font-display" style="font-size:19px;font-weight:600;">Realizar assinatura</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:3px;">${esc(plan.name)}</div>
+        </div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      ${(plan.benefitsList||[]).length?`
+        <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Incluso:</div>
+        <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px;">
+          ${plan.benefitsList.map(b=>`<div style="display:flex;gap:8px;font-size:12.5px;color:var(--muted);"><span style="color:var(--gold-bright);">✓</span><span>${esc(b)}</span></div>`).join('')}
+        </div>
+      `:''}
+      <div class="font-mono" style="font-size:26px;color:var(--gold-bright);margin-bottom:20px;">${BRL(plan.price)}<span style="font-size:12px;color:var(--muted-2);">/mês</span></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Seus dados</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div><label>Nome completo</label><input id="ps-name" style="width:100%;"></div>
+        <div><label>Telefone / WhatsApp</label><input id="ps-phone" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>E-mail</label><input id="ps-email" type="email" style="width:100%;"></div>
+        <div><label>CPF (opcional)</label><input id="ps-cpf" style="width:100%;"></div>
+        <button class="btn btn-gold" id="ps-submit" style="justify-content:center;margin-top:4px;">Enviar pedido de assinatura</button>
+        <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.5;">A barbearia vai receber seu pedido e entrar em contato com o link de pagamento.</div>
+      </div>
+      <div id="ps-done" style="display:none;text-align:center;padding:24px 0;">
+        <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
+        <div style="font-size:12.5px;color:var(--muted);">Em breve a barbearia entra em contato com você.</div>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#ps-submit').addEventListener('click', async (e)=>{
+      const name = root.querySelector('#ps-name').value.trim();
+      const phone = root.querySelector('#ps-phone').value.trim();
+      const email = root.querySelector('#ps-email').value.trim();
+      const cpf = root.querySelector('#ps-cpf').value.trim();
+      if(!name || !phone){ showToast('Preencha ao menos nome e telefone.'); return; }
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = 'Enviando...';
+      const { error } = await supa.from('subscription_requests').insert({
+        shop_id: d.shop_id, plan_id: plan.id, plan_name: plan.name, plan_price: plan.price,
+        client_name: name, client_phone: phone, client_email: email, client_cpf: cpf,
+      });
+      btn.disabled = false; btn.textContent = 'Enviar pedido de assinatura';
+      if(error){ showToast('Não foi possível enviar. Tente novamente.'); return; }
+      root.querySelector('#ps-done').style.display = 'block';
+      root.querySelector('#ps-submit').style.display = 'none';
+    });
+  });
+}
 
 /* ============ ACESSO DA EQUIPE (link ?equipe) ============ */
 let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
@@ -4546,6 +4784,8 @@ async function boot(){
   if(bookSlug){ await renderPublicBooking(bookSlug); return; }
   const teamSlug = urlParams.get('equipe');
   if(teamSlug){ await renderTeamLogin(teamSlug); return; }
+  const plansSlug = urlParams.get('planos');
+  if(plansSlug){ await renderPublicPlans(plansSlug); return; }
   const { data: { session } } = await supa.auth.getSession();
   if(!session){ renderAuthScreen('login'); return; }
   let shop = await ensureShop();
