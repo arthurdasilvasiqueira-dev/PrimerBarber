@@ -2481,6 +2481,38 @@ function renderClube(view){
   }));
   view.querySelector('[data-goto="config"]')?.addEventListener('click', ()=>{ route='config'; render(); });
 }
+let asaasImportData = null;
+function confirmAsaasImport(view){
+  if(!asaasImportData) return;
+  const { members, plans } = asaasImportData;
+  let planos=0, novos=0, atualizados=0;
+  update(s=>{
+    // cria os planos que ainda não existem, guardando o mapeamento
+    const keyToPlanId = {};
+    plans.forEach(p=>{
+      const existente = s.subscriptionPlans.find(x=>x.name.trim().toLowerCase()===p.name.trim().toLowerCase() && Number(x.price)===Number(p.price));
+      if(existente){ keyToPlanId[p.key] = existente.id; return; }
+      const id = uid();
+      s.subscriptionPlans.push({id, name:p.name, category:'Importado do Asaas', price:p.price, discountPercent:0, includedServiceIds:[], benefits:''});
+      keyToPlanId[p.key] = id;
+      planos++;
+    });
+    // cria/atualiza os assinantes
+    members.forEach(m=>{
+      const existente = s.subscriptionMembers.find(x=>x.asaasSubscriptionId===m.asaasSubscriptionId);
+      const dados = {
+        name:m.name, phone:m.phone, planId:keyToPlanId[m.planKey],
+        paymentMethod:'asaas', dueDate:m.dueDate, status:m.status,
+        asaasSubscriptionId:m.asaasSubscriptionId, asaasCustomerId:m.asaasCustomerId,
+      };
+      if(existente){ Object.assign(existente, dados); atualizados++; }
+      else { s.subscriptionMembers.push({id:uid(), asaasChargeId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...dados}); novos++; }
+    });
+  });
+  asaasImportData = null;
+  showToast(`Importado: ${novos} assinante(s) novo(s), ${atualizados} atualizado(s), ${planos} plano(s) criado(s).`);
+  renderConfig(view);
+}
 async function syncAsaas(){
   if(!state.asaas.apiKey){
     showToast('Configure sua API Key do Asaas em Integração Asaas antes de sincronizar.');
@@ -2782,6 +2814,15 @@ function renderConfig(view){
     </div>
 
     <div class="card" style="padding:20px;margin-top:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Importar assinaturas que já existem no Asaas</div>
+        <button class="btn btn-ghost" id="f-import-asaas">${ICON.arrowUp} Buscar assinaturas</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted-2);">Se você já usava o Asaas em outro sistema, isso traz os planos e assinantes de lá para cá, mantendo a cobrança recorrente que já está rodando. Nada é criado ou cancelado no Asaas — só copiamos as informações para o BarberPro.</div>
+      <div id="asaas-import-result" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="card" style="padding:20px;margin-top:20px;">
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Atualização automática (webhook)</div>
       <div style="font-size:13px;color:var(--muted-2);margin-bottom:10px;">Para que o status mude sozinho assim que um assinante pagar (sem precisar clicar em "Sincronizar"), cole este endereço no painel do Asaas em <b>Integrações → Webhooks</b>:</div>
       <div class="font-mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;word-break:break-all;color:var(--gold-bright);">${SUPABASE_URL}/functions/v1/asaas-webhook</div>
@@ -2814,6 +2855,48 @@ function renderConfig(view){
       return;
     }
     out.innerHTML = `<span style="color:var(--ok);">✓ Conectado com sucesso ao Asaas (${res.env==='production'?'Produção':'Sandbox'}) — conta: <b>${esc(res.accountName)}</b></span>`;
+  });
+  view.querySelector('#f-import-asaas').addEventListener('click', async (e)=>{
+    const btn = e.currentTarget;
+    const out = view.querySelector('#asaas-import-result');
+    if(!state.asaas.apiKey){
+      out.innerHTML = `<span style="color:var(--bad);font-size:12.5px;">Salve e teste a API Key primeiro.</span>`;
+      return;
+    }
+    btn.disabled = true; out.innerHTML = '<span style="color:var(--muted);font-size:12.5px;">Buscando no Asaas... isso pode levar alguns segundos.</span>';
+    const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'import_existing' } });
+    btn.disabled = false;
+    if(error){ out.innerHTML = `<span style="color:var(--bad);font-size:12.5px;">Falha ao chamar o servidor: ${esc(error.message||'')}</span>`; return; }
+    if(res?.error){ out.innerHTML = `<span style="color:var(--bad);font-size:12.5px;">${esc(res.error)}</span>`; return; }
+    if(res?.note){ out.innerHTML = `<span style="color:var(--muted);font-size:12.5px;">${esc(res.note)}</span>`; return; }
+
+    asaasImportData = res;
+    const jaExiste = res.members.filter(m=>state.subscriptionMembers.some(x=>x.asaasSubscriptionId===m.asaasSubscriptionId)).length;
+    const novos = res.members.length - jaExiste;
+    const porStatus = {};
+    res.members.forEach(m=>{ porStatus[m.status] = (porStatus[m.status]||0)+1; });
+
+    out.innerHTML = `
+      <div class="card" style="padding:16px 18px;background:var(--panel-2);">
+        <div style="font-size:13.5px;font-weight:600;margin-bottom:10px;">Encontramos no seu Asaas:</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:12px;">
+          <div><div style="font-size:11px;color:var(--muted-2);">Assinantes</div><div class="font-mono" style="font-size:18px;color:var(--gold-bright);">${res.members.length}</div></div>
+          <div><div style="font-size:11px;color:var(--muted-2);">Planos distintos</div><div class="font-mono" style="font-size:18px;">${res.plans.length}</div></div>
+          <div><div style="font-size:11px;color:var(--muted-2);">Novos para importar</div><div class="font-mono" style="font-size:18px;color:var(--ok);">${novos}</div></div>
+          ${jaExiste?`<div><div style="font-size:11px;color:var(--muted-2);">Já cadastrados aqui</div><div class="font-mono" style="font-size:18px;color:var(--muted);">${jaExiste}</div></div>`:''}
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          Status: ${Object.entries(porStatus).map(([k,v])=>`${v} ${k}`).join(' · ')}
+        </div>
+        <div style="font-size:12.5px;margin-bottom:6px;font-weight:600;">Planos que serão criados:</div>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
+          ${res.plans.map(p=>`<div style="font-size:12.5px;color:var(--muted);">• ${esc(p.name)} — ${BRL(p.price)}/mês <span style="color:var(--muted-2);">(${p.count} assinante(s))</span></div>`).join('')}
+        </div>
+        <button class="btn btn-gold" id="f-confirm-import">Importar ${novos} assinante(s) e ${res.plans.length} plano(s)</button>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:8px;">Assinantes que já existem aqui serão atualizados, não duplicados.</div>
+      </div>
+    `;
+    view.querySelector('#f-confirm-import').addEventListener('click', ()=>confirmAsaasImport(view));
   });
   view.querySelector('#f-sync').addEventListener('click', syncAsaas);
   view.querySelector('[data-goto="clube"]')?.addEventListener('click', ()=>{ route='clube'; render(); });
