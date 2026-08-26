@@ -9,30 +9,32 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
-  :root{
-    --bg:#161310;
-    --panel:#211c16;
-    --panel-2:#2a2319;
-    --border:#3a3223;
+  /* ===== Tema ESCURO — preto neutro, branco e dourado ===== */
+  :root[data-theme="dark"]{
+    --bg:#0c0d0f;
+    --panel:#15171a;
+    --panel-2:#1e2126;
+    --border:#2a2e35;
     --gold:#c9a24b;
     --gold-bright:#e3c078;
-    --ink:#f3eee4;
-    --muted:#a79c89;
-    --muted-2:#7d745f;
-    --ok:#7fa87f;
-    --ok-bg:#22281f;
-    --bad:#c17b6a;
-    --bad-bg:#2a201c;
+    --ink:#f4f5f6;
+    --muted:#a2a8b0;
+    --muted-2:#737a84;
+    --ok:#5fa96f;
+    --ok-bg:#16241a;
+    --bad:#cf6b5c;
+    --bad-bg:#2a1a18;
     --warn:#d0a94f;
-    /* painel lateral — no tema escuro acompanha o resto */
-    --side-bg:#1b1712;
-    --side-ink:#f3eee4;
-    --side-muted:#a79c89;
-    --side-muted-2:#7d745f;
-    --side-border:#3a3223;
-    --side-hover:#2a2319;
+    /* painel lateral — preto mais fundo que o conteúdo */
+    --side-bg:#0a0b0d;
+    --side-ink:#f4f5f6;
+    --side-muted:#a2a8b0;
+    --side-muted-2:#737a84;
+    --side-border:#23272d;
+    --side-hover:#1a1d22;
   }
-  :root[data-theme="light"]{
+  /* ===== Tema CLARO — padrão do sistema ===== */
+  :root, :root[data-theme="light"]{
     --bg:#f4f4f5;
     --panel:#ffffff;
     --panel-2:#f0f0f1;
@@ -118,7 +120,7 @@
       radial-gradient(1100px 560px at 50% -8%, rgba(201,162,75,.16), transparent 62%),
       radial-gradient(700px 420px at 100% 100%, rgba(201,162,75,.06), transparent 55%),
       repeating-linear-gradient(128deg, rgba(201,162,75,.035) 0px, rgba(201,162,75,.035) 1.5px, transparent 1.5px, transparent 30px),
-      #161310;
+      #0a0b0d;
   }
   .auth-card{
     width:100%; max-width:408px; position:relative; z-index:1;
@@ -131,7 +133,7 @@
     background:repeating-linear-gradient(52deg,
       #c9a24b 0px, #c9a24b 9px,
       #e3c078 9px, #e3c078 18px,
-      #161310 18px, #161310 22px,
+      #0a0b0d 18px, #0a0b0d 22px,
       #e3c078 22px, #e3c078 31px);
     background-size:44px 100%;
     flex-shrink:0;
@@ -396,7 +398,7 @@ function blankShopData(){
     clients: [], products: [], waitlist: [],
     loyalty:{pointsPerReal:1, redeemThreshold:100, redeemValue:20, referralBonusPoints:30},
     onlineBooking:{slug:'', allowCancel:true, allowReschedule:true, active:true},
-    themePreference:'dark',
+    themePreference:'light',
     ownerName:'',
     shopProfile:{
       name:'Minha Barbearia', logoDataUrl:APP_LOGO_ICON, bannerDataUrl:'',
@@ -438,11 +440,11 @@ async function loadState(){
   render();
 }
 function applyTheme(theme){
-  document.documentElement.dataset.theme = theme==='light' ? 'light' : '';
+  document.documentElement.dataset.theme = theme==='dark' ? 'dark' : 'light';
 }
 function migrateState(){
   // Garante que sessões salvas antes destas funcionalidades recebam valores padrão.
-  state.themePreference = state.themePreference || 'dark';
+  state.themePreference = state.themePreference || 'light';
   applyTheme(state.themePreference);
   if(state.ownerName==null) state.ownerName = '';
   state.withdrawalRequests = state.withdrawalRequests || [];
@@ -915,8 +917,8 @@ function render(){
         <div style="padding:0 8px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <div style="font-size:11px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.06em;">Tema</div>
           <div style="display:flex;border:1px solid var(--side-border);border-radius:8px;overflow:hidden;">
-            <button class="theme-toggle-btn" data-theme-choice="dark" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference!=='light'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference!=='light'?'#1a1610':'var(--side-muted)'};">Escuro</button>
-            <button class="theme-toggle-btn" data-theme-choice="light" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference==='light'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference==='light'?'#1a1610':'var(--side-muted)'};">Claro</button>
+            <button class="theme-toggle-btn" data-theme-choice="dark" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference==='dark'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference==='dark'?'#12140f':'var(--side-muted)'};">Escuro</button>
+            <button class="theme-toggle-btn" data-theme-choice="light" style="padding:5px 10px;font-size:11.5px;border:none;cursor:pointer;background:${state.themePreference!=='dark'?'#c9a24b':'var(--side-hover)'};color:${state.themePreference!=='dark'?'#12140f':'var(--side-muted)'};">Claro</button>
           </div>
         </div>
         <div style="padding:10px 8px 0;border-top:1px solid var(--side-border);">
