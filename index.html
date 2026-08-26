@@ -2806,7 +2806,7 @@ function renderConfig(view){
     const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'test_connection' } });
     btn.disabled = false;
     if(error){
-      out.innerHTML = `<span style="color:var(--bad);">Não foi possível chamar o servidor: ${esc(error.message||'erro desconhecido')}. Verifique se a função asaas-sync foi publicada.</span>`;
+      out.innerHTML = `<span style="color:var(--bad);">Não foi possível falar com o servidor.<br><span style="color:var(--muted);">Detalhe: ${esc(error.message||'erro desconhecido')}</span><br>Publique a função com <b>supabase functions deploy asaas-sync</b> na versão mais recente (a anterior não respondia ao navegador).</span>`;
       return;
     }
     if(res?.error){
