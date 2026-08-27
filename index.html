@@ -8,6 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Deixa o site instalável na tela de início do celular -->
+<meta name="theme-color" content="#0a0b0d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Primer Barber">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   /* ===== Tema ESCURO — preto neutro, branco e dourado ===== */
   :root[data-theme="dark"]{
@@ -192,9 +198,60 @@
   td{padding:12px;font-size:14px;border-top:1px solid var(--border);}
   tr:hover td{background:rgba(255,255,255,.015);}
 
+  /* ===== Adaptação para celular ===== */
+  .mobile-topbar{display:none;}
+  .mobile-drawer{display:none;}
   @media (max-width: 860px){
-    .sidebar{display:none;}
-    .mobile-nav{display:flex !important;}
+    /* menu lateral vira gaveta que abre por cima */
+    .sidebar{
+      position:fixed; top:0; left:0; bottom:0; z-index:120;
+      transform:translateX(-100%); transition:transform .22s ease;
+      width:270px !important; height:100vh !important;
+      box-shadow:14px 0 40px -12px rgba(0,0,0,.6);
+    }
+    body.drawer-open .sidebar{transform:translateX(0);}
+    .mobile-drawer{
+      display:block; position:fixed; inset:0; z-index:110;
+      background:rgba(0,0,0,.55); opacity:0; pointer-events:none; transition:opacity .22s;
+    }
+    body.drawer-open .mobile-drawer{opacity:1; pointer-events:auto;}
+    .mobile-topbar{
+      display:flex; align-items:center; gap:12px;
+      position:sticky; top:0; z-index:90;
+      background:var(--side-bg); border-bottom:1px solid var(--side-border);
+      padding:11px 14px; color:var(--side-ink);
+    }
+    main{padding:18px 15px 90px !important; max-width:100% !important;}
+    /* cartões e tabelas respiram melhor */
+    .card{border-radius:12px;}
+    table{display:block; overflow-x:auto; white-space:nowrap;}
+    /* alvos de toque maiores */
+    .btn{padding:11px 15px; font-size:14px;}
+    input, select, textarea{font-size:16px;} /* evita o zoom automático do iPhone */
+    .dash-grid{grid-template-columns:1fr !important;}
+    .desk-bell{display:none !important;}
+    /* grade da agenda: colunas mais estreitas e rolagem lateral suave */
+    .card{scrollbar-width:thin;}
+    /* páginas públicas ocupam a largura toda */
+    .auth-card{max-width:100% !important;}
+    /* cabeçalhos de página não quebram feio */
+    .pill{font-size:11px;}
+    /* modais viram uma folha que sobe de baixo */
+    .modal-overlay{align-items:flex-end !important; padding:0 !important;}
+    .modal{
+      max-height:92vh; overflow-y:auto;
+      border-radius:20px 20px 0 0 !important;
+      width:100% !important; max-width:100% !important;
+      padding-bottom:env(safe-area-inset-bottom);
+    }
+  }
+  @media (max-width: 520px){
+    h1, .font-display{letter-spacing:-.01em;}
+    main{padding:14px 12px 90px !important;}
+  }
+  /* Quando instalado como app (tela cheia), respeita o entalhe do celular */
+  @media (display-mode: standalone){
+    .mobile-topbar{padding-top:calc(11px + env(safe-area-inset-top));}
   }
 </style>
 </head>
@@ -948,17 +1005,38 @@ function render(){
           <button class="btn btn-ghost" id="btn-logout" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;">Sair</button>
         </div>
       </aside>
+      <div class="mobile-drawer" id="drawer-back"></div>
+      <div style="flex:1;min-width:0;">
+      <div class="mobile-topbar">
+        <button class="btn btn-ghost" id="btn-open-menu" style="padding:8px 11px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div style="width:26px;height:26px;border-radius:7px;background:var(--side-hover);display:flex;align-items:center;justify-content:center;padding:3px;flex-shrink:0;">
+          <img src="${APP_LOGO_ICON}" style="width:100%;height:100%;object-fit:contain;">
+        </div>
+        <div class="font-display" style="font-size:15px;font-weight:600;flex:1;">${esc(state.shopProfile?.name || 'Primer Barber')}</div>
+        <button class="btn btn-ghost" id="btn-notif-bell-m" style="position:relative;padding:8px 10px;">${ICON.bell}</button>
+      </div>
       <main style="flex:1;padding:26px 30px 60px;max-width:1180px;">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;position:relative;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;position:relative;" class="desk-bell">
           <button class="btn btn-ghost" id="btn-notif-bell" style="position:relative;padding:9px 11px;">${ICON.bell}</button>
           <div id="notif-dropdown" style="display:${notifState.open?'block':'none'};position:absolute;top:44px;right:0;width:320px;max-height:420px;overflow-y:auto;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);z-index:80;">${notifState.open?notifDropdownContent():''}</div>
         </div>
         <div id="view"></div>
       </main>
+      </div>
     </div>
   `;
   app.querySelectorAll('[data-route]').forEach(el=>{
     el.addEventListener('click', ()=>{ route = el.dataset.route; render(); });
+  });
+  const fecharGaveta = ()=>document.body.classList.remove('drawer-open');
+  app.querySelector('#btn-open-menu')?.addEventListener('click', ()=>document.body.classList.add('drawer-open'));
+  app.querySelector('#drawer-back')?.addEventListener('click', fecharGaveta);
+  // ao escolher uma tela no menu, a gaveta fecha sozinha
+  app.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click', fecharGaveta));
+  app.querySelector('#btn-notif-bell-m')?.addEventListener('click', (e)=>{
+    e.stopPropagation(); notifState.open = !notifState.open; render();
   });
   app.querySelector('#btn-switch-profile').addEventListener('click', openProfileSwitchModal);
   app.querySelector('#btn-logout').addEventListener('click', async ()=>{
@@ -5311,6 +5389,27 @@ async function boot(){
   await refreshNotifItems();
   subscribeBookingNotifications();
 }
+
+/* ============ INSTALAÇÃO NO CELULAR (PWA) ============ */
+(function(){
+  const manifest = {
+    name: "Primer Barber", short_name: "Primer Barber",
+    start_url: ".", display: "standalone",
+    background_color: "#0a0b0d", theme_color: "#0a0b0d",
+    icons: [
+      { src: APP_LOGO_ICON, sizes: "256x256", type: "image/png", purpose: "any" },
+      { src: APP_LOGO_ICON, sizes: "512x512", type: "image/png", purpose: "any" }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = URL.createObjectURL(blob);
+  document.head.appendChild(link);
+  const icon = document.createElement('link');
+  icon.rel = 'apple-touch-icon'; icon.href = APP_LOGO_ICON;
+  document.head.appendChild(icon);
+})();
 
 /* ============ INIT ============ */
 boot();
