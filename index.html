@@ -2449,6 +2449,92 @@ function methodLabel(m){
   if(m.paymentMethod==='dinheiro') return '<span class="pill pill-muted">Dinheiro</span>';
   return '<span class="pill pill-muted">'+ICON.link+' Pix/Cartão (Asaas)</span>';
 }
+async function loadClientRequests(view){
+  const listEl = view.querySelector('#cli-req-list');
+  const countEl = view.querySelector('#cli-req-count');
+  if(!listEl || !currentShop) return;
+  const { data, error } = await supa.from('client_requests')
+    .select('*').eq('shop_id', currentShop.id).eq('status','pendente').order('created_at',{ascending:false});
+  if(error){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Não foi possível carregar.</div>'; return; }
+  countEl.textContent = (data||[]).length + ' pendente(s)';
+  if(!data || !data.length){ listEl.innerHTML = '<div style="font-size:12.5px;color:var(--muted);">Nenhum pedido pendente.</div>'; return; }
+  listEl.innerHTML = data.map(r=>{
+    const txt = r.type==='renovacao'
+      ? `quer renovar o plano ${esc(r.current_plan||'')}`
+      : `quer trocar${r.current_plan?` de ${esc(r.current_plan)}`:''} para <b>${esc(r.requested_plan_name||'')}</b>`;
+    const msg = r.type==='renovacao'
+      ? `Olá ${r.client_name}! Recebemos seu pedido de renovação. Já te envio o link de pagamento.`
+      : `Olá ${r.client_name}! Recebemos seu pedido de troca para o ${r.requested_plan_name}. Vamos acertar isso pra você.`;
+    return `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+      <div style="font-size:13px;min-width:200px;">
+        <b>${esc(r.client_name)}</b> ${txt}<br>
+        <span style="color:var(--muted);font-size:11.5px;">${esc(r.client_phone||'')} · ${new Date(r.created_at).toLocaleDateString('pt-BR')}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+        ${messageChannelRow(r.client_phone, msg)}
+        <button class="btn btn-gold" data-cli-done="${r.id}" style="padding:6px 10px;font-size:12px;">Marcar resolvido</button>
+      </div>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('[data-cli-done]').forEach(b=>b.addEventListener('click', async ()=>{
+    await supa.from('client_requests').update({status:'resolvido'}).eq('id', b.dataset.cliDone);
+    showToast('Pedido marcado como resolvido.');
+    loadClientRequests(view);
+  }));
+}
+function clientAccessModal(member){
+  if(!member) return;
+  const senha = 'Alpha' + Math.floor(1000 + Math.random()*9000);
+  const link = `${window.location.origin}${window.location.pathname}?cliente=${state.onlineBooking?.slug||''}`;
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Acesso ao portal</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:18px;">Crie o login de <b>${esc(member.name)}</b> para ele acessar o portal, agendar e renovar sozinho.</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div><label>E-mail do cliente</label><input id="ca-email" type="email" value="${esc(member.email)}" placeholder="cliente@email.com" style="width:100%;"></div>
+        <div><label>Senha provisória</label><input id="ca-pass" value="${senha}" style="width:100%;">
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">O cliente será obrigado a trocar essa senha no primeiro acesso.</div>
+        </div>
+        <button class="btn btn-gold" id="ca-save" style="justify-content:center;">Criar acesso</button>
+        <div id="ca-result"></div>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#ca-save').addEventListener('click', async (e)=>{
+      const email = root.querySelector('#ca-email').value.trim();
+      const pass = root.querySelector('#ca-pass').value.trim();
+      if(!email || pass.length<6){ showToast('Informe o e-mail e uma senha com ao menos 6 caracteres.'); return; }
+      e.currentTarget.disabled = true; e.currentTarget.textContent = 'Criando...';
+      const { data: res, error } = await supa.rpc('create_client_account', {
+        p_shop_id: currentShop.id, p_member_id: member.id, p_name: member.name,
+        p_email: email, p_phone: member.phone || '', p_password: pass,
+      });
+      e.currentTarget.disabled = false; e.currentTarget.textContent = 'Criar acesso';
+      if(error || res?.error){ showToast(res?.error || 'Não foi possível criar o acesso.'); return; }
+      update(s=>{ const mm = s.subscriptionMembers.find(x=>x.id===member.id); if(mm) mm.email = email; });
+      const msg = `Olá ${member.name}! Criamos seu acesso ao nosso portal, onde você agenda e acompanha seu plano.\n\nLink: ${link}\nE-mail: ${email}\nSenha provisória: ${pass}\n\nNo primeiro acesso você vai criar sua própria senha.`;
+      root.querySelector('#ca-result').innerHTML = `
+        <div class="card" style="padding:14px 16px;background:var(--panel-2);margin-top:4px;">
+          <div style="color:var(--ok);font-size:13px;font-weight:600;margin-bottom:10px;">✓ Acesso criado!</div>
+          <div style="font-size:12.5px;color:var(--muted);line-height:1.7;word-break:break-all;">
+            Link: <span style="color:var(--gold-bright);">${link}</span><br>
+            E-mail: <b style="color:var(--ink);">${esc(email)}</b><br>
+            Senha provisória: <b style="color:var(--ink);">${esc(pass)}</b>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+            ${messageChannelRow(member.phone, msg)}
+            <button class="btn btn-ghost" id="ca-copy" style="padding:7px 11px;font-size:12px;">${ICON.copy} Copiar dados</button>
+          </div>
+        </div>`;
+      root.querySelector('#ca-copy').addEventListener('click', ()=>{ navigator.clipboard?.writeText(msg); showToast('Dados copiados.'); });
+    });
+  });
+}
 async function loadSubscriptionRequests(view){
   const listEl = view.querySelector('#sub-req-list');
   const countEl = view.querySelector('#sub-req-count');
@@ -2525,10 +2611,20 @@ function renderClube(view){
           <div style="display:flex;gap:8px;flex-shrink:0;">
             <a href="?planos=${esc(state.onlineBooking.slug)}" target="_blank" class="btn btn-ghost" style="text-decoration:none;">${ICON.globe} Ver página</a>
             <button class="btn btn-ghost" id="btn-copy-plans-link">${ICON.copy} Copiar</button>
+            <button class="btn btn-ghost" id="btn-copy-portal-link">${ICON.lock} Link do portal</button>
           </div>
         </div>
       </div>
     ` : ''}
+
+    <div class="card" style="padding:18px 20px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Pedidos dos clientes (renovação / troca)</div>
+        <span class="pill pill-warn" id="cli-req-count">carregando...</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted-2);margin-bottom:12px;">Vindos do portal do cliente.</div>
+      <div id="cli-req-list">Carregando...</div>
+    </div>
 
     <div class="card" style="padding:18px 20px;margin-bottom:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -2597,6 +2693,7 @@ function renderClube(view){
             <td style="text-align:right;white-space:nowrap;">
               ${m.invoiceUrl ? `<a href="${m.invoiceUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 10px;text-decoration:none;">${ICON.link} Ver cobrança</a>` : ''}
               ${m.paymentMethod==='dinheiro' && m.status!=='pago' && m.status!=='cancelado' ? `<button class="btn btn-ghost" style="padding:6px 10px;color:var(--ok);border-color:var(--ok);" data-mark-cash="${m.id}">Marcar pago (dinheiro)</button>` : ''}
+              <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-access-member="${m.id}" title="Criar acesso ao portal do cliente">${ICON.lock} Acesso</button>
               <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-member="${m.id}">${ICON.edit}</button>
               <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-member="${m.id}">${ICON.trash}</button>
             </td>
@@ -2614,9 +2711,15 @@ function renderClube(view){
     navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?planos=${state.onlineBooking.slug}`);
     showToast('Link da página de planos copiado.');
   });
+  view.querySelector('#btn-copy-portal-link')?.addEventListener('click', ()=>{
+    navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?cliente=${state.onlineBooking.slug}`);
+    showToast('Link do portal do cliente copiado.');
+  });
   loadSubscriptionRequests(view);
+  loadClientRequests(view);
   view.querySelectorAll('[data-edit-plan]').forEach(b=>b.addEventListener('click', ()=>planModal(state.subscriptionPlans.find(p=>p.id===b.dataset.editPlan))));
   view.querySelectorAll('[data-del-plan]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionPlans = s.subscriptionPlans.filter(p=>p.id!==b.dataset.delPlan); })));
+  view.querySelectorAll('[data-access-member]').forEach(b=>b.addEventListener('click', ()=>clientAccessModal(state.subscriptionMembers.find(m=>m.id===b.dataset.accessMember))));
   view.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>memberModal(state.subscriptionMembers.find(m=>m.id===b.dataset.editMember))));
   view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionMembers = s.subscriptionMembers.filter(m=>m.id!==b.dataset.delMember); })));
   view.querySelectorAll('[data-mark-cash]').forEach(b=>b.addEventListener('click', ()=>{
@@ -2779,6 +2882,7 @@ function memberModal(existing, prefill){
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
+        <div><label>E-mail (para o portal do cliente)</label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
         <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
         <div><label>Forma de pagamento</label><select id="f-method" style="width:100%;">
           <option value="asaas" ${!existing||existing.paymentMethod==='asaas'?'selected':''}>Pix / Cartão (via Asaas)</option>
@@ -2805,8 +2909,9 @@ function memberModal(existing, prefill){
       const phone = root.querySelector('#f-phone').value.trim();
       const planId = root.querySelector('#f-plan').value;
       const paymentMethod = root.querySelector('#f-method').value;
+      const email = root.querySelector('#f-email')?.value.trim() || '';
       const data = {
-        name, phone, planId, paymentMethod,
+        name, phone, email, planId, paymentMethod,
         dueDate: root.querySelector('#f-due').value,
         status: root.querySelector('#f-status').value,
       };
@@ -4469,6 +4574,175 @@ async function submitPublicBooking(){
 }
 
 
+/* ============ PORTAL DO CLIENTE FINAL (link ?cliente) ============ */
+let clientSession = null;
+
+function clientShell(inner){
+  document.getElementById('app').innerHTML = `
+    <div class="auth-bg"><div class="auth-card"><div class="auth-inner">${inner}</div></div></div>`;
+}
+
+async function renderClientLogin(slug, errorMsg){
+  clientShell(`
+    <div class="auth-eyebrow">Área do cliente</div>
+    <div class="auth-title font-display" style="font-weight:600;font-size:22px;">Entrar</div>
+    <div class="auth-subtitle">Acesse para agendar, ver seu plano e renovar sua assinatura.</div>
+    ${errorMsg?`<div class="auth-error">${esc(errorMsg)}</div>`:''}
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="auth-field"><label>E-mail</label><input id="cl-email" type="email" placeholder="voce@email.com"></div>
+      <div class="auth-field"><label>Senha</label><input id="cl-pass" type="password" placeholder="Sua senha"></div>
+      <button class="btn btn-gold auth-submit" id="cl-submit">Entrar</button>
+      <div style="text-align:center;font-size:11.5px;color:var(--muted-2);line-height:1.6;">
+        Ainda não tem acesso? Peça seu login na barbearia.
+      </div>
+    </div>
+  `);
+  document.getElementById('cl-submit').addEventListener('click', async (e)=>{
+    const email = document.getElementById('cl-email').value.trim();
+    const pass = document.getElementById('cl-pass').value;
+    if(!email || !pass){ renderClientLogin(slug, 'Preencha e-mail e senha.'); return; }
+    e.currentTarget.disabled = true; e.currentTarget.textContent = 'Entrando...';
+    const { data: res, error } = await supa.rpc('client_login', { p_slug: slug, p_email: email, p_password: pass });
+    if(error || !res || res.error){ renderClientLogin(slug, res?.error || 'Não foi possível entrar.'); return; }
+    clientSession = { ...res, slug };
+    if(res.mustChangePassword) renderClientChangePassword(slug, true);
+    else renderClientPortal();
+  });
+}
+
+function renderClientChangePassword(slug, obrigatorio, errorMsg){
+  clientShell(`
+    <div class="auth-eyebrow">Área do cliente</div>
+    <div class="auth-title font-display" style="font-weight:600;font-size:22px;">${obrigatorio?'Crie sua senha':'Trocar senha'}</div>
+    <div class="auth-subtitle">${obrigatorio?'Por segurança, escolha uma senha só sua antes de continuar.':'Escolha uma nova senha.'}</div>
+    ${errorMsg?`<div class="auth-error">${esc(errorMsg)}</div>`:''}
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="auth-field"><label>Senha atual</label><input id="cp-cur" type="password"></div>
+      <div class="auth-field"><label>Nova senha</label><input id="cp-new" type="password" placeholder="Mínimo 6 caracteres"></div>
+      <div class="auth-field"><label>Confirmar nova senha</label><input id="cp-new2" type="password"></div>
+      <button class="btn btn-gold auth-submit" id="cp-save">Salvar senha</button>
+      ${!obrigatorio?`<button class="btn btn-ghost auth-switch" id="cp-back">Voltar</button>`:''}
+    </div>
+  `);
+  document.getElementById('cp-back')?.addEventListener('click', renderClientPortal);
+  document.getElementById('cp-save').addEventListener('click', async ()=>{
+    const cur = document.getElementById('cp-cur').value;
+    const n1 = document.getElementById('cp-new').value;
+    const n2 = document.getElementById('cp-new2').value;
+    if(n1.length<6){ renderClientChangePassword(slug, obrigatorio, 'A nova senha precisa ter ao menos 6 caracteres.'); return; }
+    if(n1!==n2){ renderClientChangePassword(slug, obrigatorio, 'As senhas não coincidem.'); return; }
+    const { data: res, error } = await supa.rpc('client_change_password', {
+      p_account_id: clientSession.accountId, p_current: cur, p_new: n1
+    });
+    if(error || res?.error){ renderClientChangePassword(slug, obrigatorio, res?.error || 'Não foi possível trocar a senha.'); return; }
+    clientSession.mustChangePassword = false;
+    showToast('Senha atualizada!');
+    renderClientPortal();
+  });
+}
+
+function renderClientPortal(){
+  const s = clientSession;
+  const m = s.member, plan = s.plan;
+  const statusInfo = m ? ({
+    pago:      {label:'Em dia', tone:'ok'},
+    pendente:  {label:'Aguardando pagamento', tone:'warn'},
+    atrasado:  {label:'Mensalidade atrasada', tone:'bad'},
+    cancelado: {label:'Cancelada', tone:'bad'},
+  }[m.status] || {label:m.status, tone:'muted'}) : null;
+  const bookingLink = s.bookingSlug ? `${window.location.origin}${window.location.pathname}?agendar=${s.bookingSlug}` : '';
+  const outros = (s.allPlans||[]).filter(p=>!plan || p.id!==plan.id);
+
+  document.getElementById('app').innerHTML = `
+    <div style="min-height:100vh;background:var(--bg);padding:26px 18px 60px;">
+      <div style="max-width:640px;margin:0 auto;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+          ${s.logo?`<img src="${s.logo}" style="width:44px;height:44px;object-fit:contain;border-radius:10px;">`:''}
+          <div style="flex:1;">
+            <div class="font-display" style="font-size:19px;font-weight:600;">Olá, ${esc((s.name||'').split(' ')[0])}!</div>
+            <div style="font-size:12px;color:var(--muted-2);">${esc(s.shopName||'')}</div>
+          </div>
+          <button class="btn btn-ghost" id="cl-logout" style="padding:7px 12px;font-size:12.5px;">Sair</button>
+        </div>
+
+        ${bookingLink?`<a href="${bookingLink}" class="btn btn-gold" style="width:100%;justify-content:center;text-decoration:none;padding:15px;font-size:15px;margin-bottom:20px;">${ICON.agenda} Agendar um horário</a>`:''}
+
+        ${m && plan ? `
+          <div class="card" style="padding:22px;margin-bottom:18px;border-color:var(--gold);">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;">Seu plano</div>
+                <div class="font-display" style="font-size:22px;font-weight:600;color:var(--gold-bright);">${esc(plan.name)}</div>
+                <div class="font-mono" style="font-size:14px;color:var(--muted);margin-top:3px;">${BRL(plan.price)}/mês</div>
+              </div>
+              <span class="pill pill-${statusInfo.tone}" style="padding:6px 13px;">${statusInfo.label}</span>
+            </div>
+            ${m.dueDate?`<div style="font-size:12.5px;color:var(--muted);margin-top:12px;">Próximo vencimento: ${new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR')}</div>`:''}
+            ${(plan.validDays||[]).length && (plan.validDays||[]).length<7 ? `<div style="margin-top:10px;font-size:12px;color:var(--gold-bright);">🗓 ${esc(planDaysLabel(plan.validDays))}</div>`:''}
+            ${(plan.benefitsList||[]).length?`
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px;">
+                <div style="font-size:10.5px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;">O que está incluso:</div>
+                <div style="display:flex;flex-direction:column;gap:7px;">
+                  ${plan.benefitsList.map(b=>`<div style="display:flex;gap:8px;font-size:13px;color:var(--muted);"><span style="color:var(--gold-bright);">✓</span><span>${esc(b)}</span></div>`).join('')}
+                </div>
+              </div>`:''}
+            ${m.invoiceUrl?`<a href="${esc(m.invoiceUrl)}" target="_blank" class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:16px;text-decoration:none;">${ICON.link} Ver / pagar minha cobrança</a>`:''}
+            ${m.status!=='pago'?`<button class="btn btn-gold" id="cl-renew" style="width:100%;justify-content:center;margin-top:9px;">Pedir renovação</button>`:''}
+          </div>
+        ` : `
+          <div class="card" style="padding:22px;margin-bottom:18px;text-align:center;">
+            <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:8px;">Você ainda não tem um plano</div>
+            <div style="font-size:13px;color:var(--muted);line-height:1.6;">Escolha um dos planos abaixo e peça sua assinatura.</div>
+          </div>
+        `}
+
+        ${outros.length?`
+          <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:12px;">${plan?'Quer trocar de plano?':'Planos disponíveis'}</div>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            ${outros.map(p=>`
+              <div class="card" style="padding:18px 20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                  <div style="min-width:0;">
+                    <div style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
+                    <div class="font-mono" style="font-size:16px;color:var(--gold-bright);margin-top:2px;">${BRL(p.price)}<span style="font-size:11.5px;color:var(--muted-2);">/mês</span></div>
+                    ${(p.validDays||[]).length && (p.validDays||[]).length<7?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:4px;">🗓 ${esc(planDaysLabel(p.validDays))}</div>`:''}
+                  </div>
+                  <button class="btn btn-ghost cl-upgrade" data-plan="${esc(p.id)}" data-name="${esc(p.name)}" style="flex-shrink:0;">${plan?'Trocar para este':'Quero este'}</button>
+                </div>
+                ${(p.benefitsList||[]).length?`<div style="display:flex;flex-direction:column;gap:5px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+                  ${p.benefitsList.map(b=>`<div style="display:flex;gap:7px;font-size:12.5px;color:var(--muted);"><span style="color:var(--gold-bright);">✓</span><span>${esc(b)}</span></div>`).join('')}
+                </div>`:''}
+              </div>
+            `).join('')}
+          </div>
+        `:''}
+
+        <button class="btn btn-ghost" id="cl-changepass" style="width:100%;justify-content:center;margin-top:24px;font-size:12.5px;color:var(--muted);">Trocar minha senha</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cl-logout').addEventListener('click', ()=>{ const sl=s.slug; clientSession=null; renderClientLogin(sl); });
+  document.getElementById('cl-changepass').addEventListener('click', ()=>renderClientChangePassword(s.slug, false));
+  document.getElementById('cl-renew')?.addEventListener('click', ()=>sendClientRequest('renovacao'));
+  document.querySelectorAll('.cl-upgrade').forEach(b=>b.addEventListener('click', ()=>sendClientRequest('upgrade', b.dataset.plan, b.dataset.name)));
+}
+
+async function sendClientRequest(tipo, planId, planName){
+  const s = clientSession;
+  const { error } = await supa.from('client_requests').insert({
+    shop_id: s.shopId, account_id: s.accountId,
+    client_name: s.name, client_phone: s.phone,
+    type: tipo,
+    current_plan: s.plan?.name || null,
+    requested_plan_id: planId || null,
+    requested_plan_name: planName || null,
+  });
+  if(error){ showToast('Não foi possível enviar o pedido. Tente de novo.'); return; }
+  showToast(tipo==='renovacao'
+    ? 'Pedido de renovação enviado! A barbearia vai te mandar o link de pagamento.'
+    : 'Pedido enviado! A barbearia vai confirmar a troca com você.');
+}
+
 /* ============ PÁGINA PÚBLICA DE PLANOS (link ?planos) ============ */
 let planPageData = null;
 
@@ -5020,6 +5294,8 @@ async function boot(){
   if(teamSlug){ await renderTeamLogin(teamSlug); return; }
   const plansSlug = urlParams.get('planos');
   if(plansSlug){ await renderPublicPlans(plansSlug); return; }
+  const clientSlug = urlParams.get('cliente');
+  if(clientSlug){ await renderClientLogin(clientSlug); return; }
   const { data: { session } } = await supa.auth.getSession();
   if(!session){ renderAuthScreen('login'); return; }
   let shop = await ensureShop();
