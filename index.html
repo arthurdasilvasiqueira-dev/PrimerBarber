@@ -5170,6 +5170,8 @@ async function ensureShop(defaultName){
     trial_ends_at: trialEnds,
   }).select().single();
   if(error){ console.error('Erro ao criar barbearia', error); return null; }
+  // Avisa a Meta que um cadastro (Lead) foi concluído com sucesso, para otimização de anúncios.
+  if(window.fbq){ fbq('track', 'Lead'); }
   // Avisa o dono do sistema por e-mail. Se falhar, não atrapalha o cadastro.
   supa.functions.invoke('notify-signup', {
     body: { event:'signup', shopName: seeded.shopProfile.name, email: user.email }
