@@ -221,11 +221,16 @@ src="https://www.facebook.com/tr?id=1606280897548168&ev=PageView&noscript=1"
   @media (max-width: 860px){
     /* menu lateral vira gaveta que abre por cima */
     .sidebar{
-      position:fixed; top:0; left:0; bottom:0; z-index:120;
+      /* !important é necessário: o elemento tem position:sticky inline,
+         que venceria esta regra e deixaria a barra ocupando espaço. */
+      position:fixed !important; top:0 !important; left:0 !important; bottom:0 !important;
+      z-index:120;
       transform:translateX(-100%); transition:transform .22s ease;
-      width:270px !important; height:100vh !important;
+      width:270px !important; height:100vh !important; max-width:85vw;
       box-shadow:14px 0 40px -12px rgba(0,0,0,.6);
     }
+    /* trava qualquer rolagem lateral indesejada */
+    html, body{max-width:100%; overflow-x:hidden;}
     body.drawer-open .sidebar{transform:translateX(0);}
     .mobile-drawer{
       display:block; position:fixed; inset:0; z-index:110;
@@ -740,6 +745,8 @@ function commissionOwed(profId){
   const paidService = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='servico').reduce((a,c)=>a+Number(c.amount),0);
   const paidPote = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='pote' && c.period===period).reduce((a,c)=>a+Number(c.amount),0);
   const paidSaque = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='saque').reduce((a,c)=>a+Number(c.amount),0);
+  // vales (adiantamentos) também descontam do que o profissional tem a receber
+  const paidVale = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='vale').reduce((a,c)=>a+Number(c.amount),0);
   const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   let serviceEarned = 0;
   concludedAppts.forEach(ap=>{
@@ -751,10 +758,10 @@ function commissionOwed(profId){
   const serviceOwed = Math.max(0, serviceEarned - paidService);
   const potOwed = Math.max(0, potEarned - paidPote);
   const totalEarned = serviceEarned + potEarned;
-  const totalPaid = paidService + paidPote + paidSaque;
+  const totalPaid = paidService + paidPote + paidSaque + paidVale;
   return {
     earned: totalEarned, serviceEarned, potEarned,
-    paid: totalPaid, paidService, paidPote, paidSaque,
+    paid: totalPaid, paidService, paidPote, paidSaque, paidVale,
     owed: Math.max(0, totalEarned - totalPaid), serviceOwed, potOwed,
   };
 }
@@ -1995,6 +2002,7 @@ function renderComissoes(view){
                 <div style="font-size:11.5px;color:var(--muted-2);">Serviços avulsos</div>
                 <div class="font-mono" style="font-size:15px;color:${c.serviceOwed>0?'var(--warn)':'var(--muted)'};">${BRL(c.serviceOwed)} <span style="font-size:11px;color:var(--muted-2);">a pagar</span></div>
               </div>
+              ${isOwnerLevel() ? `<button class="btn btn-ghost" style="padding:8px 12px;" data-vale="${p.id}">${ICON.cash} Vale</button>` : ''}
               ${isOwnerLevel() ? `<button class="btn btn-gold" style="padding:8px 12px;" ${c.serviceOwed<=0?'disabled':''} data-pay-service="${p.id}">Pagar</button>` : ''}
             </div>
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;">
@@ -2055,6 +2063,24 @@ function renderComissoes(view){
       </div>
     </div>` : ''}
 
+    ${state.commissionPayments.filter(x=>x.source==='vale').length>0 ? `
+      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Vales dados</div>
+      <table style="margin-bottom:26px;">
+        <thead><tr><th>Data</th><th>Profissional</th><th>Origem</th><th>Observação</th><th>Valor</th></tr></thead>
+        <tbody>
+          ${state.commissionPayments.filter(x=>x.source==='vale').slice().reverse()
+            .filter(x=>isOwnerLevel() || x.professionalId===userSession.professionalId)
+            .map(x=>`<tr>
+              <td>${new Date(x.date).toLocaleDateString('pt-BR')}</td>
+              <td>${esc(profName(x.professionalId))}</td>
+              <td><span class="pill pill-muted">${x.origem==='banco'?'Conta bancária':'Caixa'}</span></td>
+              <td style="color:var(--muted);">${esc(x.note)||'—'}</td>
+              <td class="font-mono" style="color:var(--bad);">− ${BRL(x.amount)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    ` : ''}
+
     <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Histórico de pagamentos de serviços</div>
     ${state.commissionPayments.filter(c=>c.source==='servico').length===0 ? emptyState('Nenhum pagamento de comissão de serviço registrado ainda.') : `
       <table style="margin-bottom:26px;">
@@ -2085,6 +2111,7 @@ function renderComissoes(view){
     `}
   `;
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
+  view.querySelectorAll('[data-vale]').forEach(b=>b.addEventListener('click', ()=>valeModal(b.dataset.vale, view)));
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
   view.querySelector('#btn-request-withdrawal')?.addEventListener('click', ()=>withdrawalRequestModal(myProf));
   view.querySelector('#btn-save-club-pct')?.addEventListener('click', ()=>{
@@ -2141,6 +2168,73 @@ function withdrawalRequestModal(prof){
       showToast('Solicitação de saque enviada.');
       closeModal();
       render();
+    });
+  });
+}
+function valeModal(profId, view){
+  const prof = state.professionals.find(p=>p.id===profId);
+  if(!prof) return;
+  const c = commissionOwed(profId);
+  const caixaAberto = openSession();
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Dar vale</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">${esc(prof.name)}</div>
+      <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:18px;">Tem <b style="color:var(--gold-bright);">${BRL(c.owed)}</b> a receber no momento.</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div><label>Valor do vale (R$)</label><input id="v-amount" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;"></div>
+        <div>
+          <label>De onde sai o dinheiro?</label>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;cursor:pointer;">
+              <input type="radio" name="v-origem" value="caixa" checked style="width:auto;margin-top:2px;">
+              <div>
+                <div style="font-size:13.5px;font-weight:600;">Caixa da barbearia</div>
+                <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">Lança uma saída no caixa automaticamente${caixaAberto?'':' — <span style="color:var(--bad);">é preciso abrir o caixa antes</span>'}</div>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;cursor:pointer;">
+              <input type="radio" name="v-origem" value="banco" style="width:auto;margin-top:2px;">
+              <div>
+                <div style="font-size:13.5px;font-weight:600;">Conta bancária / PIX</div>
+                <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">Não mexe no caixa — fica só registrado no acerto do profissional</div>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div><label>Observação (opcional)</label><input id="v-note" placeholder="Ex: adiantamento de sexta" style="width:100%;"></div>
+        <button class="btn btn-gold" id="v-save" style="justify-content:center;">Registrar vale</button>
+        <div style="font-size:11px;color:var(--muted-2);text-align:center;">O valor é descontado do que ele tem a receber.</div>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#v-save').addEventListener('click', ()=>{
+      const amount = parseFloat(root.querySelector('#v-amount').value);
+      const origem = root.querySelector('input[name="v-origem"]:checked').value;
+      const note = root.querySelector('#v-note').value.trim();
+      if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
+      if(origem==='caixa' && !openSession()){ showToast('Abra o caixa antes de dar vale em dinheiro.'); return; }
+      update(s=>{
+        s.commissionPayments.push({
+          id:uid(), professionalId:profId, amount, date:new Date().toISOString(),
+          source:'vale', origem, note,
+        });
+        if(origem==='caixa'){
+          const sess = s.cashSessions.find(x=>x.status==='aberto');
+          sess.entries.push({
+            id:uid(), type:'saida', method:'dinheiro',
+            desc:`Vale — ${prof.name}${note?' ('+note+')':''}`,
+            amount, time:new Date().toTimeString().slice(0,5), auto:true,
+          });
+        }
+      });
+      closeModal();
+      showToast(`Vale de ${BRL(amount)} registrado (${origem==='caixa'?'saiu do caixa':'conta bancária'}).`);
+      if(view) renderComissoes(view);
     });
   });
 }
@@ -5170,8 +5264,6 @@ async function ensureShop(defaultName){
     trial_ends_at: trialEnds,
   }).select().single();
   if(error){ console.error('Erro ao criar barbearia', error); return null; }
-  // Avisa a Meta que um cadastro (Lead) foi concluído com sucesso, para otimização de anúncios.
-  if(window.fbq){ fbq('track', 'Lead'); }
   // Avisa o dono do sistema por e-mail. Se falhar, não atrapalha o cadastro.
   supa.functions.invoke('notify-signup', {
     body: { event:'signup', shopName: seeded.shopProfile.name, email: user.email }
