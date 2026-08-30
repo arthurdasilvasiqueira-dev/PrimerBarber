@@ -511,8 +511,10 @@ let userSession = {role:'dono', professionalId:null}; // não persistido — ape
 function isOwnerLevel(){ return userSession.role==='dono' || userSession.role==='admin'; }
 // Só quem "atende clientes" aparece como barbeiro na agenda, no
 // agendamento online, nas comissões e no pote do clube.
+// Ordem alfabética, respeitando acentos do português
+function byName(a, b){ return (a.name||'').localeCompare((b.name||''), 'pt-BR', {sensitivity:'base'}); }
 function servingProfessionals(){
-  return (state.professionals||[]).filter(p=>p.servesClients!==false);
+  return (state.professionals||[]).filter(p=>p.servesClients!==false).sort(byName);
 }
 function roleLabel(r){ return r==='admin' ? 'Admin' : r==='recepcionista' ? 'Recepcionista' : 'Profissional'; }
 
@@ -863,7 +865,7 @@ function noShowStats(){
   const relevant = state.appointments.filter(a=>['concluido','faltou','cancelado'].includes(a.status));
   const noShows = relevant.filter(a=>a.status==='faltou');
   const rate = relevant.length ? (noShows.length/relevant.length*100) : 0;
-  const byProf = state.professionals.map(p=>{
+  const byProf = servingProfessionals().map(p=>{
     const total = relevant.filter(a=>a.professionalId===p.id).length;
     const faltas = relevant.filter(a=>a.professionalId===p.id && a.status==='faltou').length;
     return {prof:p, total, faltas, rate: total ? (faltas/total*100) : 0};
@@ -1141,7 +1143,7 @@ function openProfileSwitchModal(){
       </div>
       <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Ou entrar como profissional</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        ${state.professionals.map(p=>`
+        ${state.professionals.slice().sort(byName).map(p=>`
           <div style="display:flex;gap:8px;align-items:center;">
             <div style="flex:1;font-size:13.5px;">${esc(p.name)} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
             <input type="password" maxlength="4" placeholder="PIN" data-pin-for="${p.id}" style="width:70px;text-align:center;">
@@ -1258,7 +1260,7 @@ function viewDashboard(){
       <div class="card" style="padding:20px;">
         <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:14px;">Comissões por profissional</div>
         <div style="display:flex;flex-direction:column;gap:10px;">
-          ${state.professionals.filter(p=>p.servesClients!==false).map(p=>{
+          ${servingProfessionals().map(p=>{
             const c = commissionOwed(p.id);
             return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;">
               <span style="color:var(--ink);">${esc(p.name)}</span>
@@ -1436,7 +1438,7 @@ function weeklyByProfessionalTable(){
         </thead>
         <tbody>
           ${state.professionals.length===0 ? `<tr><td colspan="${days.length+2}" style="text-align:center;color:var(--muted);padding:20px;">Nenhum profissional cadastrado.</td></tr>` :
-          state.professionals.map(p=>{
+          servingProfessionals().map(p=>{
             const counts = days.map(d=>clientsPerProfPerDay(p.id, d));
             const total = counts.reduce((a,c)=>a+c,0);
             return `<tr>
@@ -2087,7 +2089,7 @@ function renderComissoes(view){
   const fichasBreakdown = clubFichasBreakdown();
   const period = currentPeriod();
   const closed = monthAlreadyClosed(period);
-  const potRows = state.professionals.map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
+  const potRows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
   const totalPotOwed = potRows.reduce((a,r)=>a+r.owed,0);
   const visibleProfs = userSession.role==='profissional' ? state.professionals.filter(p=>p.id===userSession.professionalId) : servingProfessionals();
   const myProf = userSession.role==='profissional' ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
@@ -2415,7 +2417,7 @@ function payServiceCommission(profId){
 function closeClubMonthModal(){
   const period = currentPeriod();
   if(monthAlreadyClosed(period)){ showToast('O pote deste mês já foi fechado.'); return; }
-  const rows = state.professionals.map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
+  const rows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
   if(rows.length===0){ showToast('Não há pote a fechar neste mês.'); return; }
   const total = rows.reduce((a,r)=>a+r.owed,0);
   openModal(`
@@ -2496,7 +2498,7 @@ function renderProfissionais(view){
     ` : ''}
     ${state.professionals.length===0 ? emptyState('Nenhum profissional cadastrado.') : `
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
-        ${state.professionals.map(p=>{
+        ${state.professionals.slice().sort(byName).map(p=>{
           const rt = ratingStats(p.id);
           return `<div class="card" style="padding:16px 18px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -4112,7 +4114,7 @@ function renderRelatorios(view){
       </div>
       <div class="card" style="padding:20px;">
         <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:14px;">Avaliação média por profissional</div>
-        ${state.professionals.map(p=>{
+        ${state.professionals.slice().sort(byName).map(p=>{
           const rt = ratingStats(p.id);
           return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-top:1px solid var(--border);">
             <span>${esc(p.name)}</span>
