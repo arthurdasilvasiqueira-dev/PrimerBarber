@@ -1920,7 +1920,22 @@ function openApptModal(pre){
     const buscar = ()=>{
       const termo = norm(inputCliente.value);
       if(termo.length < 2){ fecharSugestoes(); atualizaNota(); return; }
-      const achados = (state.clients||[])
+      // Junta a lista de Clientes com a de assinantes do clube — muitos
+      // assinantes vieram da importação do Asaas e não estão em Clientes.
+      const mapa = {};
+      (state.clients||[]).forEach(cl=>{
+        if(!cl.name) return;
+        mapa[norm(cl.name)] = { name: cl.name, phone: cl.phone || '' };
+      });
+      (state.subscriptionMembers||[]).forEach(m=>{
+        if(!m.name || m.status==='cancelado') return;
+        const k = norm(m.name);
+        if(mapa[k]){ if(!mapa[k].phone) mapa[k].phone = m.phone || ''; }
+        else mapa[k] = { name: m.name, phone: m.phone || '', soAssinante: true };
+      });
+      const todos = Object.values(mapa);
+
+      const achados = todos
         .filter(cl=>norm(cl.name).includes(termo))
         .sort((a,b)=>{
           // quem começa com o que foi digitado vem primeiro
@@ -1945,7 +1960,8 @@ function openApptModal(pre){
         const detalhes = [
           cl.phone || 'sem telefone',
           ult ? 'última visita ' + new Date(ult+'T12:00').toLocaleDateString('pt-BR') : 'nunca atendido',
-        ].join(' · ');
+          cl.soAssinante ? 'assinante do clube' : null,
+        ].filter(Boolean).join(' · ');
         return `<div class="sug-item" data-nome="${esc(cl.name)}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
           <div style="font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:6px;">
             ${esc(cl.name)} ${clubStarBadge(cl.name)}
@@ -3181,6 +3197,15 @@ function confirmAsaasImport(view){
       };
       if(existente){ Object.assign(existente, dados); atualizados++; }
       else { s.subscriptionMembers.push({id:uid(), asaasChargeId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...dados}); novos++; }
+
+      // cria também na lista de Clientes, para aparecer na busca do agendamento
+      const nomeNorm = m.name.trim().toLowerCase();
+      const jaCliente = s.clients.find(x=>x.name.trim().toLowerCase()===nomeNorm);
+      if(!jaCliente){
+        s.clients.push({id:uid(), name:m.name.trim(), phone:m.phone||'', birthday:'', points:0, notes:''});
+      } else if(!jaCliente.phone && m.phone){
+        jaCliente.phone = m.phone;
+      }
     });
   });
   asaasImportData = null;
@@ -3358,6 +3383,11 @@ function memberModal(existing, prefill){
       update(s=>{
         if(isEdit){ Object.assign(existing, data); }
         else{ s.subscriptionMembers.push({id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data}); }
+        // garante que o assinante também exista na lista de Clientes
+        const nn = name.trim().toLowerCase();
+        const jaCl = s.clients.find(x=>x.name.trim().toLowerCase()===nn);
+        if(!jaCl) s.clients.push({id:uid(), name:name.trim(), phone:phone||'', birthday:'', points:0, notes:''});
+        else if(!jaCl.phone && phone) jaCl.phone = phone;
       });
       closeModal();
     });
