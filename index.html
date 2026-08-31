@@ -663,16 +663,53 @@ function sessionTotals(session){
   return {in:inn, out, byMethod, cashIn, cashOut, balance: session.openingAmount + cashIn - cashOut};
 }
 function todaysAppointments(){ return state.appointments.filter(a=>a.date===todayISO()).sort((a,b)=>a.time.localeCompare(b.time)); }
+// Compara nomes ignorando acentos, maiúsculas e espaços repetidos
+function normNome(s){
+  return String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/\s+/g,' ').trim();
+}
+function soDigitos(s){ return String(s||'').replace(/\D/g,''); }
+
 function clubMemberForClient(clientName){
   if(!clientName) return null;
-  return state.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===clientName.trim().toLowerCase()) || null;
+  const alvo = normNome(clientName);
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+
+  // 1) nome igual (já ignorando acento e espaços)
+  let achado = ativos.find(m=>normNome(m.name)===alvo);
+  if(achado) return achado;
+
+  // 2) pelo telefone do cliente — mais confiável que o nome
+  const cliente = (state.clients||[]).find(cl=>normNome(cl.name)===alvo);
+  const tel = soDigitos(cliente?.phone);
+  if(tel.length>=8){
+    achado = ativos.find(m=>{
+      const t = soDigitos(m.phone);
+      return t.length>=8 && t.slice(-8)===tel.slice(-8);
+    });
+    if(achado) return achado;
+  }
+
+  // 3) um nome contém o outro (ex: "João Silva" x "João Silva Costa")
+  achado = ativos.find(m=>{
+    const n = normNome(m.name);
+    if(n.length<5 || alvo.length<5) return false;
+    return n.startsWith(alvo+' ') || alvo.startsWith(n+' ');
+  });
+  return achado || null;
 }
+
 function clubStarBadge(clientName){
   const m = clubMemberForClient(clientName);
   if(!m) return '';
-  if(m.status==='pago') return `<span title="Assinante do clube — em dia" style="color:var(--gold-bright);display:inline-flex;">${ICON.star}</span>`;
-  if(m.status==='atrasado') return `<span title="Assinante do clube — mensalidade atrasada" style="color:var(--bad);display:inline-flex;">${ICON.star}</span>`;
-  return '';
+  const estilos = {
+    pago:      {cor:'var(--gold-bright)', txt:'Assinante do clube — em dia'},
+    atrasado:  {cor:'var(--bad)',         txt:'Assinante do clube — mensalidade atrasada'},
+    pendente:  {cor:'var(--warn)',        txt:'Assinante do clube — pagamento pendente'},
+  };
+  const e = estilos[m.status] || {cor:'var(--muted-2)', txt:'Assinante do clube'};
+  return `<span title="${e.txt}" style="color:${e.cor};display:inline-flex;">${ICON.star}</span>`;
 }
 function clubOverdueWaButton(clientName, phone){
   const m = clubMemberForClient(clientName);
