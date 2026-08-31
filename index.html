@@ -1849,7 +1849,13 @@ function openApptModal(pre){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Cliente</label><input id="f-client" placeholder="Nome do cliente" style="width:100%;"></div>
+        <div style="position:relative;">
+          <label>Cliente</label>
+          <input id="f-client" placeholder="Digite o nome para buscar" autocomplete="off" style="width:100%;">
+          <div id="client-sug" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;
+            background:var(--panel);border:1px solid var(--gold);border-radius:11px;max-height:230px;overflow-y:auto;
+            box-shadow:0 14px 34px -10px rgba(0,0,0,.45);"></div>
+        </div>
         <div id="club-note" style="font-size:12px;"></div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Horário</label><input id="f-time" type="time" value="${preTime}" style="width:100%;"></div>
@@ -1878,9 +1884,12 @@ function openApptModal(pre){
     root.querySelector('#f-service').addEventListener('change', updateNotes);
     root.querySelector('#f-prof').addEventListener('change', updateNotes);
     root.querySelector('#f-date').addEventListener('change', updateNotes);
-    root.querySelector('#f-client').addEventListener('input', ()=>{
-      const m = clubMemberForClient(root.querySelector('#f-client').value);
-      const note = root.querySelector('#club-note');
+    const inputCliente = root.querySelector('#f-client');
+    const caixaSug = root.querySelector('#client-sug');
+    const note = root.querySelector('#club-note');
+
+    const atualizaNota = ()=>{
+      const m = clubMemberForClient(inputCliente.value);
       if(m && m.status==='atrasado'){
         note.style.color = 'var(--bad)';
         note.textContent = `⚠ ${m.name} está com o clube de assinatura em atraso — o serviço será cobrado em valor cheio, sem desconto/inclusão do plano.`;
@@ -1890,7 +1899,74 @@ function openApptModal(pre){
       } else {
         note.textContent = '';
       }
-    });
+    };
+
+    // Busca clientes já cadastrados enquanto o dono digita
+    const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+    const ultimaVisitaDe = (nome)=>{
+      const dts = state.appointments
+        .filter(a=>a.status==='concluido' && norm(a.client)===norm(nome))
+        .map(a=>a.date).sort();
+      return dts.length ? dts[dts.length-1] : null;
+    };
+
+    const fecharSugestoes = ()=>{ caixaSug.style.display='none'; };
+    const escolher = (nome)=>{
+      inputCliente.value = nome;
+      fecharSugestoes();
+      atualizaNota();
+    };
+
+    const buscar = ()=>{
+      const termo = norm(inputCliente.value);
+      if(termo.length < 2){ fecharSugestoes(); atualizaNota(); return; }
+      const achados = (state.clients||[])
+        .filter(cl=>norm(cl.name).includes(termo))
+        .sort((a,b)=>{
+          // quem começa com o que foi digitado vem primeiro
+          const ai = norm(a.name).startsWith(termo) ? 0 : 1;
+          const bi = norm(b.name).startsWith(termo) ? 0 : 1;
+          return ai!==bi ? ai-bi : a.name.localeCompare(b.name,'pt-BR');
+        })
+        .slice(0, 8);
+
+      if(achados.length===0){
+        caixaSug.innerHTML = `<div style="padding:12px 14px;font-size:12.5px;color:var(--muted-2);">
+          Nenhum cliente com esse nome. Ao salvar, será criado um cadastro novo.
+        </div>`;
+        caixaSug.style.display='block';
+        atualizaNota();
+        return;
+      }
+
+      caixaSug.innerHTML = achados.map(cl=>{
+        const membro = clubMemberForClient(cl.name);
+        const ult = ultimaVisitaDe(cl.name);
+        const detalhes = [
+          cl.phone || 'sem telefone',
+          ult ? 'última visita ' + new Date(ult+'T12:00').toLocaleDateString('pt-BR') : 'nunca atendido',
+        ].join(' · ');
+        return `<div class="sug-item" data-nome="${esc(cl.name)}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
+          <div style="font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:6px;">
+            ${esc(cl.name)} ${clubStarBadge(cl.name)}
+            ${membro && membro.status==='atrasado' ? `<span class="pill pill-bad" style="font-size:10px;">em atraso</span>` : ''}
+          </div>
+          <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">${esc(detalhes)}</div>
+        </div>`;
+      }).join('');
+      caixaSug.style.display='block';
+      caixaSug.querySelectorAll('.sug-item').forEach(el=>{
+        el.addEventListener('mousedown', e=>{ e.preventDefault(); escolher(el.dataset.nome); });
+        el.addEventListener('mouseenter', ()=>{ el.style.background='var(--panel-2)'; });
+        el.addEventListener('mouseleave', ()=>{ el.style.background='transparent'; });
+      });
+      atualizaNota();
+    };
+
+    inputCliente.addEventListener('input', buscar);
+    inputCliente.addEventListener('focus', buscar);
+    inputCliente.addEventListener('blur', ()=>setTimeout(fecharSugestoes, 120));
+    inputCliente.addEventListener('keydown', e=>{ if(e.key==='Escape') fecharSugestoes(); });
     updateNotes();
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-submit').addEventListener('click', ()=>{
