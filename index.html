@@ -1381,8 +1381,12 @@ function agendaGridView(dateISO, profList){
     minH = Math.min(minH, h); maxH = Math.max(maxH, h+1);
   });
   if(minH>maxH){ minH = 8; maxH = 20; }
+  // guarda os limites do expediente antes de esticar
+  const expedienteIni = minH, expedienteFim = maxH;
+  if(agendaEstendida){ minH = Math.max(0, minH-3); maxH = Math.min(23, maxH+3); }
   const hours = [];
   for(let h=minH; h<=maxH; h++) hours.push(h);
+  const foraDoExpediente = (h)=> h < expedienteIni || h >= expedienteFim;
   const SLOT_H = 56; // altura de 1 hora, em pixels
 
   // desenha os bloqueios (folga, almoço) como faixas hachuradas
@@ -1439,16 +1443,16 @@ function agendaGridView(dateISO, profList){
         </div>
         <div style="display:flex;position:relative;">
           <div style="width:60px;flex-shrink:0;">
-            ${hours.map(h=>`<div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);padding:4px 8px;" class="font-mono">
+            ${hours.map(h=>`<div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);padding:4px 8px;${foraDoExpediente(h)?'opacity:.5;':''}" class="font-mono">
               <span style="font-size:11px;color:var(--muted-2);">${String(h).padStart(2,'0')}:00</span>
             </div>`).join('')}
           </div>
           ${profList.map(p=>`
             <div style="flex:1;min-width:170px;position:relative;border-left:1px solid var(--border);background:${isProfessionalWorking(p, dateISO)?'transparent':'repeating-linear-gradient(45deg, transparent, transparent 8px, var(--panel-2) 8px, var(--panel-2) 16px)'};">
               ${hours.map(h=>`
-                <div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;">
-                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:00" style="flex:1;cursor:pointer;"></div>
-                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:30" style="flex:1;cursor:pointer;border-top:1px dashed var(--border);"></div>
+                <div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;${foraDoExpediente(h)?'background:var(--panel-2);opacity:.55;':''}">
+                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:00" ${foraDoExpediente(h)?'data-fora="1"':''} style="flex:1;cursor:pointer;"></div>
+                  <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:30" ${foraDoExpediente(h)?'data-fora="1"':''} style="flex:1;cursor:pointer;border-top:1px dashed var(--border);"></div>
                 </div>
               `).join('')}
               ${blocksFor(p)}
@@ -1582,6 +1586,11 @@ function renderAgenda(view){
           <button class="agenda-mode" data-mode="lista" style="padding:7px 14px;font-size:12.5px;border:none;cursor:pointer;background:${agendaMode==='lista'?'var(--gold)':'transparent'};color:${agendaMode==='lista'?'#1a1610':'var(--muted)'};">${ICON.listPlus} Lista</button>
           ${!isProfView?`<button class="agenda-mode" data-mode="semana" style="padding:7px 14px;font-size:12.5px;border:none;cursor:pointer;background:${agendaMode==='semana'?'var(--gold)':'transparent'};color:${agendaMode==='semana'?'#1a1610':'var(--muted)'};">${ICON.chart} Semana</button>`:''}
         </div>
+        ${agendaMode==='grade'?`
+          <button class="btn btn-ghost" id="btn-estender" style="padding:7px 13px;font-size:12.5px;${agendaEstendida?'border-color:var(--gold);color:var(--gold-bright);':''}">
+            ${agendaEstendida?'Ocultar horários extras':'+ Horários fora do expediente'}
+          </button>
+        `:''}
       </div>
     `}
 
@@ -1641,8 +1650,15 @@ function renderAgenda(view){
     e.stopPropagation();
     apptActionsModal(el.dataset.appt, view);
   }));
+  view.querySelector('#btn-estender')?.addEventListener('click', ()=>{
+    agendaEstendida = !agendaEstendida;
+    renderAgenda(view);
+  });
   view.querySelectorAll('.grid-slot').forEach(el=>el.addEventListener('click', ()=>{
-    openApptModal({ professionalId: el.dataset.prof, time: el.dataset.time, date: viewDate });
+    openApptModal({
+      professionalId: el.dataset.prof, time: el.dataset.time, date: viewDate,
+      foraDoExpediente: el.dataset.fora === '1',
+    });
   }));
   view.querySelectorAll('.wk-day').forEach(b=>b.addEventListener('click', ()=>{ agendaDate = b.dataset.day; renderAgenda(view); }));
   view.querySelector('#wk-prev')?.addEventListener('click', ()=>{ agendaDate = shiftWeek(-1); renderAgenda(view); });
@@ -2077,15 +2093,37 @@ function openApptModal(pre){
       const date = root.querySelector('#f-date').value;
       const dep = depositAmountFor(service);
       root.querySelector('#deposit-note').textContent = dep>0 ? `Este serviço exige sinal de ${BRL(dep)}.` : '';
+      const el = root.querySelector('#availability-note');
+      const hora = root.querySelector('#f-time').value;
+      const avisos = [];
       if(prof && date && !isProfessionalWorking(prof, date)){
-        root.querySelector('#availability-note').textContent = `Atenção: ${prof.name} não trabalha neste dia (folga ou fora da escala).`;
-      }else{
-        root.querySelector('#availability-note').textContent = '';
+        avisos.push(`${prof.name} não trabalha neste dia (folga ou fora da escala).`);
       }
+      // fora do horário de funcionamento do profissional
+      if(prof && hora){
+        const ini = prof.workStart || '09:00';
+        const fim = prof.workEnd || '19:00';
+        if(hora < ini || hora >= fim){
+          avisos.push(`${hora} está fora do expediente de ${prof.name} (${ini} às ${fim}). O agendamento será criado como exceção e aparecerá normalmente na agenda.`);
+        }
+      }
+      // já tem alguém nesse horário?
+      if(prof && date && hora && service){
+        const choque = state.appointments.some(x=>x.professionalId===prof.id && x.date===date &&
+          x.status!=='cancelado' && x.status!=='faltou' &&
+          timesOverlap(x.time, serviceById(x.serviceId)?.duration||30, hora, service.duration||30));
+        if(choque) avisos.push('Já existe outro agendamento nesse horário.');
+        const bloq = blocksForDay(prof.id, date).some(b=> hora >= b.start && hora < b.end);
+        if(bloq) avisos.push('Esse horário está bloqueado (folga ou almoço).');
+      }
+      el.innerHTML = avisos.length
+        ? avisos.map(t=>`<div style="color:var(--warn);margin-bottom:3px;">⚠ ${esc(t)}</div>`).join('')
+        : '';
     }
     root.querySelector('#f-service').addEventListener('change', updateNotes);
     root.querySelector('#f-prof').addEventListener('change', updateNotes);
     root.querySelector('#f-date').addEventListener('change', updateNotes);
+    root.querySelector('#f-time').addEventListener('change', updateNotes);
     const inputCliente = root.querySelector('#f-client');
     const caixaSug = root.querySelector('#client-sug');
     const note = root.querySelector('#club-note');
@@ -6202,6 +6240,7 @@ function publicSubscribeModal(plan){
 let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
 let agendaDate = null; // dia visível na agenda (não é salvo no banco)
 let agendaMode = 'grade'; // 'grade' (quadro de horários) ou 'lista'
+let agendaEstendida = false; // mostra horas antes/depois do expediente
 
 async function renderTeamLogin(slug, errorMsg){
   const app = document.getElementById('app');
