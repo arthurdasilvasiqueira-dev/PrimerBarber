@@ -1375,7 +1375,7 @@ function agendaGridView(dateISO, profList){
       const top = ((h - minH) + m/60) * SLOT_H;
       const height = Math.max(26, (dur/60) * SLOT_H - 3);
       const done = a.status==='concluido';
-      return `<div title="${esc(a.client)} — ${esc(svc?svc.name:'')}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${done?'var(--ok)':'var(--gold)'};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:default;">
+      return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${done?'var(--ok)':'var(--gold)'};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
         <div class="font-mono" style="font-size:10px;color:var(--muted-2);">${a.time}${svc?` · ${dur}min`:''}</div>
         <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>
         ${height>44 && svc?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(svc.name)}</div>`:''}
@@ -1576,6 +1576,7 @@ function renderAgenda(view){
               ${a.status==='cancelado'?'<span class="pill pill-bad">Cancelado</span>':''}
               ${a.status==='faltou'?'<span class="pill pill-bad">Faltou</span>':''}
               ${a.status==='agendado'?`<button class="btn btn-ghost" style="padding:7px 9px;color:var(--bad);border-color:var(--bad);" data-noshow="${a.id}" title="Cliente faltou">${ICON.bell}</button>`:''}
+              ${a.status!=='concluido' && a.status!=='cancelado'?`<button class="btn btn-ghost" style="padding:7px 9px;" data-resched="${a.id}" title="Reagendar">${ICON.clock}</button>`:''}
               ${a.status==='agendado'?`<button class="btn btn-ghost" style="padding:7px 9px;color:var(--bad);border-color:var(--bad);" data-cancel="${a.id}" title="Cancelar">${ICON.x}</button>`:''}
               <button class="btn btn-ghost" style="padding:7px 9px;" data-del-appt="${a.id}" title="Excluir">${ICON.trash}</button>
             </div>
@@ -1599,6 +1600,10 @@ function renderAgenda(view){
     renderAgenda(view);
   }));
   view.querySelectorAll('.agenda-mode').forEach(b=>b.addEventListener('click', ()=>{ agendaMode = b.dataset.mode; renderAgenda(view); }));
+  view.querySelectorAll('.appt-block').forEach(el=>el.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    apptActionsModal(el.dataset.appt, view);
+  }));
   view.querySelectorAll('.grid-slot').forEach(el=>el.addEventListener('click', ()=>{
     openApptModal({ professionalId: el.dataset.prof, time: el.dataset.time, date: viewDate });
   }));
@@ -1612,6 +1617,7 @@ function renderAgenda(view){
     update(s=>{ s.appointments.find(a=>a.id===b.dataset.markDeposit).depositStatus='pago'; });
     showToast('Sinal marcado como pago.');
   }));
+  view.querySelectorAll('[data-resched]').forEach(b=>b.addEventListener('click', ()=>reagendarModal(b.dataset.resched, view)));
   view.querySelectorAll('[data-cancel]').forEach(b=>b.addEventListener('click', ()=>cancelAppointment(b.dataset.cancel, 'cancelado')));
   view.querySelectorAll('[data-noshow]').forEach(b=>b.addEventListener('click', ()=>cancelAppointment(b.dataset.noshow, 'faltou')));
   view.querySelectorAll('[data-del-appt]').forEach(b=>b.addEventListener('click', ()=>{
@@ -1748,6 +1754,165 @@ function servingProfissionaisOk(){
   }
   return true;
 }
+/* Menu que abre ao clicar num agendamento da grade */
+function apptActionsModal(apptId, view){
+  const a = state.appointments.find(x=>x.id===apptId);
+  if(!a) return;
+  const svc = serviceById(a.serviceId);
+  const membro = clubMemberForClient(a.client);
+  const podeMexer = isOwnerLevel() || userSession.role==='recepcionista' || a.professionalId===userSession.professionalId;
+  const statusMap = {
+    agendado:{l:'Agendado',t:'muted'}, confirmado:{l:'Confirmado',t:'ok'},
+    concluido:{l:'Concluído',t:'ok'}, cancelado:{l:'Cancelado',t:'bad'}, faltou:{l:'Faltou',t:'bad'},
+  };
+  const st = statusMap[a.status] || {l:a.status,t:'muted'};
+
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px;">
+        <div style="min-width:0;">
+          <div class="font-display" style="font-size:19px;font-weight:600;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+            ${esc(a.client)} ${clubStarBadge(a.client)}
+          </div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px;">
+            ${esc(svc?svc.name:'Serviço removido')} · ${esc(profName(a.professionalId))}
+          </div>
+          <div class="font-mono" style="font-size:12.5px;color:var(--muted-2);margin-top:3px;">
+            ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR',{weekday:'short', day:'2-digit', month:'2-digit'})} às ${a.time}${svc?` · ${svc.duration} min`:''}
+          </div>
+        </div>
+        <button class="btn btn-ghost" style="padding:6px;flex-shrink:0;" id="m-close">${ICON.x}</button>
+      </div>
+
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px;">
+        <span class="pill pill-${st.t}">${st.l}</span>
+        ${svc?`<span class="pill pill-muted font-mono">${BRL(svc.price)}</span>`:''}
+        ${membro && membro.status==='atrasado'?`<span class="pill pill-bad">Clube em atraso</span>`:''}
+        ${a.depositStatus==='pago'?`<span class="pill pill-ok">Sinal pago ${BRL(a.depositAmount)}</span>`:''}
+      </div>
+
+      ${!podeMexer ? `<div style="font-size:12.5px;color:var(--muted-2);">Este agendamento é de outro profissional.</div>` : `
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          ${a.status!=='concluido' && a.status!=='cancelado' ? `
+            <button class="btn btn-gold" id="ac-concluir" style="justify-content:center;padding:14px;font-size:14.5px;">
+              ${ICON.cash} Finalizar e receber
+            </button>
+            <div style="display:flex;gap:9px;flex-wrap:wrap;">
+              <button class="btn btn-ghost" id="ac-reagendar" style="flex:1;justify-content:center;min-width:130px;">${ICON.clock} Reagendar</button>
+              ${!a.confirmed?`<button class="btn btn-ghost" id="ac-confirmar" style="flex:1;justify-content:center;min-width:130px;">${ICON.check} Confirmar</button>`:''}
+            </div>
+            <div style="display:flex;gap:9px;flex-wrap:wrap;">
+              <button class="btn btn-ghost" id="ac-faltou" style="flex:1;justify-content:center;min-width:130px;">Marcar falta</button>
+              <button class="btn btn-ghost" id="ac-cancelar" style="flex:1;justify-content:center;min-width:130px;color:var(--bad);border-color:var(--bad);">Cancelar</button>
+            </div>
+          ` : `
+            <div style="font-size:12.5px;color:var(--muted);padding:10px 0;">
+              ${a.status==='concluido' ? 'Atendimento já finalizado' + (a.paymentMethod?` — recebido em ${methodLabelPay(a.paymentMethod)}.`:'.') : 'Este agendamento foi cancelado.'}
+            </div>
+          `}
+          ${messageChannelRow(
+            (state.clients.find(cl=>cl.name.trim().toLowerCase()===a.client.trim().toLowerCase())||{}).phone || membro?.phone,
+            `Olá ${a.client}! Passando para confirmar seu horário em ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time} na ${state.shopProfile.name}.`
+          )}
+          <button class="btn btn-ghost" id="ac-excluir" style="justify-content:center;font-size:12.5px;color:var(--muted);margin-top:4px;">Excluir da agenda</button>
+        </div>
+      `}
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const recarrega = ()=>{ closeModal(); if(view) renderAgenda(view); };
+
+    root.querySelector('#ac-concluir')?.addEventListener('click', ()=>{ closeModal(); concludeAppt(a.id); });
+    root.querySelector('#ac-reagendar')?.addEventListener('click', ()=>{ closeModal(); reagendarModal(a.id, view); });
+    root.querySelector('#ac-confirmar')?.addEventListener('click', ()=>{
+      update(s=>{ const x=s.appointments.find(y=>y.id===a.id); x.confirmed=true; x.status='confirmado'; });
+      showToast('Agendamento confirmado.'); recarrega();
+    });
+    root.querySelector('#ac-faltou')?.addEventListener('click', ()=>{
+      update(s=>{ s.appointments.find(y=>y.id===a.id).status='faltou'; });
+      showToast('Marcado como falta.'); recarrega();
+    });
+    root.querySelector('#ac-cancelar')?.addEventListener('click', ()=>{
+      if(!confirm('Cancelar este agendamento?')) return;
+      update(s=>{ s.appointments.find(y=>y.id===a.id).status='cancelado'; });
+      showToast('Agendamento cancelado.'); recarrega();
+    });
+    root.querySelector('#ac-excluir')?.addEventListener('click', ()=>{
+      if(!confirm('Excluir este agendamento da agenda? Não dá para desfazer.')) return;
+      update(s=>{ s.appointments = s.appointments.filter(y=>y.id!==a.id); });
+      showToast('Agendamento excluído.'); recarrega();
+    });
+  });
+}
+
+/* Reagendar: muda dia, horário e profissional */
+function reagendarModal(apptId, view){
+  const a = state.appointments.find(x=>x.id===apptId);
+  if(!a) return;
+  const profs = servingProfessionals();
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Reagendar</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px;">
+        ${esc(a.client)} — hoje marcado para ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div><label>Profissional</label>
+          <select id="r-prof" style="width:100%;">
+            ${profs.map(p=>`<option value="${p.id}" ${a.professionalId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;"><label>Nova data</label><input id="r-date" type="date" value="${a.date}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Novo horário</label><input id="r-time" type="time" value="${a.time}" style="width:100%;"></div>
+        </div>
+        <div id="r-aviso" style="font-size:12px;"></div>
+        <button class="btn btn-gold" id="r-save" style="justify-content:center;">Salvar novo horário</button>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const checar = ()=>{
+      const pid = root.querySelector('#r-prof').value;
+      const d = root.querySelector('#r-date').value;
+      const t = root.querySelector('#r-time').value;
+      const aviso = root.querySelector('#r-aviso');
+      if(!d || !t){ aviso.textContent=''; return; }
+      const dur = serviceById(a.serviceId)?.duration || 30;
+      const choque = state.appointments.some(x=>x.id!==a.id && x.professionalId===pid && x.date===d &&
+        x.status!=='cancelado' && x.status!=='faltou' &&
+        timesOverlap(x.time, serviceById(x.serviceId)?.duration||30, t, dur));
+      const bloqueado = blocksForDay(pid, d).some(b=> t >= b.start && t < b.end);
+      const prof = state.professionals.find(p=>p.id===pid);
+      if(choque){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Já existe outro agendamento nesse horário.'; }
+      else if(bloqueado){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Esse horário está bloqueado (folga ou almoço).'; }
+      else if(prof && !isProfessionalWorking(prof, d)){ aviso.style.color='var(--warn)'; aviso.textContent='⚠ Esse profissional não trabalha neste dia.'; }
+      else { aviso.style.color='var(--ok)'; aviso.textContent='✓ Horário livre.'; }
+    };
+    ['#r-prof','#r-date','#r-time'].forEach(sel=>root.querySelector(sel).addEventListener('change', checar));
+    checar();
+
+    root.querySelector('#r-save').addEventListener('click', ()=>{
+      const pid = root.querySelector('#r-prof').value;
+      const d = root.querySelector('#r-date').value;
+      const t = root.querySelector('#r-time').value;
+      if(!d || !t){ showToast('Preencha data e horário.'); return; }
+      update(s=>{
+        const x = s.appointments.find(y=>y.id===a.id);
+        x.professionalId = pid; x.date = d; x.time = t;
+        x.confirmed = false;
+        if(x.status==='confirmado') x.status='agendado';
+      });
+      closeModal();
+      showToast(`Reagendado para ${new Date(d+'T12:00').toLocaleDateString('pt-BR')} às ${t}.`);
+      if(view) renderAgenda(view);
+    });
+  });
+}
+
 function blockModal(pre, view){
   const isProfView = userSession.role==='profissional';
   const profs = isProfView
