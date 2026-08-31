@@ -984,6 +984,7 @@ const NAV_GROUPS = [
   {label:'Financeiro', items:[
     {id:'caixa', label:'Caixa', icon:ICON.cash},
     {id:'comissoes', label:'Comissões', icon:ICON.percent},
+    {id:'central', label:'Central de Inteligência', icon:ICON.chart},
     {id:'relatorios', label:'Relatórios', icon:ICON.chart},
   ]},
   {label:'Equipe & Catálogo', items:[
@@ -1197,6 +1198,7 @@ function renderView(){
   if(route==='clientes') return renderClientes(view);
   if(route==='estoque') return renderEstoque(view);
   if(route==='relatorios') return renderRelatorios(view);
+  if(route==='central') return renderCentral(view);
   if(route==='fidelidade') return renderFidelidade(view);
   if(route==='agendamento-online') return renderOnlineBooking(view);
   if(route==='mensagens') return renderMensagens(view);
@@ -4104,6 +4106,349 @@ function productModal(existing){
 }
 
 /* ============ RELATÓRIOS ============ */
+/* ============ CENTRAL DE INTELIGÊNCIA — tela ============ */
+let ciMes = null;
+
+function ciCard(titulo, valor, sub, variacaoPct, tone){
+  const cor = tone==='bad' ? 'var(--bad)' : tone==='warn' ? 'var(--warn)' : 'var(--gold-bright)';
+  const seta = variacaoPct==null ? '' : (variacaoPct>=0
+    ? `<span style="color:var(--ok);font-size:12.5px;white-space:nowrap;">↑ ${variacaoPct.toFixed(1)}%</span>`
+    : `<span style="color:var(--bad);font-size:12.5px;white-space:nowrap;">↓ ${Math.abs(variacaoPct).toFixed(1)}%</span>`);
+  return `
+    <div class="card" style="padding:18px 20px;">
+      <div style="font-size:12px;color:var(--muted-2);margin-bottom:8px;">${titulo}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">
+        <div class="font-mono" style="font-size:22px;font-weight:600;color:${cor};">${valor}</div>
+        ${seta}
+      </div>
+      ${sub?`<div style="font-size:11.5px;color:var(--muted);margin-top:5px;">${sub}</div>`:''}
+    </div>`;
+}
+
+function barrasHtml(dados, cor){
+  const max = Math.max(1, ...dados.map(d=>d.valor));
+  return `<div style="display:flex;align-items:flex-end;gap:6px;height:130px;">
+    ${dados.map(d=>`
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0;">
+        <div style="font-size:9.5px;color:var(--muted-2);">${d.valor>0?d.rotuloValor||d.valor:''}</div>
+        <div title="${d.label}: ${d.rotuloValor||d.valor}" style="width:100%;background:${cor};border-radius:4px 4px 0 0;height:${Math.max(2,(d.valor/max)*95)}px;"></div>
+        <div style="font-size:10px;color:var(--muted-2);white-space:nowrap;">${d.label}</div>
+      </div>`).join('')}
+  </div>`;
+}
+
+function renderCentral(view){
+  if(!ciMes) ciMes = currentYM();
+  const ym = ciMes, ant = shiftYM(ym,-1);
+  const fat = faturamentoMes(ym), fatAnt = faturamentoMes(ant);
+  const at = atendimentosMes(ym), atAnt = atendimentosMes(ant);
+  const ocup = ocupacaoMes(ym);
+  const st = statusClientes();
+  const pico = diasDePico(ym);
+  const rank = rankingClientes(ym);
+
+  const ticket = at.length ? fat.servicos/at.length : 0;
+  const ticketAnt = atAnt.length ? fatAnt.servicos/atAnt.length : 0;
+  const totalClientes = st.ativos + st.semi + st.inativos;
+
+  // faturamento por categoria
+  const cat = [
+    {nome:'Serviços', valor: fat.servicos, cor:'var(--gold)'},
+    {nome:'Assinaturas', valor: fat.assinaturas, cor:'var(--ok)'},
+  ];
+  const somaCat = cat.reduce((t,x)=>t+x.valor,0) || 1;
+
+  // evolução dos últimos 6 meses
+  const meses = [];
+  for(let i=5;i>=0;i--){
+    const m = shiftYM(ym,-i);
+    const f = faturamentoMes(m);
+    meses.push({ label: ymLabel(m).split(' ')[0], valor: Math.round(f.servicos), rotuloValor: f.servicos>0?BRL(f.servicos).replace('R$ ',''):'' });
+  }
+
+  view.innerHTML = `
+    ${pageHeader('Central de Inteligência', 'Os números que mostram onde está o dinheiro do seu negócio', `
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn btn-ghost" id="ci-prev" style="padding:8px 11px;">‹</button>
+        <span class="pill" style="padding:8px 14px;font-size:13px;">${ymLabel(ym)}</span>
+        <button class="btn btn-ghost" id="ci-next" style="padding:8px 11px;" ${ym>=currentYM()?'disabled':''}>›</button>
+      </div>
+    `)}
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:20px;">
+      ${ciCard('Faturamento em serviços', BRL(fat.servicos), `${at.length} atendimento(s)`, variacao(fat.servicos, fatAnt.servicos))}
+      ${ciCard('Resultado do caixa', BRL(fat.liquido), `Entradas ${BRL(fat.entradas)} · Saídas ${BRL(fat.saidas)}`, variacao(fat.liquido, fatAnt.liquido), fat.liquido<0?'bad':'ok')}
+      ${ciCard('Ticket médio', BRL(ticket), 'por atendimento', variacao(ticket, ticketAnt))}
+      ${ciCard('Receita recorrente', BRL(fat.assinaturas), 'assinantes em dia hoje', null)}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start;margin-bottom:20px;" class="dash-grid">
+
+      <div class="card" style="padding:20px;border-color:${ocup.taxa<30?'var(--bad)':'var(--border)'};">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:4px;">Taxa de ocupação da agenda</div>
+        <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Quanto da jornada disponível virou atendimento.</div>
+        <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;">
+          <div style="position:relative;width:132px;height:70px;flex-shrink:0;">
+            <svg viewBox="0 0 132 70" style="width:100%;height:100%;">
+              <path d="M 12 66 A 54 54 0 0 1 120 66" fill="none" stroke="var(--panel-2)" stroke-width="13" stroke-linecap="round"/>
+              <path d="M 12 66 A 54 54 0 0 1 120 66" fill="none"
+                stroke="${ocup.taxa<30?'var(--bad)':ocup.taxa<60?'var(--warn)':'var(--ok)'}"
+                stroke-width="13" stroke-linecap="round"
+                stroke-dasharray="${(Math.min(100,ocup.taxa)/100)*170} 170"/>
+            </svg>
+            <div style="position:absolute;bottom:0;width:100%;text-align:center;">
+              <span class="font-mono" style="font-size:21px;font-weight:600;">${ocup.taxa.toFixed(1)}%</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:190px;display:flex;flex-direction:column;gap:9px;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Faturado</span>
+              <span class="font-mono" style="color:var(--ok);">${BRL(ocup.faturado)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Potencial não usado</span>
+              <span class="font-mono" style="color:var(--warn);">${BRL(ocup.perdido)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <span style="color:var(--muted);">Em folga</span>
+              <span class="font-mono" style="color:var(--muted-2);">${BRL(ocup.folgaValor)}</span>
+            </div>
+          </div>
+        </div>
+        ${ocup.taxa<60 && ocup.perdido>0 ? `<div style="margin-top:14px;padding:11px 13px;border-radius:9px;background:var(--panel-2);font-size:12.5px;color:var(--muted);line-height:1.6;">
+          Se você subisse a ocupação para <b style="color:var(--ink);">60%</b>, seriam cerca de
+          <b style="color:var(--gold-bright);">${BRL(Math.max(0,(ocup.perdido+ocup.faturado)*0.6 - ocup.faturado))}</b> a mais no mês.
+          Vale olhar os dias mais vazios e os clientes inativos.
+        </div>`:''}
+        <div style="font-size:10.5px;color:var(--muted-2);margin-top:10px;line-height:1.5;">
+          O "potencial não usado" considera a agenda 100% cheia, o que nenhuma barbearia atinge na prática —
+          use como referência de espaço para crescer, não como prejuízo real. Calculado pelo preço e duração médios dos seus serviços.
+        </div>
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:4px;">Status dos clientes</div>
+        <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Baseado na última vez que cada um foi atendido.</div>
+        ${totalClientes===0 ? emptyState('Ainda sem histórico de atendimentos.') : `
+          <div style="display:flex;height:13px;border-radius:99px;overflow:hidden;margin-bottom:16px;">
+            <div style="width:${(st.ativos/totalClientes)*100}%;background:var(--ok);"></div>
+            <div style="width:${(st.semi/totalClientes)*100}%;background:var(--warn);"></div>
+            <div style="width:${(st.inativos/totalClientes)*100}%;background:var(--bad);"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:var(--muted);">● Ativos <span style="font-size:11px;color:var(--muted-2);">(até 30 dias)</span></span><b class="font-mono" style="color:var(--ok);">${st.ativos}</b></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:var(--muted);">● Semiativos <span style="font-size:11px;color:var(--muted-2);">(31 a 90 dias)</span></span><b class="font-mono" style="color:var(--warn);">${st.semi}</b></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:var(--muted);">● Inativos <span style="font-size:11px;color:var(--muted-2);">(mais de 90 dias)</span></span><b class="font-mono" style="color:var(--bad);">${st.inativos}</b></div>
+            ${st.semHistorico?`<div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:var(--muted-2);">Nunca atendidos</span><b class="font-mono" style="color:var(--muted-2);">${st.semHistorico}</b></div>`:''}
+          </div>
+          ${st.inativos>0?`<button class="btn btn-gold" id="ci-recuperar" style="width:100%;justify-content:center;margin-top:16px;">Ver os ${st.inativos} inativos e chamar de volta</button>`:''}
+        `}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start;margin-bottom:20px;" class="dash-grid">
+      <div class="card" style="padding:20px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:16px;">Faturamento nos últimos 6 meses</div>
+        ${barrasHtml(meses, 'var(--gold)')}
+      </div>
+      <div class="card" style="padding:20px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:16px;">Dias mais movimentados</div>
+        ${barrasHtml(
+          ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map((d,i)=>({label:d, valor:pico[i]})),
+          'var(--gold-bright)'
+        )}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;" class="dash-grid">
+      <div class="card" style="padding:20px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:16px;">De onde vem o dinheiro</div>
+        ${cat.map(x=>`
+          <div style="margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
+              <span style="color:var(--muted);">${x.nome}</span>
+              <span class="font-mono">${BRL(x.valor)} <span style="color:var(--muted-2);font-size:11.5px;">${((x.valor/somaCat)*100).toFixed(1)}%</span></span>
+            </div>
+            <div style="height:8px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
+              <div style="height:100%;width:${(x.valor/somaCat)*100}%;background:${x.cor};"></div>
+            </div>
+          </div>`).join('')}
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:16px;">Melhores clientes do mês</div>
+        ${rank.length===0 ? emptyState('Nenhum atendimento neste mês.') : `
+          <div style="display:flex;flex-direction:column;gap:11px;">
+            ${rank.map((r,i)=>`
+              <div style="display:flex;align-items:center;gap:11px;">
+                <span style="width:20px;font-size:12px;color:var(--muted-2);text-align:right;">${i+1}º</span>
+                <span style="flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.nome)} ${clubStarBadge(r.nome)}</span>
+                <span class="font-mono" style="font-size:13px;color:var(--gold-bright);">${BRL(r.total)}</span>
+              </div>`).join('')}
+          </div>`}
+      </div>
+    </div>
+  `;
+
+  view.querySelector('#ci-prev')?.addEventListener('click', ()=>{ ciMes = shiftYM(ym,-1); renderCentral(view); });
+  view.querySelector('#ci-next')?.addEventListener('click', ()=>{ ciMes = shiftYM(ym,1); renderCentral(view); });
+  view.querySelector('#ci-recuperar')?.addEventListener('click', ()=>inativosModal(st.listaInativos));
+}
+
+function inativosModal(lista){
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Clientes para chamar de volta</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">${lista.length} cliente(s) sem vir há mais de 90 dias. Começa pelos que sumiram há menos tempo — são os mais fáceis de trazer de volta.</div>
+      <div style="display:flex;flex-direction:column;gap:9px;max-height:52vh;overflow-y:auto;">
+        ${lista.slice(0,60).map(cl=>{
+          const msg = `Olá ${cl.name}! Faz um tempinho que você não aparece aqui na ${state.shopProfile.name}. Que tal marcar um horário? Vamos adorar te atender de novo!`;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+            <div style="font-size:13px;min-width:150px;">
+              <b>${esc(cl.name)}</b><br>
+              <span style="color:var(--muted-2);font-size:11.5px;">Última visita há ${cl.diasSemVir} dias</span>
+            </div>
+            ${messageChannelRow(cl.phone, msg)}
+          </div>`;
+        }).join('')}
+      </div>
+      ${lista.length>60?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:12px;">Mostrando os 60 primeiros.</div>`:''}
+    </div>
+  `, root=>root.querySelector('#m-close').addEventListener('click', closeModal));
+}
+
+/* ============ CENTRAL DE INTELIGÊNCIA — cálculos ============ */
+function ymOf(dateStr){ return (dateStr||'').slice(0,7); }        // "2026-08"
+function currentYM(){ return todayISO().slice(0,7); }
+function shiftYM(ym, delta){
+  const [y,m] = ym.split('-').map(Number);
+  const d = new Date(y, m-1+delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function ymLabel(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString('pt-BR',{month:'short', year:'numeric'}).replace('.','').toUpperCase();
+}
+function variacao(atual, anterior){
+  if(!anterior) return atual>0 ? 100 : 0;
+  return ((atual - anterior) / Math.abs(anterior)) * 100;
+}
+
+// Fatura de um mês: serviços concluídos + entradas manuais do caixa
+function faturamentoMes(ym){
+  const servicos = state.appointments
+    .filter(a=>a.status==='concluido' && ymOf(a.date)===ym)
+    .reduce((t,a)=>t+(serviceById(a.serviceId)?.price||0),0);
+  let entradas = 0, saidas = 0;
+  (state.cashSessions||[]).forEach(s=>{
+    if(ymOf(s.date||s.openedAt)!==ym) return;
+    (s.entries||[]).forEach(e=>{
+      if(e.type==='entrada') entradas += Number(e.amount)||0;
+      else saidas += Number(e.amount)||0;
+    });
+  });
+  const assinaturas = (state.subscriptionMembers||[])
+    .filter(m=>m.status==='pago')
+    .reduce((t,m)=>{ const p=state.subscriptionPlans.find(x=>x.id===m.planId); return t+(p?Number(p.price):0); },0);
+  return { servicos, entradas, saidas, assinaturas, liquido: entradas - saidas };
+}
+
+function atendimentosMes(ym){
+  return state.appointments.filter(a=>a.status==='concluido' && ymOf(a.date)===ym);
+}
+
+// Quanto a agenda poderia ter faturado x quanto faturou de fato
+function ocupacaoMes(ym){
+  const [y,m] = ym.split('-').map(Number);
+  const diasNoMes = new Date(y, m, 0).getDate();
+  const hoje = todayISO();
+  const precoMedio = state.services.length
+    ? state.services.reduce((t,s)=>t+Number(s.price),0)/state.services.length : 0;
+  const duracaoMedia = state.services.length
+    ? state.services.reduce((t,s)=>t+Number(s.duration||30),0)/state.services.length : 30;
+
+  let minutosPossiveis = 0, minutosFolga = 0;
+  // No mês corrente, só conta até hoje — dias que ainda não chegaram
+  // não podem ser considerados "perdidos".
+  const ultimoDia = (ym === currentYM()) ? Number(hoje.slice(8,10)) : diasNoMes;
+  servingProfessionals().forEach(p=>{
+    for(let d=1; d<=ultimoDia; d++){
+      const dia = `${ym}-${String(d).padStart(2,'0')}`;
+      const [sh,sm] = (p.workStart||'09:00').split(':').map(Number);
+      const [eh,em] = (p.workEnd||'19:00').split(':').map(Number);
+      const jornada = (eh*60+em) - (sh*60+sm);
+      if(jornada<=0) continue;
+      if(isProfessionalWorking(p, dia)){
+        minutosPossiveis += jornada;
+        // desconta bloqueios (almoço, folga)
+        blocksForDay(p.id, dia).forEach(b=>{
+          const [bsh,bsm] = b.start.split(':').map(Number);
+          const [beh,bem] = b.end.split(':').map(Number);
+          minutosPossiveis -= Math.max(0, (beh*60+bem)-(bsh*60+bsm));
+        });
+      } else {
+        minutosFolga += jornada;
+      }
+    }
+  });
+
+  const concluidos = atendimentosMes(ym);
+  const minutosUsados = concluidos.reduce((t,a)=>t+(serviceById(a.serviceId)?.duration||30),0);
+  const faturado = concluidos.reduce((t,a)=>t+(serviceById(a.serviceId)?.price||0),0);
+  const taxa = minutosPossiveis>0 ? (minutosUsados/minutosPossiveis)*100 : 0;
+  const minutosVagos = Math.max(0, minutosPossiveis - minutosUsados);
+  // valor estimado que ficou na mesa por cadeira vazia
+  const perdido = duracaoMedia>0 ? (minutosVagos/duracaoMedia)*precoMedio : 0;
+  const folgaValor = duracaoMedia>0 ? (minutosFolga/duracaoMedia)*precoMedio : 0;
+
+  return { taxa, faturado, perdido, folgaValor, minutosPossiveis, minutosUsados, ym, futuro: ym>=currentYM() };
+}
+
+// Ativo = veio nos últimos 30 dias | Semiativo = 31 a 90 | Inativo = mais de 90
+function statusClientes(){
+  const hoje = new Date(todayISO()+'T12:00');
+  const ultima = {};
+  state.appointments.filter(a=>a.status==='concluido').forEach(a=>{
+    const nome = (a.client||'').trim().toLowerCase();
+    if(!nome) return;
+    if(!ultima[nome] || a.date > ultima[nome]) ultima[nome] = a.date;
+  });
+  let ativos=0, semi=0, inativos=0, semHistorico=0;
+  const listaInativos = [];
+  (state.clients||[]).forEach(cl=>{
+    const nome = (cl.name||'').trim().toLowerCase();
+    const ult = ultima[nome];
+    if(!ult){ semHistorico++; return; }
+    const dias = Math.floor((hoje - new Date(ult+'T12:00')) / 86400000);
+    if(dias <= 30) ativos++;
+    else if(dias <= 90) semi++;
+    else { inativos++; listaInativos.push({...cl, ultimaVisita: ult, diasSemVir: dias}); }
+  });
+  listaInativos.sort((a,b)=>a.diasSemVir-b.diasSemVir);
+  return { ativos, semi, inativos, semHistorico, listaInativos };
+}
+
+function diasDePico(ym){
+  const contagem = [0,0,0,0,0,0,0];
+  atendimentosMes(ym).forEach(a=>{ contagem[new Date(a.date+'T12:00').getDay()]++; });
+  return contagem;
+}
+
+function rankingClientes(ym){
+  const porCliente = {};
+  atendimentosMes(ym).forEach(a=>{
+    const nome = (a.client||'').trim();
+    if(!nome) return;
+    porCliente[nome] = (porCliente[nome]||0) + (serviceById(a.serviceId)?.price||0);
+  });
+  const lista = Object.entries(porCliente).map(([nome,total])=>({nome,total})).sort((a,b)=>b.total-a.total);
+  const soma = lista.reduce((t,x)=>t+x.total,0) || 1;
+  return lista.slice(0,8).map(x=>({...x, pct:(x.total/soma)*100}));
+}
+
 function renderRelatorios(view){
   const done = state.appointments.filter(a=>a.status==='concluido');
   const ticketMedio = done.length ? done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0)/done.length : 0;
