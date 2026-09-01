@@ -2279,6 +2279,7 @@ function renderCaixa(view){
       <div style="display:flex;gap:10px;margin-bottom:18px;">
         <button class="btn btn-ghost" style="color:var(--ok);border-color:var(--ok);" id="btn-add-in">${ICON.arrowUp} Lançar entrada</button>
         <button class="btn btn-ghost" style="color:var(--bad);border-color:var(--bad);" id="btn-add-out">${ICON.arrowDown} Lançar saída</button>
+        <button class="btn btn-ghost" id="btn-sangria">${ICON.cash} Sangria</button>
       </div>
 
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Movimentações de hoje</div>
@@ -2312,7 +2313,10 @@ function renderCaixa(view){
             <td class="font-mono" style="color:var(--bad);">${BRL(t.out)}</td>
             <td class="font-mono">${BRL(t.balance)}</td>
             <td class="font-mono">${h.closingCounted!=null?BRL(h.closingCounted):'—'}</td>
-            <td class="font-mono" style="color:${diff===0?'var(--muted)':diff>0?'var(--ok)':'var(--bad)'};">${diff===0?'—':(diff>0?'+':'')+BRL(diff)}</td>
+            <td class="font-mono" style="color:${diff===0?'var(--muted)':diff>0?'var(--ok)':'var(--bad)'};">
+              ${diff===0?'—':(diff>0?'+':'')+BRL(diff)}
+              ${h.obsFechamento?`<div style="font-size:10.5px;color:var(--muted-2);font-family:inherit;font-weight:400;margin-top:2px;max-width:160px;white-space:normal;">${esc(h.obsFechamento)}</div>`:''}
+            </td>
           </tr>`;
         }).join('')}
         </tbody>
@@ -2324,28 +2328,78 @@ function renderCaixa(view){
   view.querySelector('#btn-close-cash')?.addEventListener('click', closeCashModal);
   view.querySelector('#btn-add-in')?.addEventListener('click', ()=>addEntryModal('entrada'));
   view.querySelector('#btn-add-out')?.addEventListener('click', ()=>addEntryModal('saida'));
+  view.querySelector('#btn-sangria')?.addEventListener('click', ()=>sangriaModal(view));
 }
+// Quanto ficou na gaveta no último fechamento
+function saldoUltimoFechamento(){
+  const fechados = (state.cashSessions||[])
+    .filter(c=>c.status==='fechado')
+    .sort((a,b)=>(b.closedAt||b.date||'').localeCompare(a.closedAt||a.date||''));
+  if(!fechados.length) return null;
+  const ult = fechados[0];
+  // o que foi contado de verdade vale mais que o calculado
+  const valor = (ult.closingCounted!=null) ? Number(ult.closingCounted) : sessionTotals(ult).balance;
+  return { valor, data: ult.date, contado: ult.closingCounted!=null };
+}
+
 function openCashModal(){
+  const ant = saldoUltimoFechamento();
+  const sugerido = ant ? ant.valor : 0;
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <div class="font-display" style="font-size:19px;font-weight:600;">Abrir caixa</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
-      <label>Valor inicial (fundo de troco)</label>
-      <input id="f-open" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;margin-bottom:16px;">
+      ${ant ? `
+        <div class="card" style="padding:13px 15px;background:var(--panel-2);margin-bottom:14px;">
+          <div style="font-size:12px;color:var(--muted-2);margin-bottom:4px;">Sobrou no último fechamento (${new Date(ant.data+'T12:00').toLocaleDateString('pt-BR')})</div>
+          <div class="font-mono" style="font-size:20px;color:var(--gold-bright);">${BRL(ant.valor)}</div>
+        </div>
+      ` : `
+        <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;line-height:1.6;">
+          Primeiro caixa do sistema. Informe quanto tem de troco na gaveta agora.
+        </div>
+      `}
+      <label>Valor na gaveta agora</label>
+      <input id="f-open" type="number" step="0.01" min="0" value="${sugerido.toFixed(2)}" style="width:100%;margin-bottom:8px;">
+      <div id="open-dif" style="font-size:12.5px;margin-bottom:14px;min-height:18px;"></div>
       <button class="btn btn-gold" id="f-submit" style="width:100%;justify-content:center;">Abrir caixa</button>
+      ${ant?`<div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">Já veio preenchido com o que sobrou ontem. Confira o dinheiro e corrija se estiver diferente — a diferença fica registrada.</div>`:''}
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    const inp = root.querySelector('#f-open');
+    const dif = root.querySelector('#open-dif');
+    const conferir = ()=>{
+      if(!ant){ dif.textContent=''; return; }
+      const v = parseFloat(inp.value);
+      if(isNaN(v)){ dif.textContent=''; return; }
+      const d = v - ant.valor;
+      if(Math.abs(d) < 0.01){ dif.innerHTML = `<span style="color:var(--ok);">✓ Bate com o fechamento anterior.</span>`; }
+      else if(d < 0){ dif.innerHTML = `<span style="color:var(--bad);">⚠ Faltam ${BRL(Math.abs(d))} em relação ao fechamento anterior.</span>`; }
+      else { dif.innerHTML = `<span style="color:var(--warn);">⚠ Sobrando ${BRL(d)} em relação ao fechamento anterior.</span>`; }
+    };
+    inp.addEventListener('input', conferir);
+    conferir();
+
     root.querySelector('#f-submit').addEventListener('click', ()=>{
-      const val = parseFloat(root.querySelector('#f-open').value);
+      const val = parseFloat(inp.value);
       if(isNaN(val) || val<0){ showToast('Informe um valor válido.'); return; }
+      const difer = ant ? val - ant.valor : 0;
       update(s=>{
-        s.cashSessions.push({id:uid(), date:todayISO(), status:'aberto', openingAmount:val, openedAt:new Date().toISOString(), closedAt:null, closingCounted:null, entries:[]});
+        s.cashSessions.push({
+          id:uid(), date:todayISO(), status:'aberto', openingAmount:val,
+          openedAt:new Date().toISOString(), closedAt:null, closingCounted:null,
+          esperadoNaAbertura: ant ? ant.valor : null,
+          diferencaAbertura: ant ? difer : null,
+          entries:[],
+        });
       });
       closeModal();
-      showToast('Caixa aberto.');
+      showToast(Math.abs(difer)>=0.01
+        ? `Caixa aberto com ${difer<0?'falta':'sobra'} de ${BRL(Math.abs(difer))}.`
+        : 'Caixa aberto.');
     });
   });
 }
@@ -2364,21 +2418,121 @@ function closeCashModal(){
         Saídas: <span class="font-mono" style="color:var(--bad);">${BRL(totals.out)}</span><br>
         Saldo esperado: <span class="font-mono" style="color:var(--ink);">${BRL(totals.balance)}</span>
       </div>
-      <label>Valor contado no caixa</label>
-      <input id="f-count" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;margin-bottom:16px;">
+      <label>Conte o dinheiro e informe quanto tem na gaveta</label>
+      <input id="f-count" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;margin-bottom:8px;">
+      <div id="close-dif" style="font-size:13px;margin-bottom:14px;min-height:20px;"></div>
+      <div><label>Observação (opcional)</label><input id="f-obs" placeholder="Ex: faltou troco de uma venda" style="width:100%;margin-bottom:16px;"></div>
       <button class="btn btn-gold" id="f-submit" style="width:100%;justify-content:center;">Confirmar fechamento</button>
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    const inp = root.querySelector('#f-count');
+    const dif = root.querySelector('#close-dif');
+    const conferir = ()=>{
+      const v = parseFloat(inp.value);
+      if(isNaN(v)){ dif.textContent=''; return null; }
+      const d = v - totals.balance;
+      if(Math.abs(d) < 0.01){
+        dif.innerHTML = `<span style="color:var(--ok);">✓ Bateu certinho com o esperado.</span>`;
+      } else if(d < 0){
+        dif.innerHTML = `<div style="padding:10px 12px;border-radius:8px;background:var(--bad-bg);color:var(--bad);line-height:1.5;">
+          <b>Faltando ${BRL(Math.abs(d))}</b><br><span style="font-size:11.5px;">Confira se algum troco saiu sem registro ou se faltou lançar uma saída.</span>
+        </div>`;
+      } else {
+        dif.innerHTML = `<div style="padding:10px 12px;border-radius:8px;background:var(--panel-2);color:var(--warn);line-height:1.5;">
+          <b>Sobrando ${BRL(d)}</b><br><span style="font-size:11.5px;">Pode ser uma venda em dinheiro que não foi lançada.</span>
+        </div>`;
+      }
+      return d;
+    };
+    inp.addEventListener('input', conferir);
+
     root.querySelector('#f-submit').addEventListener('click', ()=>{
-      const val = parseFloat(root.querySelector('#f-count').value);
+      const val = parseFloat(inp.value);
       if(isNaN(val) || val<0){ showToast('Informe o valor contado.'); return; }
+      const d = val - totals.balance;
+      if(Math.abs(d) >= 0.01){
+        const txt = d<0 ? `Está faltando ${BRL(Math.abs(d))} na gaveta.` : `Está sobrando ${BRL(d)} na gaveta.`;
+        if(!confirm(`${txt}\n\nFechar o caixa assim mesmo? A diferença fica registrada no histórico.`)) return;
+      }
       update(s=>{
         const sess = s.cashSessions.find(c=>c.status==='aberto');
         sess.status='fechado'; sess.closedAt=new Date().toISOString(); sess.closingCounted=val;
+        sess.diferencaFechamento = d;
+        sess.obsFechamento = root.querySelector('#f-obs').value.trim();
       });
       closeModal();
-      showToast('Caixa fechado.');
+      showToast(Math.abs(d)>=0.01
+        ? `Caixa fechado com ${d<0?'falta':'sobra'} de ${BRL(Math.abs(d))}.`
+        : 'Caixa fechado — tudo certo!');
+    });
+  });
+}
+/* Sangria: tira dinheiro da gaveta durante o dia (banco, cofre, fornecedor) */
+function sangriaModal(view){
+  const session = openSession();
+  if(!session){ showToast('Abra o caixa primeiro.'); return; }
+  const totals = sessionTotals(session);
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Sangria</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+        Retirada de dinheiro da gaveta. Use para levar ao banco, guardar no cofre ou pagar algo em espécie.
+      </div>
+      <div class="card" style="padding:12px 15px;background:var(--panel-2);margin-bottom:16px;">
+        <div style="font-size:11.5px;color:var(--muted-2);">Dinheiro na gaveta agora</div>
+        <div class="font-mono" style="font-size:20px;color:var(--gold-bright);">${BRL(totals.balance)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div><label>Valor a retirar</label><input id="sg-valor" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;"></div>
+        <div><label>Para onde vai</label>
+          <input id="sg-destino" list="sg-destinos" placeholder="Ex: Depósito no banco" style="width:100%;">
+          <datalist id="sg-destinos">
+            <option value="Depósito no banco"><option value="Cofre">
+            <option value="Pagamento de fornecedor"><option value="Retirada do dono">
+          </datalist>
+        </div>
+        <div id="sg-aviso" style="font-size:12.5px;min-height:18px;"></div>
+        <button class="btn btn-gold" id="sg-save" style="justify-content:center;">Registrar sangria</button>
+        <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.5;">
+          Sai do saldo da gaveta, mas não conta como despesa do negócio — o dinheiro só mudou de lugar.
+        </div>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const inp = root.querySelector('#sg-valor');
+    const aviso = root.querySelector('#sg-aviso');
+    const conferir = ()=>{
+      const v = parseFloat(inp.value);
+      if(isNaN(v) || v<=0){ aviso.textContent=''; return; }
+      if(v > totals.balance){
+        aviso.innerHTML = `<span style="color:var(--bad);">⚠ Só há ${BRL(totals.balance)} na gaveta.</span>`;
+      } else {
+        aviso.innerHTML = `<span style="color:var(--muted);">Restam ${BRL(totals.balance - v)} na gaveta.</span>`;
+      }
+    };
+    inp.addEventListener('input', conferir);
+
+    root.querySelector('#sg-save').addEventListener('click', ()=>{
+      const valor = parseFloat(inp.value);
+      const destino = root.querySelector('#sg-destino').value.trim() || 'Sangria';
+      if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.'); return; }
+      if(valor > totals.balance && !confirm(`Só há ${BRL(totals.balance)} na gaveta. Registrar mesmo assim?`)) return;
+      update(s=>{
+        const sess = s.cashSessions.find(x=>x.status==='aberto');
+        sess.entries.push({
+          id:uid(), type:'saida', method:'dinheiro', sangria:true,
+          desc:`Sangria — ${destino}`, amount:valor,
+          time:new Date().toTimeString().slice(0,5), auto:false,
+        });
+      });
+      closeModal();
+      showToast(`Sangria de ${BRL(valor)} registrada.`);
+      if(view) renderCaixa(view);
     });
   });
 }
