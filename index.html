@@ -1777,21 +1777,35 @@ function concludeAppt(id){
   const member = state.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
   let basePrice = service.price;
   let priceNote = '';
+  let motivoCheio = '';   // explica na tela por que não zerou
+  let planoAtivo = false; // mostra o selo PLANO ATIVO
+
   if(member && member.status==='pago'){
     const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-    // O plano só vale nos dias marcados no cadastro dele
-    if(plan && !planValidOnDate(plan, appt.date)){
-      priceNote = ` (${planDaysLabel(plan.validDays).toLowerCase()} — hoje não vale, valor cheio)`;
-    } else if(plan && plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
-      basePrice = 0; priceNote = ' (incluso no clube)';
-    } else if(plan && plan.discountPercent>0){
+    if(!plan){
+      motivoCheio = 'O plano deste assinante foi removido do sistema.';
+    } else if(!planValidOnDate(plan, appt.date)){
+      priceNote = ` (fora dos dias do plano)`;
+      motivoCheio = `${plan.name}: ${planDaysLabel(plan.validDays).toLowerCase()}. Hoje não está incluído.`;
+    } else if(plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
+      basePrice = 0; priceNote = ' (incluso no clube)'; planoAtivo = true;
+    } else if(plan.discountPercent>0){
       basePrice = service.price * (1 - plan.discountPercent/100);
       priceNote = ` (${plan.discountPercent}% desconto clube)`;
+    } else if(!plan.includedServiceIds || plan.includedServiceIds.length===0){
+      motivoCheio = `O plano "${plan.name}" está sem serviços inclusos configurados. Edite o plano em Clube de Assinatura e marque quais serviços entram.`;
+    } else {
+      motivoCheio = `"${service.name}" não está incluído no plano "${plan.name}".`;
     }
   } else if(member && member.status==='atrasado'){
     priceNote = ' (clube em atraso — valor cheio)';
+    motivoCheio = 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
+  } else if(member){
+    // pendente ou qualquer outro status: antes caía aqui em silêncio
+    priceNote = ' (assinatura ainda não confirmada)';
+    motivoCheio = `Assinante com status "${member.status}" — o plano só vale depois que o pagamento é confirmado. Se ele já pagou, marque como recebido no Clube de Assinatura.`;
   }
-  const netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
+  let netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
 
   const finish = (method)=>{
     update(s=>{
@@ -1807,6 +1821,35 @@ function concludeAppt(id){
     showToast(`Atendimento concluído — ${BRL(netAmount)} em ${methodLabelPay(method)}.`);
   };
 
+  const planoNome = member ? (state.subscriptionPlans.find(p=>p.id===member.planId)?.name || '') : '';
+
+  // Serviço coberto pelo plano: tela própria, deixando claro que não se cobra
+  if(netAmount<=0 && planoAtivo){
+    openModal(`
+      <div style="padding:26px 22px;text-align:center;">
+        <div style="width:62px;height:62px;border-radius:50%;background:var(--ok-bg);border:2px solid var(--ok);
+          display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:var(--ok);">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <div class="pill pill-ok" style="font-size:12px;padding:6px 16px;letter-spacing:.05em;">★ PLANO ATIVO</div>
+        <div class="font-display" style="font-size:20px;font-weight:600;margin:14px 0 4px;">${esc(appt.client)}</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(service.name)}${planoNome?` · ${esc(planoNome)}`:''}</div>
+        <div class="font-mono" style="font-size:38px;font-weight:600;color:var(--ok);line-height:1;">R$ 0,00</div>
+        <div style="font-size:13px;color:var(--ok);margin-top:8px;font-weight:600;">NADA A COBRAR</div>
+        <div style="font-size:12px;color:var(--muted-2);margin-top:12px;line-height:1.6;">
+          Este serviço já está incluído na assinatura.<br>
+          As fichas entram no pote do mês normalmente.
+        </div>
+        <button class="btn btn-gold" id="pa-ok" style="width:100%;justify-content:center;margin-top:20px;padding:14px;font-size:14.5px;">Confirmar atendimento</button>
+        <button class="btn btn-ghost" id="m-close" style="width:100%;justify-content:center;margin-top:9px;font-size:12.5px;">Cancelar</button>
+      </div>
+    `, root=>{
+      root.querySelector('#m-close').addEventListener('click', closeModal);
+      root.querySelector('#pa-ok').addEventListener('click', ()=>finish('dinheiro'));
+    });
+    return;
+  }
+
   if(netAmount<=0){ finish('dinheiro'); return; }
 
   openModal(`
@@ -1815,16 +1858,30 @@ function concludeAppt(id){
         <div class="font-display" style="font-size:19px;font-weight:600;">Concluir atendimento</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:6px;">${esc(appt.client)} · ${esc(service.name)}${priceNote}</div>
-      <div class="font-mono" style="font-size:26px;color:var(--gold-bright);margin-bottom:18px;">${BRL(netAmount)}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:6px;">
+        ${esc(appt.client)} ${clubStarBadge(appt.client)} · ${esc(service.name)}${esc(priceNote)}
+      </div>
+      <div class="font-mono" style="font-size:26px;color:var(--gold-bright);margin-bottom:${motivoCheio?'12px':'18px'};">${BRL(netAmount)}</div>
+      ${motivoCheio ? `<div style="padding:11px 13px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);
+        font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;">
+        <b style="color:var(--warn);">Por que está cobrando?</b><br>${esc(motivoCheio)}
+      </div>` : ''}
       <label>Forma de pagamento</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
         ${PAYMENT_METHODS.map(m=>`<button class="btn btn-ghost pay-method" data-method="${m.id}" style="justify-content:center;padding:14px 10px;font-size:13.5px;">${m.label}</button>`).join('')}
       </div>
+      ${member ? `<button class="btn btn-ghost" id="pm-zerar" style="width:100%;justify-content:center;margin-top:12px;font-size:12.5px;">
+        Cortesia — registrar sem cobrar
+      </button>` : ''}
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelectorAll('.pay-method').forEach(b=>b.addEventListener('click', ()=>finish(b.dataset.method)));
+    root.querySelector('#pm-zerar')?.addEventListener('click', ()=>{
+      if(!confirm('Registrar este atendimento sem cobrar nada?')) return;
+      netAmount = 0; priceNote = ' (cortesia)';
+      finish('dinheiro');
+    });
   });
 }
 function servingProfissionaisOk(){
@@ -3369,13 +3426,20 @@ function clientAccessModal(member){
       const email = root.querySelector('#ca-email').value.trim();
       const pass = root.querySelector('#ca-pass').value.trim();
       if(!email || pass.length<6){ showToast('Informe o e-mail e uma senha com ao menos 6 caracteres.'); return; }
-      e.currentTarget.disabled = true; e.currentTarget.textContent = 'Criando...';
+      // guarda a referência ANTES do await: o navegador zera e.currentTarget
+      // depois de uma espera, e o botão ficaria travado em "Criando...".
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = 'Criando...';
       const { data: res, error } = await supa.rpc('create_client_account', {
         p_shop_id: currentShop.id, p_member_id: member.id, p_name: member.name,
         p_email: email, p_phone: member.phone || '', p_password: pass,
       });
-      e.currentTarget.disabled = false; e.currentTarget.textContent = 'Criar acesso';
-      if(error || res?.error){ showToast(res?.error || 'Não foi possível criar o acesso.'); return; }
+      btn.disabled = false; btn.textContent = 'Criar acesso';
+      if(error){
+        showToast('Erro ao criar acesso: ' + (error.message || 'verifique se o banco está atualizado.'));
+        return;
+      }
+      if(res?.error){ showToast(res.error); return; }
       update(s=>{ const mm = s.subscriptionMembers.find(x=>x.id===member.id); if(mm) mm.email = email; });
       const msg = `Olá ${member.name}! Criamos seu acesso ao nosso portal, onde você agenda e acompanha seu plano.\n\nLink: ${link}\nE-mail: ${email}\nSenha provisória: ${pass}\n\nNo primeiro acesso você vai criar sua própria senha.`;
       root.querySelector('#ca-result').innerHTML = `
@@ -6135,8 +6199,10 @@ async function renderClientLogin(slug, errorMsg){
     const email = document.getElementById('cl-email').value.trim();
     const pass = document.getElementById('cl-pass').value;
     if(!email || !pass){ renderClientLogin(slug, 'Preencha e-mail e senha.'); return; }
-    e.currentTarget.disabled = true; e.currentTarget.textContent = 'Entrando...';
+    const btnEntrar = e.currentTarget;
+    btnEntrar.disabled = true; btnEntrar.textContent = 'Entrando...';
     const { data: res, error } = await supa.rpc('client_login', { p_slug: slug, p_email: email, p_password: pass });
+    btnEntrar.disabled = false; btnEntrar.textContent = 'Entrar';
     if(error || !res || res.error){ renderClientLogin(slug, res?.error || 'Não foi possível entrar.'); return; }
     clientSession = { ...res, slug };
     if(res.mustChangePassword) renderClientChangePassword(slug, true);
@@ -6169,7 +6235,8 @@ function renderClientSignup(slug, errorMsg){
     const email = document.getElementById('cs-email').value.trim();
     const pass = document.getElementById('cs-pass').value;
     if(!name || !email || pass.length<6){ renderClientSignup(slug, 'Preencha nome, e-mail e uma senha de ao menos 6 caracteres.'); return; }
-    e.currentTarget.disabled = true; e.currentTarget.textContent = 'Criando...';
+    const btnCriar = e.currentTarget;
+    btnCriar.disabled = true; btnCriar.textContent = 'Criando...';
     const { data: res, error } = await supa.rpc('client_self_register', {
       p_slug: slug, p_name: name, p_phone: phone, p_email: email, p_password: pass
     });
