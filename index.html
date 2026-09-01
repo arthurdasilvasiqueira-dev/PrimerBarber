@@ -1766,6 +1766,50 @@ function requestReviewModal(apptId){
     });
   });
 }
+/* Calcula quanto realmente cobrar de um agendamento, considerando o clube.
+   Usada tanto na tela de ações quanto no fechamento — assim o valor
+   mostrado é sempre o mesmo que vai ser cobrado. */
+function precoParaCobrar(appt, service){
+  const svc = service || serviceById(appt.serviceId);
+  const out = {
+    member: null, basePrice: svc ? Number(svc.price) : 0,
+    priceNote: '', motivoCheio: '', planoAtivo: false, plano: null,
+  };
+  if(!svc) return out;
+
+  const member = clubMemberForClient(appt.client);
+  out.member = member;
+  if(!member) return out;
+
+  const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
+  out.plano = plan;
+
+  if(member.status === 'pago'){
+    if(!plan){
+      out.motivoCheio = 'O plano deste assinante foi removido do sistema.';
+    } else if(!planValidOnDate(plan, appt.date)){
+      out.priceNote = ' (fora dos dias do plano)';
+      out.motivoCheio = `${plan.name}: ${planDaysLabel(plan.validDays).toLowerCase()}. Hoje não está incluído.`;
+    } else if(plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
+      out.basePrice = 0; out.priceNote = ' (incluso no clube)'; out.planoAtivo = true;
+    } else if(plan.discountPercent > 0){
+      out.basePrice = svc.price * (1 - plan.discountPercent/100);
+      out.priceNote = ` (${plan.discountPercent}% desconto clube)`;
+    } else if(!plan.includedServiceIds || plan.includedServiceIds.length === 0){
+      out.motivoCheio = `O plano "${plan.name}" está sem serviços inclusos. Edite o plano em Clube de Assinatura e marque quais serviços entram.`;
+    } else {
+      out.motivoCheio = `"${svc.name}" não está incluído no plano "${plan.name}". Se deveria estar, edite o plano e marque este serviço.`;
+    }
+  } else if(member.status === 'atrasado'){
+    out.priceNote = ' (clube em atraso — valor cheio)';
+    out.motivoCheio = 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
+  } else {
+    out.priceNote = ' (assinatura ainda não confirmada)';
+    out.motivoCheio = `Assinante com status "${member.status}" — o plano só vale depois que o pagamento é confirmado. Se ele já pagou, marque como recebido no Clube de Assinatura.`;
+  }
+  return out;
+}
+
 function concludeAppt(id){
   const session = openSession();
   if(!session){ showToast('Abra o caixa antes de concluir atendimentos.'); route='caixa'; render(); return; }
@@ -1774,37 +1818,13 @@ function concludeAppt(id){
   if(!service){ showToast('Serviço não encontrado.'); return; }
 
   // Calcula o valor considerando o clube de assinatura
-  const member = state.subscriptionMembers.find(m=>m.name.trim().toLowerCase()===appt.client.trim().toLowerCase());
-  let basePrice = service.price;
-  let priceNote = '';
-  let motivoCheio = '';   // explica na tela por que não zerou
-  let planoAtivo = false; // mostra o selo PLANO ATIVO
+  const calc = precoParaCobrar(appt, service);
+  const member = calc.member;
+  const basePrice = calc.basePrice;
+  let priceNote = calc.priceNote;
+  const motivoCheio = calc.motivoCheio;
+  const planoAtivo = calc.planoAtivo;
 
-  if(member && member.status==='pago'){
-    const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-    if(!plan){
-      motivoCheio = 'O plano deste assinante foi removido do sistema.';
-    } else if(!planValidOnDate(plan, appt.date)){
-      priceNote = ` (fora dos dias do plano)`;
-      motivoCheio = `${plan.name}: ${planDaysLabel(plan.validDays).toLowerCase()}. Hoje não está incluído.`;
-    } else if(plan.includedServiceIds && plan.includedServiceIds.includes(service.id)){
-      basePrice = 0; priceNote = ' (incluso no clube)'; planoAtivo = true;
-    } else if(plan.discountPercent>0){
-      basePrice = service.price * (1 - plan.discountPercent/100);
-      priceNote = ` (${plan.discountPercent}% desconto clube)`;
-    } else if(!plan.includedServiceIds || plan.includedServiceIds.length===0){
-      motivoCheio = `O plano "${plan.name}" está sem serviços inclusos configurados. Edite o plano em Clube de Assinatura e marque quais serviços entram.`;
-    } else {
-      motivoCheio = `"${service.name}" não está incluído no plano "${plan.name}".`;
-    }
-  } else if(member && member.status==='atrasado'){
-    priceNote = ' (clube em atraso — valor cheio)';
-    motivoCheio = 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
-  } else if(member){
-    // pendente ou qualquer outro status: antes caía aqui em silêncio
-    priceNote = ' (assinatura ainda não confirmada)';
-    motivoCheio = `Assinante com status "${member.status}" — o plano só vale depois que o pagamento é confirmado. Se ele já pagou, marque como recebido no Clube de Assinatura.`;
-  }
   let netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
 
   const finish = (method)=>{
@@ -1898,6 +1918,9 @@ function apptActionsModal(apptId, view){
   const svc = serviceById(a.serviceId);
   const membro = clubMemberForClient(a.client);
   const podeMexer = isOwnerLevel() || userSession.role==='recepcionista' || a.professionalId===userSession.professionalId;
+  // valor real considerando o plano do cliente
+  const cobranca = svc ? precoParaCobrar(a, svc) : null;
+  const valorReal = cobranca ? (a.depositStatus==='pago' ? Math.max(0, cobranca.basePrice - a.depositAmount) : cobranca.basePrice) : 0;
   const statusMap = {
     agendado:{l:'Agendado',t:'muted'}, confirmado:{l:'Confirmado',t:'ok'},
     concluido:{l:'Concluído',t:'ok'}, cancelado:{l:'Cancelado',t:'bad'}, faltou:{l:'Faltou',t:'bad'},
@@ -1923,16 +1946,21 @@ function apptActionsModal(apptId, view){
 
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px;">
         <span class="pill pill-${st.t}">${st.l}</span>
-        ${svc?`<span class="pill pill-muted font-mono">${BRL(svc.price)}</span>`:''}
+        ${svc ? (cobranca.planoAtivo
+          ? `<span class="pill pill-ok" style="font-weight:600;">★ PLANO ATIVO · R$ 0,00</span>`
+          : `<span class="pill pill-muted font-mono">${BRL(valorReal)}${valorReal < svc.price ? ` <span style="text-decoration:line-through;opacity:.6;">${BRL(svc.price)}</span>` : ''}</span>`) : ''}
         ${membro && membro.status==='atrasado'?`<span class="pill pill-bad">Clube em atraso</span>`:''}
         ${a.depositStatus==='pago'?`<span class="pill pill-ok">Sinal pago ${BRL(a.depositAmount)}</span>`:''}
       </div>
 
+      ${cobranca?.motivoCheio ? `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
+        <b style="color:var(--warn);">Vai cobrar valor cheio</b><br>${esc(cobranca.motivoCheio)}
+      </div>` : ''}
       ${!podeMexer ? `<div style="font-size:12.5px;color:var(--muted-2);">Este agendamento é de outro profissional.</div>` : `
         <div style="display:flex;flex-direction:column;gap:9px;">
           ${a.status!=='concluido' && a.status!=='cancelado' ? `
             <button class="btn btn-gold" id="ac-concluir" style="justify-content:center;padding:14px;font-size:14.5px;">
-              ${ICON.cash} Finalizar e receber
+              ${cobranca?.planoAtivo ? `${ICON.check} Finalizar — nada a cobrar` : `${ICON.cash} Finalizar e receber ${valorReal>0?BRL(valorReal):''}`}
             </button>
             <div style="display:flex;gap:9px;flex-wrap:wrap;">
               <button class="btn btn-ghost" id="ac-reagendar" style="flex:1;justify-content:center;min-width:130px;">${ICON.clock} Reagendar</button>
