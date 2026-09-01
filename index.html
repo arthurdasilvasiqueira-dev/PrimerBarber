@@ -540,7 +540,8 @@ function migrateState(){
   applyTheme(state.themePreference);
   if(state.ownerName==null) state.ownerName = '';
   state.withdrawalRequests = state.withdrawalRequests || [];
-  state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true};
+  state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true, autoAccept:false};
+  if(state.onlineBooking.autoAccept==null) state.onlineBooking.autoAccept = false;
   state.waitlist = state.waitlist || [];
   state.commissionSettings = state.commissionSettings || {clubStaffPercent:60};
   if(state.commissionSettings.clubStaffPercent==null) state.commissionSettings.clubStaffPercent = 60;
@@ -4989,6 +4990,18 @@ function renderOnlineBooking(view){
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div><label>Identificador do link (slug)</label><input id="f-slug" value="${ob.slug}" style="width:100%;"></div>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-active" ${ob.active?'checked':''} style="width:auto;padding:0;"> Página de agendamento ativa</label>
+
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:13px 15px;border:1px solid ${ob.autoAccept?'var(--gold)':'var(--border)'};border-radius:10px;cursor:pointer;">
+          <input type="checkbox" id="f-auto-accept" ${ob.autoAccept?'checked':''} style="width:auto;padding:0;margin-top:2px;">
+          <div>
+            <div style="font-size:13.5px;font-weight:600;">Aceitar agendamentos automaticamente</div>
+            <div style="font-size:11.5px;color:var(--muted-2);margin-top:3px;line-height:1.6;">
+              ${ob.autoAccept
+                ? 'O horário do cliente entra direto na agenda, sem você precisar confirmar. Você continua recebendo o aviso.'
+                : 'Hoje cada agendamento espera você aceitar. Ative para o cliente já sair com o horário garantido.'}
+            </div>
+          </div>
+        </label>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-cancel" ${ob.allowCancel?'checked':''} style="width:auto;padding:0;"> Cliente pode cancelar online</label>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-resched" ${ob.allowReschedule?'checked':''} style="width:auto;padding:0;"> Cliente pode remarcar online</label>
         <button class="btn btn-gold" id="f-save-ob" style="justify-content:center;">Salvar configurações</button>
@@ -5006,6 +5019,7 @@ function renderOnlineBooking(view){
     update(s=>{
       s.onlineBooking.slug = slugify(view.querySelector('#f-slug').value.trim()) || s.onlineBooking.slug;
       s.onlineBooking.active = view.querySelector('#f-active').checked;
+      s.onlineBooking.autoAccept = view.querySelector('#f-auto-accept').checked;
       s.onlineBooking.allowCancel = view.querySelector('#f-cancel').checked;
       s.onlineBooking.allowReschedule = view.querySelector('#f-resched').checked;
     });
@@ -5169,12 +5183,12 @@ function notifDropdownContent(){
   if(!notifState.items.length) return `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center;">Nenhum agendamento novo.</div>`;
   return notifState.items.map(r=>`
     <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
-      <div style="font-size:13px;"><b>${esc(r.client_name)}</b> agendou</div>
+      <div style="font-size:13px;"><b>${esc(r.client_name)}</b> agendou ${r.status==='aceito'?`<span class="pill pill-ok" style="font-size:10px;">já na agenda</span>`:''}</div>
       <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${esc(r.service_name)} com ${esc(r.professional_name)} · ${new Date(r.date+'T'+r.time).toLocaleDateString('pt-BR')} às ${esc(r.time)}</div>
-      <div style="display:flex;gap:6px;">
+      ${r.status==='aceito' ? '' : `<div style="display:flex;gap:6px;">
         <button class="btn btn-gold" data-notif-accept="${r.id}" style="padding:5px 10px;font-size:11.5px;">Aceitar</button>
         <button class="btn btn-ghost" data-notif-decline="${r.id}" style="padding:5px 10px;font-size:11.5px;">Recusar</button>
-      </div>
+      </div>`}
     </div>
   `).join('');
 }
@@ -5758,8 +5772,8 @@ function renderPublicBookingScreen(step1Only){
             <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
           </div>
           <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
-            <div style="font-size:15px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
-            <div style="font-size:12.5px;color:var(--muted);">A barbearia vai confirmar seu horário em breve.</div>
+            <div data-done-title style="font-size:15px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
+            <div data-done-sub style="font-size:12.5px;color:var(--muted);">A barbearia vai confirmar seu horário em breve.</div>
           </div>
         </div>
       </div>
@@ -5813,16 +5827,40 @@ async function submitPublicBooking(){
   }
   const service = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
   const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
+  // Se a barbearia aceita automaticamente, o horário já entra na agenda.
+  // A função devolve auto=false quando a opção está desligada.
+  const { data: auto, error: erroAuto } = await supa.rpc('create_booking_auto', {
+    p_shop_id: pubBooking.shopId,
+    p_professional_id: prof.id,
+    p_service_id: service.id,
+    p_date: pubBooking.date,
+    p_time: pubBooking.time,
+    p_client_name: name,
+    p_client_phone: phone,
+  });
+  if(!erroAuto && auto?.error){ alert(auto.error); return; }
+  const aceitoNaHora = !erroAuto && auto?.auto === true;
+
+  // Registra o pedido de qualquer forma — é o que aciona o aviso e fica no histórico
   const { error } = await supa.from('booking_requests').insert({
     shop_id: pubBooking.shopId,
     professional_id: prof.id, professional_name: prof.name,
     service_id: service.id, service_name: service.name,
     client_name: name, client_phone: phone,
     date: pubBooking.date, time: pubBooking.time,
+    status: aceitoNaHora ? 'aceito' : 'pendente',
   });
-  if(error){ alert('Não foi possível enviar o pedido. Tente novamente.'); return; }
+  if(error && !aceitoNaHora){ alert('Não foi possível enviar o pedido. Tente novamente.'); return; }
+
   document.getElementById('pb-form').style.display = 'none';
-  document.getElementById('pb-done').style.display = 'block';
+  const done = document.getElementById('pb-done');
+  if(aceitoNaHora){
+    const t = done.querySelector('[data-done-title]');
+    const s = done.querySelector('[data-done-sub]');
+    if(t) t.textContent = 'Horário confirmado! ✅';
+    if(s) s.textContent = `${new Date(pubBooking.date+'T'+pubBooking.time).toLocaleDateString('pt-BR')} às ${pubBooking.time} com ${prof.name}. Te esperamos!`;
+  }
+  done.style.display = 'block';
 }
 
 
