@@ -698,6 +698,23 @@ function clubMemberForClient(clientName){
     if(n.length<5 || alvo.length<5) return false;
     return n.startsWith(alvo+' ') || alvo.startsWith(n+' ');
   });
+  if(achado) return achado;
+
+  // 4) mesmo primeiro nome + algum sobrenome em comum.
+  // Resolve "Arthur Siqueira" (Asaas) x "Arthur da Silva Siqueira" (cadastro),
+  // que é o caso mais comum quando os dois vieram de origens diferentes.
+  const ignorar = new Set(['da','de','do','dos','das','e']);
+  const partes = t => t.split(' ').filter(x=>x.length>1 && !ignorar.has(x));
+  const alvoP = partes(alvo);
+  if(alvoP.length >= 2){
+    achado = ativos.find(m=>{
+      const mP = partes(normNome(m.name));
+      if(mP.length < 2) return false;
+      if(mP[0] !== alvoP[0]) return false;               // primeiro nome tem que bater
+      const sobrenomesAlvo = new Set(alvoP.slice(1));
+      return mP.slice(1).some(s=>sobrenomesAlvo.has(s));  // e ao menos um sobrenome
+    });
+  }
   return achado || null;
 }
 
@@ -938,15 +955,24 @@ function maybeAwardReferral(client){
 // é dividido proporcionalmente pela quantidade de fichas que cada profissional
 // acumulou no mês. Cada serviço tem um valor de fichas configurável — quando
 // um profissional atende um cliente assinante pago, ganha as fichas daquele serviço.
-function clubMonthlyPot(){
-  return state.subscriptionMembers.filter(m=>m.status==='pago').reduce((total,m)=>{
+// Pagou DENTRO do mês? É isso que faz o pote virar quando o mês muda.
+// Antes olhávamos só o status "pago", que ficava marcado do mês anterior.
+function pagouNoMes(m, ym){
+  if(!m || !m.lastPaymentDate) return false;
+  return String(m.lastPaymentDate).slice(0,7) === ym;
+}
+function clubMonthlyPot(ym){
+  const mes = ym || todayISO().slice(0,7);
+  return state.subscriptionMembers.filter(m=>pagouNoMes(m, mes)).reduce((total,m)=>{
     const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
     return total + (plan ? plan.price : 0);
   }, 0);
 }
 function clubFichaEntries(){
   const monthPrefix = todayISO().slice(0,7);
-  const payingNames = new Set(state.subscriptionMembers.filter(m=>m.status==='pago').map(m=>m.name.trim().toLowerCase()));
+  const payingNames = new Set(
+    state.subscriptionMembers.filter(m=>pagouNoMes(m, monthPrefix)).map(m=>m.name.trim().toLowerCase())
+  );
   return state.appointments
     .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix) && payingNames.has(a.client.trim().toLowerCase()))
     .map(a=>{
@@ -986,8 +1012,8 @@ function asaasSummary(){
     cashPago: cash.filter(m=>m.status==='pago'),
     cashPendente: cash.filter(m=>m.status!=='pago' && m.status!=='cancelado'),
     // soma apenas o valor que de fato entrou (cobranças pagas), não saldo de conta
-    totalRecebidoAsaas: inMonth.filter(m=>m.status==='pago').reduce((a,m)=>a+planPrice(m),0),
-    totalRecebidoDinheiro: cash.filter(m=>m.status==='pago').reduce((a,m)=>a+planPrice(m),0),
+    totalRecebidoAsaas: inMonth.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).reduce((a,m)=>a+planPrice(m),0),
+    totalRecebidoDinheiro: cash.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).reduce((a,m)=>a+planPrice(m),0),
   };
 }
 
@@ -3430,10 +3456,28 @@ function renderClube(view){
     ${pageHeader('Clube de Assinatura', 'Planos recorrentes e membros', `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-ghost" id="btn-new-plan">${ICON.plus} Plano</button><button class="btn btn-gold" id="btn-new-member">${ICON.plus} Membro</button></div>`)}
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:14px;">
-      ${statCard('Receita recorrente (MRR)', BRL(mrr), 'somando assinaturas não canceladas', 'ok')}
-      ${statCard('Recebido este mês', BRL(recebidoMes), 'valor que efetivamente entrou (Asaas + dinheiro)', 'ok')}
+      ${statCard('Receita recorrente (MRR)', BRL(mrr), 'potencial mensal — assinaturas não canceladas', 'ok')}
+      ${statCard('Recebido em '+new Date().toLocaleDateString('pt-BR',{month:'long'}), BRL(recebidoMes), `${state.subscriptionMembers.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).length} de ${state.subscriptionMembers.filter(m=>m.status!=='cancelado').length} assinantes já pagaram`, 'ok')}
       ${statCard('Planos disponíveis', state.subscriptionPlans.length, 'configurados', 'ok')}
     </div>
+
+    ${(()=>{
+      const mesAtual = todayISO().slice(0,7);
+      const faltando = state.subscriptionMembers.filter(m=>m.status!=='cancelado' && !pagouNoMes(m, mesAtual));
+      if(!faltando.length) return '';
+      const valorFaltando = faltando.reduce((a,m)=>{
+        const p = state.subscriptionPlans.find(x=>x.id===m.planId); return a+(p?Number(p.price):0);
+      },0);
+      return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--warn);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:13px;line-height:1.6;">
+            <b>${faltando.length} assinante(s) ainda não pagaram este mês</b> — ${BRL(valorFaltando)} a receber.<br>
+            <span style="color:var(--muted-2);font-size:11.5px;">O valor recebido zera todo dia 1º e vai subindo conforme os pagamentos entram.</span>
+          </div>
+          <button class="btn btn-ghost" id="btn-ver-faltando" style="flex-shrink:0;">Ver quem falta</button>
+        </div>
+      </div>`;
+    })()}
 
     ${state.onlineBooking?.slug ? `
       <div class="card" style="padding:16px 18px;margin-bottom:20px;">
@@ -3540,6 +3584,49 @@ function renderClube(view){
   `;
   view.querySelector('#btn-new-plan').addEventListener('click', ()=>planModal());
   view.querySelector('#btn-new-member').addEventListener('click', ()=>memberModal());
+  view.querySelector('#btn-ver-faltando')?.addEventListener('click', ()=>{
+    const mesAtual = todayISO().slice(0,7);
+    const faltando = state.subscriptionMembers.filter(m=>m.status!=='cancelado' && !pagouNoMes(m, mesAtual));
+    openModal(`
+      <div style="padding:22px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div class="font-display" style="font-size:19px;font-weight:600;">Ainda não pagaram este mês</div>
+          <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">${faltando.length} assinante(s). Quem paga pelo Asaas atualiza sozinho na sincronização.</div>
+        <div style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;">
+          ${faltando.map(m=>{
+            const p = state.subscriptionPlans.find(x=>x.id===m.planId);
+            const msg = `Olá ${m.name}! Passando para lembrar da mensalidade do ${p?p.name:'clube'}. Qualquer dúvida é só chamar!`;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+              <div style="font-size:13px;min-width:160px;">
+                <b>${esc(m.name)}</b> <span class="pill pill-muted" style="font-size:10px;">${esc(m.paymentMethod==='asaas'?'Asaas':'manual')}</span><br>
+                <span style="color:var(--muted-2);font-size:11.5px;">${p?esc(p.name)+' · '+BRL(p.price):'plano removido'}${m.lastPaymentDate?' · último pgto '+new Date(m.lastPaymentDate+'T12:00').toLocaleDateString('pt-BR'):' · nunca pagou'}</span>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+                ${messageChannelRow(m.phone, msg)}
+                ${m.paymentMethod!=='asaas'?`<button class="btn btn-gold" data-marcar-pago="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi</button>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `, root=>{
+      root.querySelector('#m-close').addEventListener('click', closeModal);
+      root.querySelectorAll('[data-marcar-pago]').forEach(b=>b.addEventListener('click', ()=>{
+        update(s=>{
+          const m = s.subscriptionMembers.find(x=>x.id===b.dataset.marcarPago);
+          const p = s.subscriptionPlans.find(x=>x.id===m.planId);
+          m.status = 'pago';
+          m.lastPaymentDate = todayISO();
+          m.lastPaymentAmount = p ? Number(p.price) : 0;
+        });
+        showToast('Pagamento registrado.');
+        closeModal();
+        renderClube(view);
+      }));
+    });
+  });
   view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
   view.querySelector('#btn-copy-plans-link')?.addEventListener('click', ()=>{
     navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?planos=${state.onlineBooking.slug}`);
