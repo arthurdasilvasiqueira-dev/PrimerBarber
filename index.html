@@ -646,9 +646,53 @@ async function persist(){
     else { limparAvisoDeFalha(); }
   }catch(e){ avisarFalhaAoSalvar(e); }
 }
+/* Aplica a alteração sobre o dado MAIS RECENTE do servidor, não sobre o que
+   está na memória deste navegador. Sem isso, dois aparelhos usando ao mesmo
+   tempo se sobrescreviam: o último a salvar apagava o trabalho do outro. */
+let filaDeSalvamento = Promise.resolve();
+
 function update(mutator){
+  // 1) aplica na tela na hora, para a resposta ser instantânea
   mutator(state);
-  persist();
+  render();
+  // 2) e enfileira a gravação segura (uma de cada vez, na ordem)
+  filaDeSalvamento = filaDeSalvamento.then(()=>salvarComMerge(mutator)).catch(e=>{
+    console.error(e);
+  });
+}
+
+async function buscarEstadoRemoto(){
+  if(!supa || !currentShop) return null;
+  try{
+    if(teamSession){
+      const { data: res, error } = await supa.rpc('team_login', {
+        p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId, p_pin: teamSession.pin
+      });
+      if(error || !res?.ok) return null;
+      return res.data;
+    }
+    const { data, error } = await supa.from('shops').select('data').eq('id', currentShop.id).maybeSingle();
+    if(error || !data) return null;
+    return data.data;
+  }catch(e){ return null; }
+}
+
+async function salvarComMerge(mutator){
+  const remoto = await buscarEstadoRemoto();
+  if(remoto){
+    // aplica a MESMA alteração sobre os dados frescos do servidor
+    const anterior = state;
+    state = remoto;
+    try{
+      migrateState();
+      mutator(state);
+    }catch(e){
+      // se a alteração não fizer sentido no dado novo, mantém o que tínhamos
+      console.error('Não foi possível aplicar sobre os dados novos', e);
+      state = anterior;
+    }
+  }
+  await persist();
   render();
 }
 function showToast(msg){
@@ -6144,9 +6188,10 @@ function subscribeBookingNotifications(){
         const concluidosRemoto = (remoto.appointments||[]).filter(a=>a.status==='concluido').length;
         const concluidosLocal = (state?.appointments||[]).filter(a=>a.status==='concluido').length;
         if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal){
+          // mantém a tela em dia com o que outro aparelho fez.
+          // O salvamento já é protegido por merge — isto é só para a exibição.
           state = remoto;
           migrateState();
-          showToast('Dados atualizados (alteração feita em outro dispositivo).');
           render();
           return;
         }
