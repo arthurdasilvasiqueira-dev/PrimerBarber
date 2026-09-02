@@ -752,6 +752,21 @@ function normNome(s){
 }
 function soDigitos(s){ return String(s||'').replace(/\D/g,''); }
 
+// Assinante realmente em atraso: além do status, precisa ter um plano
+// que ainda exista. Sem isso, quem ficou órfão de um plano excluído
+// continuava aparecendo no aviso de cobrança para sempre.
+function assinantesEmAtraso(){
+  return (state.subscriptionMembers||[]).filter(m=>{
+    if(m.status !== 'atrasado') return false;
+    const plano = (state.subscriptionPlans||[]).find(p=>p.id===m.planId);
+    return !!plano;
+  });
+}
+function assinantesOrfaos(){
+  return (state.subscriptionMembers||[]).filter(m=>
+    m.status!=='cancelado' && !(state.subscriptionPlans||[]).some(p=>p.id===m.planId)
+  );
+}
 function clubMemberForClient(clientName){
   if(!clientName) return null;
   const alvo = normNome(clientName);
@@ -1417,7 +1432,7 @@ function viewDashboard(){
     ? commissionOwed(myId).owed
     : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
   const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
-  const overdueMembers = state.subscriptionMembers.filter(m=>m.status==='atrasado').length;
+  const overdueMembers = assinantesEmAtraso().length;
   const mrr = state.subscriptionMembers.filter(m=>m.status!=='cancelado').reduce((a,m)=>{
     const plan = state.subscriptionPlans.find(p=>p.id===m.planId); return a+(plan?plan.price:0);
   },0);
@@ -1469,7 +1484,7 @@ function viewDashboard(){
         <span class="pill pill-bad">${overdueMembers}</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        ${state.subscriptionMembers.filter(m=>m.status==='atrasado').map(m=>{
+        ${assinantesEmAtraso().map(m=>{
           const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
           const text = `Olá ${m.name}! Notamos que sua mensalidade do ${plan?plan.name:'clube'} está em atraso. Pode regularizar quando puder? Qualquer dúvida estamos à disposição.`;
           return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
@@ -4165,6 +4180,21 @@ function renderClube(view){
     </div>
 
     ${(()=>{
+      const orfaos = assinantesOrfaos();
+      if(orfaos.length===0) return '';
+      return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--warn);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:12.5px;line-height:1.6;">
+            <b style="color:var(--warn);">${orfaos.length} assinante(s) com plano removido</b><br>
+            <span style="color:var(--muted-2);">O plano deles foi excluído, então ficaram sem cobrança e sem benefício.
+            Escolha um plano novo ou cancele a assinatura.</span>
+          </div>
+          <button class="btn btn-gold" id="btn-orfaos" style="flex-shrink:0;">Resolver</button>
+        </div>
+      </div>`;
+    })()}
+
+    ${(()=>{
       // assinantes que nenhum cliente consegue "achar" — estrela não aparece
       const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
       const casados = new Set();
@@ -4349,6 +4379,51 @@ function renderClube(view){
       }));
     });
   });
+  view.querySelector('#btn-orfaos')?.addEventListener('click', ()=>{
+    const orfaos = assinantesOrfaos();
+    openModal(`
+      <div style="padding:22px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div class="font-display" style="font-size:19px;font-weight:600;">Assinantes sem plano</div>
+          <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+        </div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:16px;">
+          O plano destes assinantes foi excluído. Escolha um plano novo para cada um,
+          ou deixe em branco para cancelar a assinatura.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:11px;max-height:52vh;overflow-y:auto;">
+          ${orfaos.map(m=>`
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+              <div style="font-size:13.5px;font-weight:600;">${esc(m.name)}</div>
+              <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:9px;">
+                status atual: ${esc(m.status)}${m.phone?' · '+esc(m.phone):''}
+              </div>
+              <select data-orfao="${m.id}" style="width:100%;font-size:13px;">
+                <option value="">— cancelar esta assinatura —</option>
+                ${state.subscriptionPlans.map(p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)}</option>`).join('')}
+              </select>
+            </div>`).join('')}
+        </div>
+        <button class="btn btn-gold" id="orf-salvar" style="width:100%;justify-content:center;margin-top:16px;padding:13px;">Salvar</button>
+      </div>
+    `, root=>{
+      root.querySelector('#m-close').addEventListener('click', closeModal);
+      root.querySelector('#orf-salvar').addEventListener('click', ()=>{
+        let movidos=0, cancelados=0;
+        update(s=>{
+          root.querySelectorAll('[data-orfao]').forEach(sel=>{
+            const m = s.subscriptionMembers.find(x=>x.id===sel.dataset.orfao);
+            if(!m) return;
+            if(sel.value){ m.planId = sel.value; movidos++; }
+            else { m.status = 'cancelado'; cancelados++; }
+          });
+        });
+        closeModal();
+        showToast(`${movidos} movido(s) para outro plano, ${cancelados} cancelado(s).`);
+        renderClube(view);
+      });
+    });
+  });
   view.querySelector('#btn-vinculos')?.addEventListener('click', ()=>vinculosModal(view));
   view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
   view.querySelector('#btn-copy-plans-link')?.addEventListener('click', ()=>{
@@ -4362,7 +4437,32 @@ function renderClube(view){
   loadSubscriptionRequests(view);
   loadClientRequests(view);
   view.querySelectorAll('[data-edit-plan]').forEach(b=>b.addEventListener('click', ()=>planModal(state.subscriptionPlans.find(p=>p.id===b.dataset.editPlan))));
-  view.querySelectorAll('[data-del-plan]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionPlans = s.subscriptionPlans.filter(p=>p.id!==b.dataset.delPlan); })));
+  view.querySelectorAll('[data-del-plan]').forEach(b=>b.addEventListener('click', ()=>{
+    const planoId = b.dataset.delPlan;
+    const plano = state.subscriptionPlans.find(p=>p.id===planoId);
+    const usando = state.subscriptionMembers.filter(m=>m.planId===planoId && m.status!=='cancelado');
+    if(usando.length > 0){
+      const nomes = usando.slice(0,5).map(m=>m.name).join(', ') + (usando.length>5?` e mais ${usando.length-5}`:'');
+      if(!confirm(
+        `${usando.length} assinante(s) estão neste plano:\n${nomes}\n\n` +
+        `Ao excluir o plano, essas assinaturas serão CANCELADAS — elas somem das cobranças e dos avisos de atraso.\n\n` +
+        `Continuar?`
+      )) return;
+    }
+    update(s=>{
+      s.subscriptionPlans = s.subscriptionPlans.filter(p=>p.id!==planoId);
+      // não deixa assinante órfão: quem estava nesse plano é cancelado
+      s.subscriptionMembers.forEach(m=>{
+        if(m.planId===planoId){
+          m.status = 'cancelado';
+          m.canceladoPorPlanoRemovido = true;
+        }
+      });
+    });
+    showToast(usando.length>0
+      ? `Plano excluído e ${usando.length} assinatura(s) cancelada(s).`
+      : 'Plano excluído.');
+  }));
   view.querySelectorAll('[data-access-member]').forEach(b=>b.addEventListener('click', ()=>clientAccessModal(state.subscriptionMembers.find(m=>m.id===b.dataset.accessMember))));
   view.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>memberModal(state.subscriptionMembers.find(m=>m.id===b.dataset.editMember))));
   view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionMembers = s.subscriptionMembers.filter(m=>m.id!==b.dataset.delMember); })));
