@@ -970,14 +970,15 @@ function clubMonthlyPot(ym){
 }
 function clubFichaEntries(){
   const monthPrefix = todayISO().slice(0,7);
-  const payingNames = new Set(
-    state.subscriptionMembers.filter(m=>pagouNoMes(m, monthPrefix)).map(m=>m.name.trim().toLowerCase())
-  );
+  // A ficha é do trabalho feito: se o profissional atendeu um assinante,
+  // ela conta mesmo que a mensalidade ainda não tenha entrado. O que
+  // depende do pagamento é o VALOR do pote, não a contagem de fichas.
   return state.appointments
-    .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix) && payingNames.has(a.client.trim().toLowerCase()))
+    .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix) && clubMemberForClient(a.client))
     .map(a=>{
       const service = serviceById(a.serviceId);
-      return {appt:a, service, fichas: service?.clubFichas||0};
+      const membro = clubMemberForClient(a.client);
+      return {appt:a, service, membro, fichas: service?.clubFichas||0};
     })
     .filter(e=>e.fichas>0);
 }
@@ -2900,7 +2901,12 @@ function renderComissoes(view){
             </div>
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;">
               <div style="font-size:11.5px;color:var(--muted-2);">Pote do clube · ${periodLabel(period)}</div>
-              <div class="font-mono" style="font-size:15px;color:${c.potOwed>0?'var(--gold-bright)':'var(--muted)'};">${BRL(c.potOwed)} <span style="font-size:11px;color:var(--muted-2);">${closed?'já fechado':'incluído no fechamento mensal'}</span></div>
+              <div class="font-mono" style="font-size:15px;color:${c.potOwed>0?'var(--gold-bright)':'var(--muted)'};">
+                ${BRL(c.potOwed)}
+                ${(()=>{ const f = (fichasBreakdown.rows.find(r=>r.prof.id===p.id)||{}).fichas || 0;
+                  return f>0 ? `<span style="font-size:12px;color:var(--gold-bright);"> · ${f} ficha${f>1?'s':''}</span>` : ''; })()}
+                <span style="font-size:11px;color:var(--muted-2);">${closed?'já fechado':'incluído no fechamento mensal'}</span>
+              </div>
             </div>
           </div>
         </div>`;
@@ -2911,7 +2917,16 @@ function renderComissoes(view){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
       <div class="font-display" style="font-size:16px;font-weight:600;">Pote do clube — detalhamento de ${periodLabel(period)}</div>
     </div>
-    <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">Todo mês, a soma dos assinantes pagos forma um pote geral. Uma % fica para a barbearia e o restante é dividido entre os profissionais, proporcional à quantidade de fichas que cada um acumulou (cada serviço vale uma quantidade de fichas — configurável em Serviços).</div>
+    <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">As fichas contam assim que o profissional atende um assinante, mesmo antes da mensalidade entrar. O pote é formado pelas mensalidades recebidas no mês: uma % fica para a barbearia e o resto é dividido entre os profissionais, proporcional às fichas de cada um.</div>
+
+    ${fichasBreakdown.potTotal===0 && fichasBreakdown.totalFichas>0 ? `
+      <div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--warn);">
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.6;">
+          <b style="color:var(--warn);">${fichasBreakdown.totalFichas} ficha(s) já acumuladas</b>, mas nenhuma mensalidade entrou este mês ainda —
+          por isso o valor de cada um está zerado. Assim que os assinantes pagarem, o pote é dividido por essas fichas.
+        </div>
+      </div>
+    ` : ''}
 
     <div class="card" style="padding:18px 20px;margin-bottom:16px;">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;">
@@ -4039,7 +4054,13 @@ function memberModal(existing, prefill){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
+        <div style="position:relative;">
+          <label>Nome</label>
+          <input id="f-name" value="${esc(existing?.name)}" autocomplete="off" placeholder="${isEdit?'':'Digite para buscar um cliente já cadastrado'}" style="width:100%;">
+          <div id="mem-sug" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;
+            background:var(--panel);border:1px solid var(--gold);border-radius:11px;max-height:220px;overflow-y:auto;
+            box-shadow:0 14px 34px -10px rgba(0,0,0,.45);"></div>
+        </div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
         <div><label>E-mail (para o portal do cliente)</label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
         <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
@@ -4062,6 +4083,49 @@ function memberModal(existing, prefill){
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+
+    // Busca clientes já cadastrados na barbearia para virar assinante
+    if(!isEdit){
+      const inpNome = root.querySelector('#f-name');
+      const caixa = root.querySelector('#mem-sug');
+      const nrm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+      const fechar = ()=>{ caixa.style.display='none'; };
+      const buscar = ()=>{
+        const termo = nrm(inpNome.value);
+        if(termo.length < 2){ fechar(); return; }
+        // não sugere quem já é assinante
+        const jaSao = new Set((state.subscriptionMembers||[])
+          .filter(m=>m.status!=='cancelado').map(m=>nrm(m.name)));
+        const achados = (state.clients||[])
+          .filter(cl=>nrm(cl.name).includes(termo) && !jaSao.has(nrm(cl.name)))
+          .sort((a,b)=>{
+            const ai = nrm(a.name).startsWith(termo)?0:1, bi = nrm(b.name).startsWith(termo)?0:1;
+            return ai!==bi ? ai-bi : a.name.localeCompare(b.name,'pt-BR');
+          }).slice(0,8);
+        if(!achados.length){ fechar(); return; }
+        caixa.innerHTML = achados.map(cl=>`
+          <div class="mem-item" data-nome="${esc(cl.name)}" data-tel="${esc(cl.phone)}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
+            <div style="font-size:13.5px;font-weight:500;">${esc(cl.name)}</div>
+            <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">${esc(cl.phone)||'sem telefone'}</div>
+          </div>`).join('');
+        caixa.style.display='block';
+        caixa.querySelectorAll('.mem-item').forEach(el=>{
+          el.addEventListener('mousedown', e=>{
+            e.preventDefault();
+            inpNome.value = el.dataset.nome;
+            const tel = root.querySelector('#f-phone');
+            if(!tel.value && el.dataset.tel) tel.value = el.dataset.tel;
+            fechar();
+          });
+          el.addEventListener('mouseenter', ()=>{ el.style.background='var(--panel-2)'; });
+          el.addEventListener('mouseleave', ()=>{ el.style.background='transparent'; });
+        });
+      };
+      inpNome.addEventListener('input', buscar);
+      inpNome.addEventListener('focus', buscar);
+      inpNome.addEventListener('blur', ()=>setTimeout(fechar, 120));
+    }
+
     root.querySelector('#f-submit').addEventListener('click', async ()=>{
       const name = root.querySelector('#f-name').value.trim();
       if(!name){ showToast('Informe o nome.'); return; }
