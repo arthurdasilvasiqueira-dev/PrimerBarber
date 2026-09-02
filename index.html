@@ -6432,12 +6432,24 @@ async function loadPublicSlots(){
   wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);">Carregando horários...</div>`;
   const { data: booked } = await supa.rpc('get_booked_times', { p_shop_id: pubBooking.shopId, p_professional_id: prof.id, p_date: pubBooking.date });
   const bookedSet = new Set(booked || []);
+  // duração do serviço escolhido: o horário só serve se TODOS os intervalos
+  // que ele vai ocupar estiverem livres, e se couber antes do fim do expediente
+  const svcEscolhido = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
+  const durMin = Number(svcEscolhido?.duration) || 30;
   const slots = [];
   let [h,m] = (prof.workStart||'09:00').split(':').map(Number);
   const [endH,endM] = (prof.workEnd||'18:00').split(':').map(Number);
+  const fimExpediente = endH*60 + endM;
   while(h < endH || (h===endH && m < endM)){
+    const inicio = h*60 + m;
     const t = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
-    if(!bookedSet.has(t)) slots.push(t);
+    let cabe = (inicio + durMin) <= fimExpediente;
+    // confere cada intervalo de 15 min que o serviço ocuparia
+    for(let x = inicio; cabe && x < inicio + durMin; x += 15){
+      const marca = String(Math.floor(x/60)).padStart(2,'0')+':'+String(x%60).padStart(2,'0');
+      if(bookedSet.has(marca)) cabe = false;
+    }
+    if(cabe) slots.push(t);
     m += 30; if(m>=60){m=0;h++;}
   }
   wrap.innerHTML = `
