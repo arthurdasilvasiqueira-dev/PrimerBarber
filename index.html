@@ -3836,7 +3836,7 @@ function profModal(existing){
       const servesClients = root.querySelector('#f-serves').checked;
       const data = {name, phone, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
-        if(isEdit){ Object.assign(existing, data); }
+        if(isEdit){ const alvo = s.professionals.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
         else{ s.professionals.push({id:uid(), ...data}); }
       });
       closeModal();
@@ -3930,7 +3930,7 @@ function svcModal(existing){
       const depositValue = parseFloat(root.querySelector('#f-dep-value').value)||0;
       const clubFichas = parseInt(root.querySelector('#f-fichas').value)||0;
       update(s=>{
-        if(isEdit){ Object.assign(existing, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas}); }
+        if(isEdit){ const alvo = s.services.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas}); }
         else{ s.services.push({id:uid(), name, price, duration, requireDeposit, depositType, depositValue, clubFichas}); }
       });
       closeModal();
@@ -4614,7 +4614,7 @@ function planModal(existing){
       if(validDays.length===0){ showToast('Marque pelo menos um dia de validade do plano.'); return; }
       update(s=>{
         const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden, validDays};
-        if(isEdit){ Object.assign(existing, dados); }
+        if(isEdit){ const alvo = s.subscriptionPlans.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, dados); }
         else{ s.subscriptionPlans.push({id:uid(), ...dados}); }
       });
       closeModal();
@@ -4776,7 +4776,7 @@ function memberModal(existing, prefill){
         return;
       }
       update(s=>{
-        if(isEdit){ Object.assign(existing, data); }
+        if(isEdit){ const alvo = s.subscriptionMembers.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
         else{ s.subscriptionMembers.push({id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data}); }
         // garante que o assinante também exista na lista de Clientes
         const nn = name.trim().toLowerCase();
@@ -5534,7 +5534,7 @@ function clientModal(existing){
       if(m) birthday = m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
       const data = {name, phone: root.querySelector('#f-phone').value.trim(), birthday, notes: root.querySelector('#f-notes').value.trim(), referredBy: root.querySelector('#f-referred').value};
       update(s=>{
-        if(isEdit){ Object.assign(existing, data); }
+        if(isEdit){ const alvo = s.clients.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
         else{ s.clients.push({id:uid(), points:0, referralBonusGiven:false, ...data}); }
       });
       closeModal();
@@ -5685,7 +5685,7 @@ function productModal(existing){
         cost: parseFloat(root.querySelector('#f-cost').value)||0, price: parseFloat(root.querySelector('#f-price').value)||0,
       };
       update(s=>{
-        if(isEdit){ Object.assign(existing, data); }
+        if(isEdit){ const alvo = s.products.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
         else{ s.products.push({id:uid(), ...data}); }
       });
       closeModal();
