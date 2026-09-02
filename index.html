@@ -816,8 +816,15 @@ function commissionOwed(profId){
   let serviceEarned = 0;
   concludedAppts.forEach(ap=>{
     const s = serviceById(ap.serviceId); if(!s) return;
+    // Comissão sobre o que REALMENTE foi cobrado. Atendimento coberto pelo
+    // clube não gera comissão de serviço — o profissional é pago por ele
+    // através das fichas do pote. Sem isso, ele receberia duas vezes.
+    const valorCobrado = (ap.valorCobrado != null)
+      ? Number(ap.valorCobrado)                 // gravado no fechamento
+      : precoParaCobrar(ap, s).basePrice;        // atendimentos antigos
+    if(valorCobrado <= 0) return;
     const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
-    serviceEarned += s.price * (pct/100);
+    serviceEarned += valorCobrado * (pct/100);
   });
   const potEarned = potCommissionForProf(profId);
   const serviceOwed = Math.max(0, serviceEarned - paidService);
@@ -1946,6 +1953,10 @@ function concludeAppt(id){
       const ap = s.appointments.find(a=>a.id===id);
       ap.status='concluido';
       ap.paymentMethod = method;
+      // guarda quanto foi cobrado de fato — é a base da comissão.
+      // Sem isso, mudar o plano depois alteraria comissões já fechadas.
+      ap.valorCobrado = netAmount;
+      ap.cobertoPeloClube = planoAtivo;
       const sess = s.cashSessions.find(c=>c.status==='aberto');
       sess.entries.push({id:uid(), type:'entrada', method, apptId:id, desc:`${service.name} — ${ap.client}${priceNote}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
       const client = s.clients.find(c=>c.name.trim().toLowerCase()===ap.client.trim().toLowerCase());
@@ -2917,7 +2928,7 @@ function renderComissoes(view){
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
       <div class="font-display" style="font-size:16px;font-weight:600;">Pote do clube — detalhamento de ${periodLabel(period)}</div>
     </div>
-    <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">As fichas contam assim que o profissional atende um assinante, mesmo antes da mensalidade entrar. O pote é formado pelas mensalidades recebidas no mês: uma % fica para a barbearia e o resto é dividido entre os profissionais, proporcional às fichas de cada um.</div>
+    <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">Atendimento de assinante coberto pelo plano <b>não gera comissão de serviço</b> — o pagamento vem por aqui, pelas fichas. As fichas contam assim que o profissional atende um assinante, mesmo antes da mensalidade entrar. O pote é formado pelas mensalidades recebidas no mês: uma % fica para a barbearia e o resto é dividido entre os profissionais, proporcional às fichas de cada um.</div>
 
     ${fichasBreakdown.potTotal===0 && fichasBreakdown.totalFichas>0 ? `
       <div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--warn);">
