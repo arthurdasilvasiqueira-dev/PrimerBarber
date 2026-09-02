@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Primer Barber — Gestão para barbearias</title>
+<meta name="description" content="Agendamento online editável, controle financeiro completo e Clube de Assinatura com receita recorrente para sua barbearia. 14 dias grátis, sem cartão.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0a;
+    --panel:#141414;
+    --panel-2:#1c1c1c;
+    --border:#333333;
+    --gold:#c9a24b;
+    --gold-bright:#e8c573;
+    --ink:#ffffff;
+    --muted:#b3b3b3;
+    --muted-2:#7a7a7a;
+    --ok:#7fa87f;
+    --ok-bg:#1c231c;
+    --bad:#c17b6a;
+    --bad-bg:#241a17;
+    --warn:#d0a94f;
+    --warn-bg:#26210f;
+    --radius:14px;
+    --container:1120px;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3,h4{font-family:'Fraunces',serif;font-weight:600;margin:0;letter-spacing:-.01em;}
+  p{margin:0;}
+  a{color:inherit;}
+  img{max-width:100%;display:block;}
+  .font-mono{font-family:'IBM Plex Mono',monospace;}
+  ::selection{background:var(--gold);color:#0a0a0a;}
+  a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--gold-bright);outline-offset:3px;border-radius:4px;}
+
+  .wrap{max-width:var(--container);margin:0 auto;padding:0 24px;}
+  section{padding:88px 0;}
+  @media (max-width:720px){ section{padding:58px 0;} }
+
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-bright);font-weight:600;margin-bottom:14px;}
+  .section-head{max-width:660px;margin-bottom:48px;}
+  .section-head.center{margin-left:auto;margin-right:auto;text-align:center;}
+  .section-head h2{font-size:clamp(1.7rem,3.2vw,2.4rem);line-height:1.2;margin-bottom:14px;}
+  .section-head p{color:var(--muted);font-size:16px;}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:9px;padding:13px 24px;font-weight:600;font-size:15px;border:1px solid transparent;text-decoration:none;transition:all .15s;cursor:pointer;}
+  .btn-gold{background:var(--gold);color:#0a0a0a;}
+  .btn-gold:hover{background:var(--gold-bright);}
+  .btn-ghost{background:transparent;border-color:var(--border);color:var(--ink);}
+  .btn-ghost:hover{border-color:var(--gold);color:var(--gold-bright);}
+  .btn-sm{padding:9px 16px;font-size:13.5px;}
+
+  /* Logomark — mesma linguagem da listra de barbeiro, em miniatura */
+  .logo-mark{width:26px;height:26px;object-fit:contain;flex-shrink:0;display:block;}
+  .logo{display:inline-flex;align-items:center;gap:9px;font-family:'Fraunces',serif;font-weight:700;font-size:19px;color:var(--gold-bright);letter-spacing:-.01em;text-decoration:none;}
+
+  .stripe{
+    height:6px;width:100%;
+    background:repeating-linear-gradient(52deg,
+      var(--gold) 0px, var(--gold) 9px,
+      var(--gold-bright) 9px, var(--gold-bright) 18px,
+      var(--bg) 18px, var(--bg) 22px,
+      var(--gold-bright) 22px, var(--gold-bright) 31px);
+    background-size:44px 100%;
+  }
+
+  header{position:sticky;top:0;z-index:20;background:rgba(10,10,10,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--border);}
+  .nav{display:flex;align-items:center;justify-content:space-between;padding:16px 0;}
+  .nav-links{display:flex;gap:26px;font-size:14.5px;color:var(--muted);}
+  .nav-links a{text-decoration:none;transition:color .15s;}
+  .nav-links a:hover{color:var(--ink);}
+  @media (max-width:780px){ .nav-links{display:none;} }
+
+  /* Hero */
+  .hero{padding:72px 0 96px;position:relative;overflow:hidden;}
+  .hero::before{
+    content:'';position:absolute;inset:0;z-index:-1;
+    background:radial-gradient(900px 480px at 85% -10%, rgba(201,162,75,.14), transparent 60%);
+  }
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
+  @media (max-width:900px){ .hero-grid{grid-template-columns:1fr;} }
+  .hero h1{font-size:clamp(2.1rem,4.6vw,3.25rem);line-height:1.12;margin-bottom:20px;}
+  .hero-sub{font-size:17.5px;color:var(--muted);max-width:480px;margin-bottom:30px;}
+  .hero-ctas{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px;}
+  .hero-micro{font-size:13px;color:var(--muted-2);font-family:'IBM Plex Mono',monospace;margin-bottom:18px;}
+  .hero-tags{display:flex;flex-wrap:wrap;gap:8px;}
+
+  .hero-visual{position:relative;min-height:340px;}
+  @media (prefers-reduced-motion: no-preference){
+    .mock-card{animation:rise .6s ease-out backwards;}
+    .mock-card.d2{animation-delay:.12s;}
+    @keyframes rise{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+    .reveal{opacity:0;transform:translateY(16px);transition:opacity .55s ease, transform .55s ease;}
+    .reveal.in-view{opacity:1;transform:translateY(0);}
+  }
+  .mock-card{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 60px -20px rgba(0,0,0,.55);}
+  .mock-notif{padding:20px 22px;position:absolute;top:0;right:0;left:20px;}
+  .mock-notif-top{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--gold-bright);margin-bottom:12px;}
+  .mock-bell{width:8px;height:8px;border-radius:50%;background:var(--gold-bright);box-shadow:0 0 0 4px rgba(227,192,120,.18);}
+  .mock-notif-body{font-size:15.5px;line-height:1.5;}
+  .mock-notif-body b{color:var(--gold-bright);}
+  .mock-notif-meta{margin-top:12px;font-size:13px;color:var(--muted);}
+  .mock-caixa{padding:18px 20px;position:absolute;bottom:0;left:0;right:60px;background:var(--panel-2);}
+  .mock-caixa-title{font-size:12px;color:var(--muted-2);margin-bottom:10px;font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;text-transform:uppercase;}
+  .mock-caixa-row{display:flex;justify-content:space-between;font-size:14px;padding:6px 0;border-top:1px dashed var(--border);}
+  .mock-caixa-row:first-of-type{border-top:none;}
+  .mock-caixa-row span:last-child{font-family:'IBM Plex Mono',monospace;color:var(--ink);}
+
+  /* Componentes nativos do sistema real */
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;}
+  .pill{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;letter-spacing:.02em;display:inline-block;}
+  .pill-ok{background:var(--ok-bg);color:var(--ok);}
+  .pill-bad{background:var(--bad-bg);color:var(--bad);}
+  .pill-warn{background:var(--warn-bg);color:var(--warn);}
+  .pill-muted{background:var(--panel-2);color:var(--muted);}
+  .pill-gold{background:var(--gold);color:#0a0a0a;}
+
+  /* Recriações de tela em moldura de navegador */
+  .feature-row{display:grid;grid-template-columns:.95fr 1.05fr;gap:44px;align-items:center;margin-bottom:0;}
+  .feature-row.reverse .feature-visual{order:-1;}
+  @media (max-width:900px){
+    .feature-row{grid-template-columns:1fr;gap:26px;}
+    .feature-row.reverse .feature-visual{order:0;}
+  }
+  .browser-frame{border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 30px 60px -22px rgba(0,0,0,.55);}
+  .browser-bar{display:flex;align-items:center;gap:7px;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border);}
+  .browser-dot{width:8px;height:8px;border-radius:50%;background:var(--border);}
+  .browser-url{flex:1;margin-left:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted-2);}
+  .browser-body{background:var(--bg);padding:18px;font-size:13px;}
+  .mock-head{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
+  .mock-head h4{font-size:18px;}
+  .mock-head span{color:var(--muted);font-size:12px;}
+  .mock-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:9px;margin-bottom:14px;}
+  .mock-stat{padding:11px 12px;}
+  .mock-stat .l{font-size:10.5px;color:var(--muted);margin-bottom:5px;}
+  .mock-stat .v{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;color:var(--ink);}
+  .mock-stat .s{font-size:10.5px;margin-top:4px;}
+  .mock-row{display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:6px;}
+  .mock-row .mono{font-family:'IBM Plex Mono',monospace;}
+  .mock-caption{font-size:12.5px;color:var(--muted-2);margin-top:12px;text-align:center;}
+  .mock-days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:14px;}
+  .mock-day{text-align:center;padding:7px 2px;border-radius:8px;border:1px solid var(--border);font-size:9.5px;color:var(--muted);}
+  .mock-day.sel{background:var(--gold);color:#0a0a0a;border-color:var(--gold);font-weight:600;}
+  .mock-day b{display:block;font-size:13px;margin:2px 0;}
+
+  /* Ticket (cartão estilo recibo) */
+  .ticket{position:relative;background:var(--panel-2);border:1px solid var(--border);border-radius:14px 14px 0 0;padding:28px 26px 20px;filter:drop-shadow(0 16px 22px rgba(0,0,0,.32));}
+  .ticket::after{
+    content:'';display:block;position:absolute;left:0;right:0;bottom:-11px;height:12px;
+    background-image:linear-gradient(135deg, var(--panel-2) 50%, transparent 50%),linear-gradient(-135deg, var(--panel-2) 50%, transparent 50%);
+    background-size:16px 16px;background-position:left bottom;background-repeat:repeat-x;
+  }
+  .ticket-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px dashed var(--border);padding-bottom:14px;margin-bottom:16px;}
+  .ticket-head h3{font-size:19px;color:var(--gold-bright);}
+  .ticket-head span{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted-2);}
+  .ticket ul{list-style:none;margin:0;padding:0 0 14px;}
+  .ticket li{font-size:14.5px;color:var(--ink);padding:7px 0 7px 20px;position:relative;border-top:1px dotted var(--border);}
+  .ticket li:first-child{border-top:none;}
+  .ticket li::before{content:'—';position:absolute;left:0;color:var(--gold);}
+
+  /* Overview rápido */
+  .overview-grid,.dores-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+  @media (max-width:920px){ .overview-grid,.dores-grid{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:560px){ .overview-grid,.dores-grid{grid-template-columns:1fr;} }
+  .overview-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:24px 22px;transition:border-color .15s;}
+  .overview-card:hover{border-color:var(--gold);}
+  .overview-card h3{font-size:16.5px;margin-bottom:8px;}
+  .overview-card p{font-size:13.5px;color:var(--muted);margin-bottom:14px;}
+  .overview-card a{font-size:12.5px;color:var(--gold-bright);text-decoration:none;font-weight:600;}
+  .overview-card a:hover{text-decoration:underline;}
+
+  /* Telefone (mock de página pública) */
+  .agendamento-visual{position:relative;max-width:320px;margin:0 auto;}
+  .phone-frame{border-radius:34px;border:9px solid #000;background:var(--bg);box-shadow:0 40px 90px -28px rgba(0,0,0,.65);overflow:hidden;position:relative;}
+  .phone-notch{width:64px;height:16px;background:#000;border-radius:0 0 10px 10px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;}
+  .phone-screen{padding:24px 14px 18px;}
+  .settings-peek{position:absolute;top:-16px;right:-38px;width:186px;transform:rotate(4deg);z-index:5;padding:14px 16px;}
+  @media (max-width:560px){ .settings-peek{display:none;} }
+  .banner-block{width:100%;height:84px;border-radius:10px 10px 0 0;overflow:hidden;position:relative;background:var(--panel-2);}
+  .banner-block svg{width:100%;height:100%;display:block;}
+  .avatar-circle{width:54px;height:54px;border-radius:50%;background:var(--panel-2);border:2px solid var(--bg);display:flex;align-items:center;justify-content:center;margin-top:-30px;box-shadow:0 3px 10px rgba(0,0,0,.5);flex-shrink:0;overflow:hidden;}
+  .avatar-circle svg{width:100%;height:100%;display:block;}
+  .booking-option{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--border);border-radius:9px;font-size:12px;margin-bottom:6px;}
+  .booking-option.sel{background:var(--panel-2);border-color:var(--gold);}
+  .radio-dot{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--muted-2);flex-shrink:0;position:relative;}
+  .radio-dot.on{border-color:var(--gold);}
+  .radio-dot.on::after{content:'';position:absolute;inset:2.5px;border-radius:50%;background:var(--gold);}
+
+  /* Clube de Assinatura — seção principal */
+  .clube-section{
+    position:relative;
+    background:radial-gradient(1100px 560px at 15% 0%, rgba(201,162,75,.14), transparent 62%), var(--panel);
+    border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+  }
+  .clube-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:50px;align-items:center;}
+  @media (max-width:900px){ .clube-grid{grid-template-columns:1fr;gap:30px;} }
+  .plan-edit-card{border:1px dashed var(--gold);background:var(--panel-2);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+  .plan-edit-row{margin-bottom:10px;}
+  .plan-edit-row label{display:block;font-size:10px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
+  .plan-edit-value{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font-size:12.5px;color:var(--ink);}
+
+  /* Diferenciais */
+  .dif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
+  @media (max-width:820px){ .dif-grid{grid-template-columns:1fr;} }
+  .dif-card{border:1px solid var(--border);border-radius:var(--radius);padding:26px 24px;background:var(--panel);}
+  .dif-card h3{font-size:17px;color:var(--gold-bright);margin-bottom:10px;}
+  .dif-card p{font-size:14.5px;color:var(--muted);}
+
+  /* Como funciona */
+  .passos{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;counter-reset:passo;}
+  @media (max-width:820px){ .passos{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:520px){ .passos{grid-template-columns:1fr;} }
+  .passo{position:relative;padding-top:8px;}
+  .passo::before{
+    counter-increment:passo;content:counter(passo);
+    font-family:'Fraunces',serif;font-weight:600;font-size:34px;color:var(--gold);
+    display:block;margin-bottom:10px;
+  }
+  .passo h3{font-size:16px;margin-bottom:6px;}
+  .passo p{font-size:14px;color:var(--muted);}
+
+  /* Planos */
+  .planos-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;max-width:820px;margin:0 auto;}
+  @media (max-width:700px){ .planos-grid{grid-template-columns:1fr;} }
+  .plano{position:relative;background:var(--panel-2);border:1px solid var(--border);border-radius:14px 14px 0 0;padding:30px 28px 22px;filter:drop-shadow(0 16px 22px rgba(0,0,0,.32));}
+  .plano::after{
+    content:'';display:block;position:absolute;left:0;right:0;bottom:-11px;height:12px;
+    background-image:linear-gradient(135deg, var(--panel-2) 50%, transparent 50%),linear-gradient(-135deg, var(--panel-2) 50%, transparent 50%);
+    background-size:16px 16px;background-position:left bottom;background-repeat:repeat-x;
+  }
+  .plano.pro{border-color:var(--gold);}
+  .plano-tag{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2);margin-bottom:6px;}
+  .plano h3{font-size:22px;margin-bottom:4px;}
+  .plano-preco{font-family:'IBM Plex Mono',monospace;font-size:30px;color:var(--gold-bright);margin:14px 0 18px;}
+  .plano-preco span{font-size:14px;color:var(--muted);font-family:'Inter',sans-serif;}
+  .plano ul{list-style:none;margin:0 0 22px;padding:0;border-top:1px dashed var(--border);}
+  .plano li{font-size:14.5px;padding:9px 0;border-bottom:1px dashed var(--border);display:flex;gap:9px;}
+  .plano li::before{content:'✓';color:var(--gold);font-weight:700;}
+  .plano-footnote{text-align:center;color:var(--muted-2);font-size:13px;margin-top:22px;}
+
+  /* FAQ */
+  .faq-list{max-width:760px;}
+  details{border-bottom:1px solid var(--border);padding:18px 0;}
+  summary{cursor:pointer;font-size:16px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px;}
+  summary::-webkit-details-marker{display:none;}
+  summary::after{content:'+';font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:20px;flex-shrink:0;}
+  details[open] summary::after{content:'–';}
+  details p{margin-top:12px;color:var(--muted);font-size:14.5px;max-width:640px;}
+
+  /* CTA final */
+  .cta-final{text-align:center;padding:76px 0;}
+  .cta-final h2{font-size:clamp(1.7rem,3.4vw,2.3rem);margin-bottom:14px;max-width:600px;margin-left:auto;margin-right:auto;}
+  .cta-final p{color:var(--muted);margin-bottom:30px;font-size:16px;}
+
+  /* Footer */
+  footer{border-top:1px solid var(--border);padding:52px 0 96px;}
+  .footer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:32px;margin-bottom:36px;}
+  @media (max-width:700px){ .footer-grid{grid-template-columns:1fr;} }
+  .footer-grid h4{font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted-2);margin-bottom:14px;font-family:'IBM Plex Mono',monospace;}
+  .footer-grid a{display:block;font-size:14px;color:var(--muted);text-decoration:none;margin-bottom:9px;}
+  .footer-grid a:hover{color:var(--gold-bright);}
+  .footer-brand p{color:var(--muted);font-size:14px;max-width:280px;margin-top:10px;}
+  .footer-bottom{border-top:1px solid var(--border);padding-top:22px;font-size:13px;color:var(--muted-2);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;}
+
+  /* CTA fixo ao rolar a página */
+  .sticky-cta{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(10,10,10,.96);backdrop-filter:blur(8px);border-top:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:18px;transform:translateY(120%);transition:transform .3s ease;}
+  .sticky-cta.show{transform:translateY(0);}
+  .sticky-cta span{font-size:13.5px;color:var(--muted);}
+  @media (max-width:560px){ .sticky-cta span{display:none;} }
+  .sticky-cta-close{background:none;border:none;color:var(--muted-2);font-size:18px;cursor:pointer;padding:0 4px;line-height:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a href="#" class="logo"><img class="logo-mark" src="data:image/png;base64,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" alt="Primer Barber">Primer Barber</a>
+    <nav class="nav-links">
+      <a href="#agendamento">Agendamento</a>
+      <a href="#financeiro">Financeiro</a>
+      <a href="#clube">Clube de Assinatura</a>
+      <a href="#planos">Planos</a>
+    </nav>
+    <a href="https://primerbarber.com.br" class="btn btn-gold btn-sm">Testar grátis</a>
+  </div>
+</header>
+<div class="stripe"></div>
+
+<!-- ===== HERO ===== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Sistema de gestão para barbearias</p>
+      <h1>Agenda cheia, caixa batendo e comissão calculada sozinha.</h1>
+      <p class="hero-sub">O Primer Barber organiza o agendamento online, o controle financeiro, a comissão da equipe e o Clube de Assinatura da sua barbearia — tudo pelo celular, sem precisar instalar nada.</p>
+      <div class="hero-ctas">
+        <a href="https://primerbarber.com.br" class="btn btn-gold">Testar grátis por 14 dias</a>
+        <a href="#clube" class="btn btn-ghost">Ver o Clube de Assinatura</a>
+      </div>
+      <p class="hero-micro">Sem cartão de crédito · Cancele quando quiser</p>
+      <div class="hero-tags">
+        <span class="pill pill-muted">Agendamento online</span>
+        <span class="pill pill-muted">Controle financeiro</span>
+        <span class="pill pill-muted">Clube de Assinatura</span>
+        <span class="pill pill-muted">Comissão automática</span>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="mock-card mock-notif">
+        <div class="mock-notif-top"><span class="mock-bell"></span> Novo agendamento</div>
+        <div class="mock-notif-body"><b>Lucas Andrade</b> marcou corte + barba com <b>Kaique</b></div>
+        <div class="mock-notif-meta">Sábado, 15h · via link de agendamento</div>
+      </div>
+      <div class="mock-card mock-caixa d2">
+        <div class="mock-caixa-title">Caixa de hoje</div>
+        <div class="mock-caixa-row"><span>Dinheiro</span><span>R$ 180,00</span></div>
+        <div class="mock-caixa-row"><span>PIX</span><span>R$ 340,00</span></div>
+        <div class="mock-caixa-row"><span>Cartão</span><span>R$ 260,00</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== DORES ===== -->
+<section id="dores">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Se isso te soa familiar</p>
+      <h2>Você reconhece essas cenas na sua barbearia?</h2>
+    </div>
+    <div class="dores-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;">
+      <div class="overview-card"><h3>O cliente sumiu</h3><p style="margin-bottom:0;">Demorou pra responder o WhatsApp e ele já marcou em outro lugar.</p></div>
+      <div class="overview-card"><h3>Ninguém sabe quanto entrou</h3><p style="margin-bottom:0;">No fim do dia, dinheiro, PIX e cartão viram uma bagunça só de contar.</p></div>
+      <div class="overview-card"><h3>Comissão vira discussão</h3><p style="margin-bottom:0;">Cálculo manual de comissão sempre dá dor de cabeça com a equipe.</p></div>
+      <div class="overview-card"><h3>Mês começa do zero</h3><p style="margin-bottom:0;">Sem nenhuma receita garantida — tudo depende de quem passar na porta.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="stripe"></div>
+<div style="padding:56px 0;text-align:center;">
+  <p style="font-family:'Fraunces',serif;font-size:clamp(1.3rem,2.6vw,1.7rem);color:var(--gold-bright);">O Primer Barber resolve isso do jeito certo.</p>
+</div>
+
+<!-- ===== OVERVIEW RÁPIDO ===== -->
+<section id="funcionalidades">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">O que o sistema faz de verdade</p>
+      <h2>Tudo que a sua barbearia precisa, num só lugar</h2>
+      <p>Quatro frentes que resolvem o dia a dia. Veja cada uma em detalhe abaixo.</p>
+    </div>
+    <div class="overview-grid">
+      <div class="overview-card">
+        <h3>Agendamento Online</h3>
+        <p>Link próprio e personalizável para o cliente marcar sozinho, 24h por dia.</p>
+        <a href="#agendamento">Ver agendamento online ↓</a>
+      </div>
+      <div class="overview-card">
+        <h3>Financeiro</h3>
+        <p>Caixa organizado por forma de pagamento, com comissão automática.</p>
+        <a href="#financeiro">Ver controle financeiro ↓</a>
+      </div>
+      <div class="overview-card">
+        <h3>Clube de Assinatura</h3>
+        <p>Transforme clientes avulsos em receita recorrente todo mês.</p>
+        <a href="#clube">Ver Clube de Assinatura ↓</a>
+      </div>
+      <div class="overview-card">
+        <h3>Equipe</h3>
+        <p>Acesso por PIN com 3 níveis de permissão, direto do celular.</p>
+        <a href="#equipe">Ver acesso da equipe ↓</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== AGENDAMENTO ONLINE ===== -->
+<section id="agendamento" style="background:var(--panel);">
+  <div class="wrap">
+    <div class="feature-row">
+      <div>
+        <p class="eyebrow">Agendamento online</p>
+        <h2 style="font-size:clamp(1.6rem,3vw,2.1rem);margin-bottom:16px;">Seus clientes marcam sozinhos — sem grupo de WhatsApp lotado</h2>
+        <p style="color:var(--muted);font-size:15.5px;margin-bottom:22px;">Você recebe um link próprio, com a identidade da sua barbearia. O cliente escolhe serviço, profissional, dia e horário — sem precisar criar login.</p>
+        <div class="ticket" style="margin:0;">
+          <div class="ticket-head"><h3 style="font-size:16px;">Totalmente editável</h3><span>PRIMER BARBER</span></div>
+          <ul>
+            <li>Logo, banner, bio, endereço e redes sociais — tudo personalizável</li>
+            <li>Identificador do link (slug) definido por você</li>
+            <li>Liga e desliga a página de agendamento quando quiser</li>
+            <li>Você decide se permite cancelamento e remarcação online</li>
+            <li>Solicitações ficam pendentes até você confirmar</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="feature-visual">
+        <div class="agendamento-visual reveal">
+          <div class="phone-frame">
+            <div class="phone-notch"></div>
+            <div class="phone-screen">
+              <div class="card" style="padding:0;overflow:hidden;">
+                <div class="banner-block">
+                  <svg viewBox="0 0 600 140" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Banner ilustrativo da barbearia">
+                    <defs>
+                      <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#1c1c1c"/>
+                        <stop offset="100%" stop-color="#0a0a0a"/>
+                      </linearGradient>
+                      <pattern id="diagStripes" width="14" height="14" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+                        <rect width="14" height="14" fill="none"/>
+                        <line x1="0" y1="0" x2="0" y2="14" stroke="#c9a24b" stroke-width="5" stroke-opacity="0.06"/>
+                      </pattern>
+                    </defs>
+                    <rect width="600" height="140" fill="url(#bgGrad)"/>
+                    <rect width="600" height="140" fill="url(#diagStripes)"/>
+                    <text x="26" y="88" font-family="Fraunces, serif" font-style="italic" font-weight="600" font-size="40" fill="#e8c573" fill-opacity="0.4">Barbearia Vintage</text>
+                    <text x="28" y="108" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="3" fill="#c9a24b" fill-opacity="0.55">CORTES CLÁSSICOS · DESDE SEMPRE</text>
+                    <g transform="translate(506,20)" opacity="0.9">
+                      <rect x="0" y="0" width="26" height="100" rx="13" fill="#f3eee4"/>
+                      <clipPath id="poleClip"><rect x="0" y="0" width="26" height="100" rx="13"/></clipPath>
+                      <g clip-path="url(#poleClip)">
+                        <g fill="#c9a24b">
+                          <rect x="-30" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
+                          <rect x="-10" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
+                          <rect x="10" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
+                          <rect x="30" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
+                          <rect x="50" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
+                        </g>
+                      </g>
+                      <rect x="-3" y="-6" width="32" height="12" rx="4" fill="#0a0a0a"/>
+                      <rect x="-3" y="94" width="32" height="12" rx="4" fill="#0a0a0a"/>
+                    </g>
+                    <g stroke="#e8c573" stroke-opacity="0.5" stroke-width="1.6" fill="none">
+                      <g transform="translate(430,30)"><circle cx="4" cy="4" r="4"/><circle cx="4" cy="18" r="4"/><line x1="7" y1="6" x2="24" y2="20"/><line x1="7" y1="16" x2="24" y2="2"/></g>
+                      <g transform="translate(370,80) rotate(-18)"><circle cx="4" cy="4" r="3.2"/><circle cx="4" cy="14.5" r="3.2"/><line x1="6.5" y1="5.5" x2="19" y2="16.5"/><line x1="6.5" y1="13" x2="19" y2="2"/></g>
+                    </g>
+                  </svg>
+                </div>
+                <div style="padding:0 14px 14px;">
+                  <div class="avatar-circle">
+                    <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Logo ilustrativa da barbearia">
+                      <defs>
+                        <path id="arcTop" d="M 16,66 A 50,50 0 1,1 104,66" fill="none"/>
+                      </defs>
+                      <circle cx="60" cy="60" r="57" fill="#111"/>
+                      <circle cx="60" cy="60" r="53" fill="none" stroke="#c9a24b" stroke-width="2.5"/>
+                      <circle cx="60" cy="60" r="46" fill="none" stroke="#c9a24b" stroke-width="1"/>
+                      <text font-family="IBM Plex Mono, monospace" font-size="8.5" letter-spacing="2" fill="#e8c573">
+                        <textPath href="#arcTop" startOffset="50%" text-anchor="middle">BARBEARIA VINTAGE</textPath>
+                      </text>
+                      <g transform="translate(60,66)" fill="none" stroke="#e8c573" stroke-width="2.4" stroke-linecap="round">
+                        <path d="M -20,-6 C -14,-16 -6,-16 0,-8 C 6,-16 14,-16 20,-6 C 12,-4 6,2 0,2 C -6,2 -12,-4 -20,-6 Z"/>
+                      </g>
+                      <g transform="translate(60,86)" stroke="#e8c573" stroke-width="2" fill="none">
+                        <circle cx="-14" cy="0" r="5"/>
+                        <circle cx="-14" cy="12" r="5"/>
+                        <line x1="-10" y1="3" x2="16" y2="18"/>
+                        <line x1="-10" y1="9" x2="16" y2="-6"/>
+                      </g>
+                    </svg>
+                  </div>
+                  <div style="font-weight:600;font-size:14px;margin-top:6px;">Barbearia Vintage</div>
+                  <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Cortes clássicos e modernos no centro da cidade.</div>
+                  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+                    <span class="pill pill-muted" style="font-size:9.5px;">WhatsApp</span>
+                    <span class="pill pill-muted" style="font-size:9.5px;">Instagram</span>
+                  </div>
+                </div>
+              </div>
+              <div style="font-size:11px;font-weight:600;margin:14px 0 8px;">1. Escolha o serviço</div>
+              <div class="booking-option sel"><span class="radio-dot on"></span><div style="flex:1;">Corte + Barba <span style="color:var(--muted-2);">· R$ 65 · 50min</span></div></div>
+              <div class="booking-option"><span class="radio-dot"></span><div style="flex:1;">Corte <span style="color:var(--muted-2);">· R$ 40 · 30min</span></div></div>
+              <div style="font-size:11px;font-weight:600;margin:12px 0 8px;">2. Escolha o profissional</div>
+              <div style="display:flex;gap:6px;margin-bottom:12px;">
+                <span class="pill pill-gold" style="font-size:10px;">Kaique</span>
+                <span class="pill pill-muted" style="font-size:10px;">Diego</span>
+              </div>
+              <div class="btn btn-gold" style="width:100%;justify-content:center;cursor:default;font-size:12.5px;padding:10px;">Confirmar horário</div>
+            </div>
+          </div>
+          <div class="mock-card settings-peek">
+            <div style="font-size:9.5px;color:var(--muted-2);margin-bottom:6px;">Seu link</div>
+            <div class="font-mono" style="font-size:10px;color:var(--gold-bright);margin-bottom:8px;word-break:break-all;">.../barbearia-vintage</div>
+            <div style="display:flex;flex-direction:column;gap:5px;">
+              <span class="pill pill-ok" style="font-size:9px;width:fit-content;">Página ativa</span>
+              <span class="pill pill-muted" style="font-size:9px;width:fit-content;">Permite remarcar</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CONTROLE FINANCEIRO ===== -->
+<section id="financeiro">
+  <div class="wrap">
+    <div class="feature-row reverse">
+      <div>
+        <p class="eyebrow">Controle financeiro</p>
+        <h2 style="font-size:clamp(1.6rem,3vw,2.1rem);margin-bottom:16px;">Saiba exatamente quanto entrou — sem depender de caderno</h2>
+        <p style="color:var(--muted);font-size:15.5px;margin-bottom:22px;">Abertura e fechamento de caixa, separado por forma de pagamento, com a comissão de cada profissional calculada sozinha.</p>
+        <div class="ticket" style="margin:0;">
+          <div class="ticket-head"><h3 style="font-size:16px;">Financeiro</h3><span>PRIMER BARBER</span></div>
+          <ul>
+            <li>Caixa com abertura e fechamento, entradas e saídas</li>
+            <li>Separação por forma de pagamento (dinheiro, PIX, débito, crédito)</li>
+            <li>Comissão automática por profissional e por serviço</li>
+            <li>Solicitação de saque — o profissional pede, o dono aprova</li>
+            <li>Relatórios de faturamento e serviços mais vendidos</li>
+          </ul>
+        </div>
+      </div>
+      <div class="feature-visual">
+        <div class="browser-frame reveal">
+          <div class="browser-bar"><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-url">app.primerbarber.com.br/caixa</span></div>
+          <div class="browser-body">
+            <div class="mock-head"><h4>Caixa</h4><span>Fluxo de caixa do dia</span></div>
+            <div class="mock-stats">
+              <div class="card mock-stat"><div class="l">Abertura</div><div class="v">R$ 100</div><div class="s" style="color:var(--ok);">às 09:02</div></div>
+              <div class="card mock-stat"><div class="l">Faturamento do dia</div><div class="v">R$ 780</div><div class="s" style="color:var(--ok);">todas as formas</div></div>
+              <div class="card mock-stat"><div class="l">Saídas</div><div class="v">R$ 40</div><div class="s" style="color:var(--bad);">no dia</div></div>
+              <div class="card mock-stat"><div class="l">Dinheiro na gaveta</div><div class="v">R$ 240</div><div class="s" style="color:var(--ok);">abertura + dinheiro</div></div>
+            </div>
+            <div class="card" style="padding:14px 16px;margin-bottom:10px;">
+              <div style="font-size:11px;color:var(--muted-2);margin-bottom:10px;">Entradas por forma de pagamento</div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+                <div><div style="font-size:10px;color:var(--muted-2);">Dinheiro <span style="color:var(--gold-bright);font-size:9px;">na gaveta</span></div><div class="mono" style="color:var(--gold-bright);font-size:14px;">R$ 140</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">PIX</div><div class="mono" style="font-size:14px;">R$ 320</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">Débito</div><div class="mono" style="font-size:14px;">R$ 180</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">Crédito</div><div class="mono" style="font-size:14px;">R$ 140</div></div>
+              </div>
+            </div>
+            <div class="card mock-row" style="margin-bottom:0;">
+              <div style="flex:1;font-size:11.5px;"><b>Diego Santos</b> pediu saque de <span class="mono" style="color:var(--gold-bright);">R$ 180,00</span></div>
+              <span class="pill pill-warn" style="flex-shrink:0;">Pendente</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CLUBE DE ASSINATURA — FLAGSHIP ===== -->
+<div class="stripe"></div>
+<section id="clube" class="clube-section">
+  <div class="wrap">
+    <div class="clube-grid">
+      <div>
+        <p class="eyebrow">O diferencial que vira receita recorrente</p>
+        <h2 style="font-size:clamp(1.8rem,3.4vw,2.5rem);margin-bottom:16px;">Clube de Assinatura: transforme cliente avulso em receita mensal</h2>
+        <p style="color:var(--muted);font-size:16px;margin-bottom:20px;">Sua barbearia vende planos mensais direto para os próprios clientes. Cada serviço vale fichas, e o valor arrecadado no mês é dividido de forma transparente entre a equipe.</p>
+        <span class="pill pill-gold" style="margin-bottom:22px;display:inline-block;">Incluso no plano Pro</span>
+        <div class="ticket" style="margin:0 0 22px;">
+          <div class="ticket-head"><h3 style="font-size:16px;">Crescimento</h3><span>PRIMER BARBER</span></div>
+          <ul>
+            <li>Sistema de fichas por serviço, com divisão transparente</li>
+            <li>Cobrança automática do clube (opcional, via Asaas)</li>
+            <li>Estrela de assinante em dia (dourada) ou atrasado (vermelha)</li>
+            <li>Programa de fidelidade com pontos e indicações</li>
+            <li>Mensagens automáticas para recuperar clientes ausentes</li>
+          </ul>
+        </div>
+        <a href="#planos" class="btn btn-ghost">Ver planos e preços</a>
+      </div>
+
+      <div class="feature-visual">
+        <div class="browser-frame reveal">
+          <div class="browser-bar"><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-url">app.primerbarber.com.br/clube</span></div>
+          <div class="browser-body">
+            <div class="mock-head"><h4>Clube de Assinatura</h4><span>Planos e membros</span></div>
+
+            <div class="plan-edit-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span class="pill pill-warn" style="font-size:10px;">Editando plano</span>
+              </div>
+              <div class="plan-edit-row"><label>Nome do plano</label><div class="plan-edit-value">Clube Premium</div></div>
+              <div class="plan-edit-row"><label>Valor mensal</label><div class="plan-edit-value font-mono">R$ 39,90</div></div>
+              <div class="plan-edit-row" style="margin-bottom:0;"><label>Benefícios</label><div class="plan-edit-value">1 corte por semana + 20% off em produtos</div></div>
+              <div class="btn btn-gold btn-sm" style="width:100%;justify-content:center;margin-top:12px;cursor:default;">Salvar alterações</div>
+            </div>
+
+            <div class="mock-stats">
+              <div class="card mock-stat"><div class="l">Receita recorrente (MRR)</div><div class="v">R$ 1.240</div><div class="s" style="color:var(--ok);">assinaturas ativas</div></div>
+              <div class="card mock-stat"><div class="l">Recebido este mês</div><div class="v">R$ 980</div><div class="s" style="color:var(--ok);">Asaas + dinheiro</div></div>
+            </div>
+            <div class="card mock-row"><span style="color:var(--gold-bright);">★</span><div style="flex:1;"><div style="font-weight:600;">Bruno Lima</div><div style="font-size:11px;color:var(--muted);">Clube Premium · vence dia 10</div></div><span class="pill pill-ok">Em dia</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><span style="color:var(--bad);">★</span><div style="flex:1;"><div style="font-weight:600;">Yuri Prado</div><div style="font-size:11px;color:var(--muted);">Clube Premium · venceu dia 02</div></div><span class="pill pill-bad">Atrasado</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="mock-caption">As telas acima são recriações fiéis do sistema real, preenchidas com dados ilustrativos.</p>
+  </div>
+</section>
+<div class="stripe"></div>
+
+<!-- ===== ATENDIMENTO (agenda interna) ===== -->
+<section id="atendimento">
+  <div class="wrap">
+    <div class="feature-row">
+      <div>
+        <p class="eyebrow">Atendimento</p>
+        <h2 style="font-size:clamp(1.6rem,3vw,2.1rem);margin-bottom:16px;">Sua agenda organizada, com resumo do dia em tempo real</h2>
+        <div class="ticket" style="margin:0;">
+          <div class="ticket-head"><h3 style="font-size:16px;">Atendimento</h3><span>PRIMER BARBER</span></div>
+          <ul>
+            <li>Agenda em formato de calendário, com resumo diário de atendimentos e faturamento</li>
+            <li>Notificação em tempo real quando chega um agendamento novo</li>
+            <li>Lista de espera para encaixar clientes quando abrir horário</li>
+            <li>Confirmações e lembretes automáticos por WhatsApp</li>
+          </ul>
+        </div>
+      </div>
+      <div class="feature-visual">
+        <div class="browser-frame reveal">
+          <div class="browser-bar"><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-url">app.primerbarber.com.br/agenda</span></div>
+          <div class="browser-body">
+            <div class="mock-head"><h4>Agenda</h4><span>Sábado, 06 de setembro</span></div>
+            <div class="mock-days">
+              <div class="mock-day">seg<b>01</b>3 hor.</div>
+              <div class="mock-day">ter<b>02</b>5 hor.</div>
+              <div class="mock-day">qua<b>03</b>4 hor.</div>
+              <div class="mock-day">qui<b>04</b>6 hor.</div>
+              <div class="mock-day">sex<b>05</b>7 hor.</div>
+              <div class="mock-day sel">sáb<b>06</b>8 hor.</div>
+              <div class="mock-day">dom<b>07</b>—</div>
+            </div>
+            <div class="mock-stats">
+              <div class="card mock-stat"><div class="l">Agendamentos</div><div class="v">8</div><div class="s" style="color:var(--ok);">neste dia</div></div>
+              <div class="card mock-stat"><div class="l">Concluídos</div><div class="v">5</div><div class="s" style="color:var(--warn);">de 8</div></div>
+              <div class="card mock-stat"><div class="l">Faturamento</div><div class="v">R$ 410</div><div class="s" style="color:var(--ok);">até agora</div></div>
+            </div>
+            <div class="card mock-row"><span class="mono" style="color:var(--gold-bright);min-width:38px;">14:00</span><div style="flex:1;"><div style="font-weight:600;">Lucas Andrade</div><div style="font-size:11px;color:var(--muted);">Corte + Barba · Kaique</div></div><span class="pill pill-ok">Concluído</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><span class="mono" style="color:var(--gold-bright);min-width:38px;">15:00</span><div style="flex:1;"><div style="font-weight:600;">Rafael Souza</div><div style="font-size:11px;color:var(--muted);">Corte · Diego</div></div><span class="pill pill-warn">Agendado</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== EQUIPE ===== -->
+<section id="equipe" style="background:var(--panel);">
+  <div class="wrap">
+    <div class="feature-row reverse">
+      <div>
+        <p class="eyebrow">Equipe</p>
+        <h2 style="font-size:clamp(1.6rem,3vw,2.1rem);margin-bottom:16px;">Cada profissional com seu próprio acesso</h2>
+        <div class="ticket" style="margin:0;">
+          <div class="ticket-head"><h3 style="font-size:16px;">Equipe</h3><span>PRIMER BARBER</span></div>
+          <ul>
+            <li>3 níveis de acesso: Dono/Admin, Recepcionista e Profissional</li>
+            <li>Link de acesso da equipe por PIN, direto do celular de cada um</li>
+            <li>Controle de estoque com alerta de estoque baixo</li>
+            <li>Tema claro e escuro</li>
+          </ul>
+        </div>
+      </div>
+      <div class="feature-visual">
+        <div class="browser-frame reveal">
+          <div class="browser-bar"><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-url">app.primerbarber.com.br/equipe</span></div>
+          <div class="browser-body">
+            <div class="mock-head"><h4>Equipe</h4><span>Acesso por PIN</span></div>
+            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">KA</div><div style="flex:1;"><div style="font-weight:600;">Kaique Alves</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
+            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">DS</div><div style="flex:1;"><div style="font-weight:600;">Diego Santos</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">MR</div><div style="flex:1;"><div style="font-weight:600;">Mariana Reis</div><div style="font-size:11px;color:var(--muted);">Recepcionista</div></div><span class="pill pill-muted">PIN ••••</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== DIFERENCIAIS ===== -->
+<section id="diferenciais">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Por que o Primer Barber</p>
+      <h2>O que muda na prática</h2>
+    </div>
+    <div class="dif-grid">
+      <div class="dif-card">
+        <h3>Preço por barbearia, não por cabeça</h3>
+        <p>Você paga um valor fixo do plano — não é cobrado por profissional cadastrado.</p>
+      </div>
+      <div class="dif-card">
+        <h3>Entrada mais acessível</h3>
+        <p>Preço de entrada abaixo da média do mercado, que costuma ficar entre R$ 50 e R$ 80 no plano básico.</p>
+      </div>
+      <div class="dif-card">
+        <h3>Clube com fichas transparentes</h3>
+        <p>Cada serviço vale um número de fichas, e o valor arrecadado no mês é dividido de forma clara entre a equipe.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== COMO FUNCIONA ===== -->
+<section id="como-funciona" style="background:var(--panel);">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Começar leva poucos minutos</p>
+      <h2>Como funciona</h2>
+    </div>
+    <div class="passos">
+      <div class="passo">
+        <h3>Crie sua conta</h3>
+        <p>14 dias grátis em qualquer plano, sem precisar de cartão de crédito.</p>
+      </div>
+      <div class="passo">
+        <h3>Cadastre a equipe</h3>
+        <p>Profissionais, serviços, horários e percentual de comissão de cada um.</p>
+      </div>
+      <div class="passo">
+        <h3>Compartilhe seu link</h3>
+        <p>Envie o link de agendamento para os clientes marcarem sozinhos, 24h por dia.</p>
+      </div>
+      <div class="passo">
+        <h3>Acompanhe pelo celular</h3>
+        <p>Agenda, caixa, comissão e Clube de Assinatura, tudo em um só lugar.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PLANOS ===== -->
+<section id="planos">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">Planos</p>
+      <h2>Escolha o plano da sua barbearia</h2>
+      <p>14 dias grátis em qualquer plano, sem cartão de crédito.</p>
+    </div>
+
+    <div class="planos-grid">
+      <div class="plano">
+        <p class="plano-tag">Para equipes menores</p>
+        <h3>Basic</h3>
+        <p class="plano-preco">R$ 49,90 <span>/mês</span></p>
+        <ul>
+          <li>Até 4 profissionais cadastrados</li>
+          <li>Agenda, caixa, comissão e relatórios</li>
+          <li>Página de agendamento online</li>
+          <li>Clube de Assinatura não incluso</li>
+        </ul>
+        <a href="https://primerbarber.com.br" class="btn btn-ghost" style="width:100%;justify-content:center;">Começar teste grátis</a>
+      </div>
+
+      <div class="plano pro">
+        <p class="plano-tag" style="color:var(--gold-bright);">Para quem quer escalar</p>
+        <h3>Pro</h3>
+        <p class="plano-preco">R$ 109,90 <span>/mês</span></p>
+        <ul>
+          <li>Profissionais ilimitados</li>
+          <li>Agenda, caixa, comissão e relatórios</li>
+          <li>Página de agendamento online</li>
+          <li>Clube de Assinatura incluído</li>
+        </ul>
+        <a href="https://primerbarber.com.br" class="btn btn-gold" style="width:100%;justify-content:center;">Começar teste grátis</a>
+      </div>
+    </div>
+    <p class="plano-footnote">Cobrança mensal recorrente, processada pelo Stripe. Cancele quando quiser.</p>
+  </div>
+</section>
+
+<!-- ===== FAQ ===== -->
+<section id="faq" style="background:var(--panel);">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Dúvidas</p>
+      <h2>Perguntas frequentes</h2>
+    </div>
+    <div class="faq-list">
+      <details>
+        <summary>Preciso de cartão de crédito para testar?</summary>
+        <p>Não. Você tem 14 dias grátis em qualquer plano, sem precisar cadastrar cartão.</p>
+      </details>
+      <details>
+        <summary>Posso cancelar quando quiser?</summary>
+        <p>Sim. A assinatura é mensal e o cancelamento pode ser feito a qualquer momento.</p>
+      </details>
+      <details>
+        <summary>Preciso instalar algum aplicativo?</summary>
+        <p>Não. O Primer Barber funciona direto no navegador, tanto no celular quanto no computador — não é um app de loja.</p>
+      </details>
+      <details>
+        <summary>O sistema calcula a comissão sozinho?</summary>
+        <p>Sim. Você define o percentual por profissional e por serviço, e o cálculo é feito automaticamente.</p>
+      </details>
+      <details>
+        <summary>Posso personalizar minha página de agendamento?</summary>
+        <p>Sim. Logo, banner, bio, endereço e redes sociais ficam nas configurações da página, e você decide se permite cancelamento e remarcação online.</p>
+      </details>
+      <details>
+        <summary>O que é o Clube de Assinatura?</summary>
+        <p>É a sua barbearia vendendo planos mensais para os próprios clientes. Cada serviço vale fichas, e o valor arrecadado no mês é dividido entre os profissionais proporcionalmente às fichas. Os planos são criados e editados por você.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CTA FINAL ===== -->
+<div class="stripe"></div>
+<section class="cta-final">
+  <div class="wrap">
+    <h2>Chega de caderno, planilha e WhatsApp bagunçado.</h2>
+    <p>Organize sua barbearia com o Primer Barber. 14 dias grátis, sem cartão.</p>
+    <a href="https://primerbarber.com.br" class="btn btn-gold">Começar agora</a>
+  </div>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a href="#" class="logo"><img class="logo-mark" src="data:image/png;base64,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" alt="Primer Barber">Primer Barber</a>
+        <p>Sistema de gestão para barbearias — agendamento online, controle financeiro, comissão e Clube de Assinatura em um só lugar.</p>
+      </div>
+      <div>
+        <h4>Produto</h4>
+        <a href="#agendamento">Agendamento Online</a>
+        <a href="#financeiro">Controle Financeiro</a>
+        <a href="#clube">Clube de Assinatura</a>
+        <a href="#planos">Planos</a>
+      </div>
+      <div>
+        <h4>Legal e contato</h4>
+        <a href="https://primerbarber.com.br/?pagina=termos">Termos de uso</a>
+        <a href="https://primerbarber.com.br/?pagina=privacidade">Política de privacidade</a>
+        <a href="mailto:primerbarbersuporte@gmail.com">primerbarbersuporte@gmail.com</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Primer Barber</span>
+      <span>Nova Friburgo/RJ</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ===== CTA fixo ao rolar ===== -->
+<div class="sticky-cta" id="stickyCta">
+  <span>14 dias grátis, sem cartão de crédito.</span>
+  <a href="https://primerbarber.com.br" class="btn btn-gold btn-sm">Testar grátis</a>
+  <button class="sticky-cta-close" id="stickyCtaClose" aria-label="Fechar">×</button>
+</div>
+
+<script>
+(function(){
+  try{
+    var bar = document.getElementById('stickyCta');
+    var hero = document.querySelector('.hero');
+    if(bar && hero && 'IntersectionObserver' in window){
+      var dismissed = false;
+      var obs = new IntersectionObserver(function(entries){
+        if(dismissed) return;
+        entries.forEach(function(e){
+          if(e.isIntersecting){ bar.classList.remove('show'); }
+          else { bar.classList.add('show'); }
+        });
+      }, {threshold:0});
+      obs.observe(hero);
+      var closeBtn = document.getElementById('stickyCtaClose');
+      if(closeBtn){
+        closeBtn.addEventListener('click', function(){
+          dismissed = true;
+          bar.classList.remove('show');
+          obs.disconnect();
+        });
+      }
+    }
+    if('IntersectionObserver' in window){
+      var reveals = document.querySelectorAll('.reveal');
+      var robs = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if(e.isIntersecting){ e.target.classList.add('in-view'); robs.unobserve(e.target); }
+        });
+      }, {threshold:.15});
+      reveals.forEach(function(el){ robs.observe(el); });
+    }
+  }catch(err){ /* silencioso — não deve travar a página */ }
+})();
+</script>
+
+</body>
+</html>
