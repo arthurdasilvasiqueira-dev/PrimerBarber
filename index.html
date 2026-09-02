@@ -602,8 +602,33 @@ function migrateState(){
     if(c.referralBonusGiven==null) c.referralBonusGiven = false;
   });
 }
+let ultimoSalvamentoOk = true;
+function avisarFalhaAoSalvar(detalhe){
+  if(ultimoSalvamentoOk === false) return; // não repete o aviso a cada tentativa
+  ultimoSalvamentoOk = false;
+  console.error('Falha ao salvar', detalhe);
+  showToast('⚠ NÃO FOI POSSÍVEL SALVAR. Confira sua internet e recarregue a página — o que você fez agora pode se perder.');
+  // barra fixa, para não passar despercebido
+  if(!document.getElementById('save-error-bar')){
+    const bar = document.createElement('div');
+    bar.id = 'save-error-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--bad);color:#fff;padding:10px 14px;font-size:13px;text-align:center;font-weight:600;';
+    bar.innerHTML = '⚠ As alterações não estão sendo salvas. Recarregue a página antes de continuar. <span style="text-decoration:underline;cursor:pointer;" id="save-error-reload">Recarregar agora</span>';
+    document.body.appendChild(bar);
+    document.getElementById('save-error-reload').addEventListener('click', ()=>location.reload());
+  }
+}
+function limparAvisoDeFalha(){
+  if(ultimoSalvamentoOk) return;
+  ultimoSalvamentoOk = true;
+  document.getElementById('save-error-bar')?.remove();
+}
+
+let salvandoAgora = false;
 async function persist(){
   if(!supa || !currentShop) return;
+  salvandoAgora = true;
+  setTimeout(()=>{ salvandoAgora = false; }, 1500);
   try{
     if(teamSession){
       // Equipe logada por PIN — grava por uma função que revalida o PIN
@@ -611,13 +636,15 @@ async function persist(){
         p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId,
         p_pin: teamSession.pin, p_data: state
       });
-      if(error || res?.error) console.error('Falha ao salvar', error || res.error);
+      if(error || res?.error){ avisarFalhaAoSalvar(error || res.error); }
+      else { limparAvisoDeFalha(); }
       return;
     }
     const slug = state?.onlineBooking?.slug || null;
     const { error } = await supa.from('shops').update({ data: state, booking_slug: slug || null }).eq('id', currentShop.id);
-    if(error) console.error('Falha ao salvar', error);
-  }catch(e){ console.error('Falha ao salvar', e); }
+    if(error){ avisarFalhaAoSalvar(error); }
+    else { limparAvisoDeFalha(); }
+  }catch(e){ avisarFalhaAoSalvar(e); }
 }
 function update(mutator){
   mutator(state);
@@ -2217,6 +2244,11 @@ function concludeAppt(id){
         })
         .filter(p=>p.amount>0);
       netAmount = alvo;
+      // se o total virou zero (desconto integral), ainda precisa registrar
+      if(registrar.length === 0){
+        finish('dinheiro', [{ method:'dinheiro', amount:0 }], desconto);
+        return;
+      }
       finish(registrar[0].method, registrar, desconto);
     });
 
@@ -6102,6 +6134,23 @@ function subscribeBookingNotifications(){
     // Solicitações de saque ficam dentro do JSON da barbearia, então
     // escutamos a própria linha da loja para avisar o dono na hora.
     .on('postgres_changes', {event:'UPDATE', schema:'public', table:'shops', filter:`id=eq.${currentShop.id}`}, payload=>{
+      // Alguém salvou de outro dispositivo (profissional no celular, por ex.).
+      // Se a tela local ficar desatualizada, o próximo salvamento daqui
+      // apagaria o trabalho do outro — então recarregamos os dados.
+      const remoto = payload.new?.data;
+      if(remoto && !salvandoAgora){
+        const qtdRemoto = (remoto.appointments||[]).length;
+        const qtdLocal = (state?.appointments||[]).length;
+        const concluidosRemoto = (remoto.appointments||[]).filter(a=>a.status==='concluido').length;
+        const concluidosLocal = (state?.appointments||[]).filter(a=>a.status==='concluido').length;
+        if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal){
+          state = remoto;
+          migrateState();
+          showToast('Dados atualizados (alteração feita em outro dispositivo).');
+          render();
+          return;
+        }
+      }
       if(!isOwnerLevel()) return;
       const novos = (payload.new?.data?.withdrawalRequests || []).filter(w=>w.status==='pendente');
       const atuais = (state?.withdrawalRequests || []).filter(w=>w.status==='pendente');
