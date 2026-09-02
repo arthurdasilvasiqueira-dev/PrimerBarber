@@ -1246,6 +1246,15 @@ function render(){
       </main>
       </div>
     </div>
+    <button id="btn-feedback" title="O que podemos melhorar?" style="
+      position:fixed;right:18px;bottom:18px;z-index:80;
+      width:52px;height:52px;border-radius:50%;border:1px solid var(--gold);
+      background:var(--panel);color:var(--gold-bright);cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 8px 24px -6px rgba(0,0,0,.5);transition:transform .15s;"
+      onmouseover="this.style.transform='scale(1.08)'" onmouseout="this.style.transform='none'">
+      ${ICON.chat}
+    </button>
   `;
   app.querySelectorAll('[data-route]').forEach(el=>{
     el.addEventListener('click', ()=>{ route = el.dataset.route; render(); });
@@ -1258,6 +1267,7 @@ function render(){
   app.querySelector('#btn-notif-bell-m')?.addEventListener('click', (e)=>{
     e.stopPropagation(); notifState.open = !notifState.open; render();
   });
+  app.querySelector('#btn-feedback')?.addEventListener('click', feedbackModal);
   app.querySelector('#btn-switch-profile').addEventListener('click', openProfileSwitchModal);
   app.querySelector('#btn-logout').addEventListener('click', async ()=>{
     if(notifState.channel){ supa.removeChannel(notifState.channel); notifState.channel=null; }
@@ -4650,6 +4660,93 @@ function memberModal(existing, prefill){
 /* ============ CONFIG ASAAS ============ */
 /* ============ CONFIGURAÇÕES DA CONTA ============ */
 /* ============ MEUS LINKS (todos os endereços públicos num lugar só) ============ */
+/* Caixinha de feedback: o dono da barbearia conta o que travou ou o que
+   poderia melhorar, e isso chega por e-mail para o dono do sistema. */
+function feedbackModal(){
+  const telaAtual = (NAV.find(n=>n.id===route)||{}).label || route;
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px;">
+        <div>
+          <div class="font-display" style="font-size:19px;font-weight:600;">O que podemos melhorar?</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.6;">
+            Achou um erro? Sentiu falta de alguma coisa? Escreve aqui — eu leio tudo e vou ajustando o sistema.
+          </div>
+        </div>
+        <button class="btn btn-ghost" style="padding:6px;flex-shrink:0;" id="m-close">${ICON.x}</button>
+      </div>
+
+      <div id="fb-form" style="display:flex;flex-direction:column;gap:14px;margin-top:16px;">
+        <div>
+          <label>Do que se trata?</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+            ${[
+              {id:'bug', txt:'🐞 Algo com erro'},
+              {id:'sugestao', txt:'💡 Uma ideia'},
+              {id:'duvida', txt:'❓ Uma dúvida'},
+              {id:'elogio', txt:'⭐ Um elogio'},
+            ].map((o,i)=>`
+              <label style="display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:13px;">
+                <input type="radio" name="fb-cat" value="${o.id}" ${i===0?'checked':''} style="width:auto;">
+                <span>${o.txt}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+        <div>
+          <label>Conta pra gente</label>
+          <textarea id="fb-msg" rows="5" placeholder="Ex: na tela de comissões o valor do assinante aparece cheio, mas ele não pagou nada..." style="width:100%;resize:vertical;"></textarea>
+        </div>
+        <div>
+          <label>Seu contato (para eu te responder)</label>
+          <input id="fb-contato" value="${esc(currentShop?.email || state.shopProfile?.phone || '')}" placeholder="e-mail ou WhatsApp" style="width:100%;">
+        </div>
+        <button class="btn btn-gold" id="fb-enviar" style="justify-content:center;padding:13px;">Enviar</button>
+        <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.6;">
+          Vai junto em qual tela você estava (${esc(telaAtual)}), para eu achar o problema mais rápido.
+        </div>
+      </div>
+
+      <div id="fb-done" style="display:none;text-align:center;padding:26px 0;">
+        <div style="font-size:40px;margin-bottom:10px;">✅</div>
+        <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Recebido, obrigado!</div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.6;">
+          Seu retorno chega direto para quem cuida do sistema.<br>Se precisar, entro em contato.
+        </div>
+        <button class="btn btn-ghost" id="fb-fechar" style="margin-top:18px;">Fechar</button>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#fb-fechar')?.addEventListener('click', closeModal);
+    root.querySelector('#fb-enviar').addEventListener('click', async (e)=>{
+      const btn = e.currentTarget;
+      const mensagem = root.querySelector('#fb-msg').value.trim();
+      const contato = root.querySelector('#fb-contato').value.trim();
+      const categoria = root.querySelector('input[name="fb-cat"]:checked').value;
+      if(mensagem.length < 5){ showToast('Escreva um pouco mais para eu entender.'); return; }
+      btn.disabled = true; btn.textContent = 'Enviando...';
+
+      // guarda no banco (não se perde nem se o e-mail falhar)
+      const { error } = await supa.from('feedback').insert({
+        shop_id: currentShop?.id || null,
+        shop_name: state.shopProfile?.name || '',
+        contact_email: currentShop?.email || '',
+        contact_phone: contato,
+        categoria, mensagem, tela: telaAtual,
+      });
+      // avisa por e-mail
+      supa.functions.invoke('notify-signup', {
+        body: { event:'feedback', shopName: state.shopProfile?.name || '', categoria, mensagem, tela: telaAtual, contato }
+      }).catch(()=>{});
+
+      btn.disabled = false; btn.textContent = 'Enviar';
+      if(error){ showToast('Não foi possível enviar agora. Tente de novo em instantes.'); return; }
+      root.querySelector('#fb-form').style.display = 'none';
+      root.querySelector('#fb-done').style.display = 'block';
+    });
+  });
+}
+
 function renderMeusLinks(view){
   const slug = state.onlineBooking?.slug || '';
   const base = `${window.location.origin}${window.location.pathname}`;
