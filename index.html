@@ -1970,22 +1970,38 @@ function concludeAppt(id){
 
   let netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
 
-  const finish = (method)=>{
+  // pagamentos: lista de {method, amount}. Um só ou vários (dividido).
+  const finish = (method, pagamentos, desconto)=>{
+    const lista = (pagamentos && pagamentos.length) ? pagamentos : [{method, amount: netAmount}];
+    const totalCobrado = lista.reduce((t,p)=>t+Number(p.amount),0);
     update(s=>{
       const ap = s.appointments.find(a=>a.id===id);
       ap.status='concluido';
-      ap.paymentMethod = method;
+      ap.paymentMethod = lista.length===1 ? lista[0].method : 'misto';
+      ap.pagamentos = lista;
+      ap.desconto = Number(desconto)||0;
       // guarda quanto foi cobrado de fato — é a base da comissão.
-      // Sem isso, mudar o plano depois alteraria comissões já fechadas.
-      ap.valorCobrado = netAmount;
+      ap.valorCobrado = totalCobrado;
       ap.cobertoPeloClube = planoAtivo;
       const sess = s.cashSessions.find(c=>c.status==='aberto');
-      sess.entries.push({id:uid(), type:'entrada', method, apptId:id, desc:`${service.name} — ${ap.client}${priceNote}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
+      const obs = `${service.name} — ${ap.client}${priceNote}${(Number(desconto)>0)?` (desconto ${BRL(desconto)})`:''}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`;
+      // um lançamento por forma de pagamento, para o caixa somar certo
+      lista.forEach((p,i)=>{
+        if(Number(p.amount) <= 0) return;
+        sess.entries.push({
+          id:uid(), type:'entrada', method:p.method, apptId:id,
+          desc: obs + (lista.length>1 ? ` [${i+1}/${lista.length}]` : ''),
+          amount: Number(p.amount), time:new Date().toTimeString().slice(0,5), auto:true,
+        });
+      });
       const client = s.clients.find(c=>c.name.trim().toLowerCase()===ap.client.trim().toLowerCase());
       if(client) maybeAwardReferral(client);
     });
     closeModal();
-    showToast(`Atendimento concluído — ${BRL(netAmount)} em ${methodLabelPay(method)}.`);
+    const total = lista.reduce((t,p)=>t+Number(p.amount),0);
+    showToast(lista.length>1
+      ? `Atendimento concluído — ${BRL(total)} em ${lista.length} formas de pagamento.`
+      : `Atendimento concluído — ${BRL(total)} em ${methodLabelPay(lista[0].method)}.`);
   };
 
   const planoNome = member ? (state.subscriptionPlans.find(p=>p.id===member.planId)?.name || '') : '';
@@ -2019,36 +2035,170 @@ function concludeAppt(id){
 
   if(netAmount<=0){ finish('dinheiro'); return; }
 
+  const valorOriginal = netAmount;
+  let desconto = 0;
+  let pagamentos = [];   // [{method, amount}]
+
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div class="font-display" style="font-size:19px;font-weight:600;">Concluir atendimento</div>
+        <div class="font-display" style="font-size:19px;font-weight:600;">Finalizar atendimento</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:6px;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">
         ${esc(appt.client)} ${clubStarBadge(appt.client)} · ${esc(service.name)}${esc(priceNote)}
       </div>
-      <div class="font-mono" style="font-size:26px;color:var(--gold-bright);margin-bottom:${motivoCheio?'12px':'18px'};">${BRL(netAmount)}</div>
-      ${motivoCheio ? `<div style="padding:11px 13px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);
-        font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;">
+
+      ${motivoCheio ? `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);
+        font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
         <b style="color:var(--warn);">Por que está cobrando?</b><br>${esc(motivoCheio)}
       </div>` : ''}
-      <label>Forma de pagamento</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
-        ${PAYMENT_METHODS.map(m=>`<button class="btn btn-ghost pay-method" data-method="${m.id}" style="justify-content:center;padding:14px 10px;font-size:13.5px;">${m.label}</button>`).join('')}
+
+      <div class="card" style="padding:15px 17px;background:var(--panel-2);margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:9px;">
+          <span style="color:var(--muted);">Valor do serviço</span>
+          <span class="font-mono">${BRL(valorOriginal)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;">
+          <span style="color:var(--muted);">Desconto</span>
+          <input id="ck-desc" type="number" step="0.01" min="0" max="${valorOriginal}" value="0"
+            style="width:110px;text-align:right;padding:6px 9px;font-size:13px;">
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);">
+          <span style="font-size:13.5px;font-weight:600;">Total a pagar</span>
+          <span class="font-mono" id="ck-total" style="font-size:23px;color:var(--gold-bright);">${BRL(valorOriginal)}</span>
+        </div>
       </div>
-      ${member ? `<button class="btn btn-ghost" id="pm-zerar" style="width:100%;justify-content:center;margin-top:12px;font-size:12.5px;">
+
+      <label>Como o cliente pagou</label>
+      <div id="ck-pagamentos" style="display:flex;flex-direction:column;gap:8px;margin:8px 0 10px;"></div>
+      <button class="btn btn-ghost" id="ck-add" style="width:100%;justify-content:center;font-size:12.5px;padding:9px;">
+        ${ICON.plus} Dividir em outra forma de pagamento
+      </button>
+
+      <div id="ck-resumo" style="margin-top:14px;"></div>
+      <button class="btn btn-gold" id="ck-finalizar" style="width:100%;justify-content:center;padding:14px;font-size:14.5px;margin-top:12px;">
+        Finalizar
+      </button>
+      ${member ? `<button class="btn btn-ghost" id="pm-zerar" style="width:100%;justify-content:center;margin-top:9px;font-size:12.5px;">
         Cortesia — registrar sem cobrar
       </button>` : ''}
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
-    root.querySelectorAll('.pay-method').forEach(b=>b.addEventListener('click', ()=>finish(b.dataset.method)));
+
+    const totalAPagar = ()=> Math.max(0, valorOriginal - desconto);
+
+    const desenharPagamentos = ()=>{
+      const wrap = root.querySelector('#ck-pagamentos');
+      wrap.innerHTML = pagamentos.map((p,i)=>`
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select data-pm="${i}" style="flex:1;font-size:13px;">
+            ${PAYMENT_METHODS.map(m=>`<option value="${m.id}" ${p.method===m.id?'selected':''}>${m.label}</option>`).join('')}
+          </select>
+          <input type="number" step="0.01" min="0" data-pv="${i}" value="${p.amount.toFixed(2)}"
+            style="width:110px;text-align:right;font-size:13px;">
+          ${pagamentos.length>1?`<button class="btn btn-ghost" data-pr="${i}" style="padding:8px 10px;color:var(--bad);border-color:var(--bad);">${ICON.x}</button>`:'<div style="width:38px;"></div>'}
+        </div>
+      `).join('');
+      wrap.querySelectorAll('[data-pm]').forEach(el=>el.addEventListener('change', ()=>{
+        pagamentos[+el.dataset.pm].method = el.value; atualizar();
+      }));
+      wrap.querySelectorAll('[data-pv]').forEach(el=>el.addEventListener('input', ()=>{
+        pagamentos[+el.dataset.pv].amount = parseFloat(el.value)||0; atualizarResumo();
+      }));
+      wrap.querySelectorAll('[data-pr]').forEach(el=>el.addEventListener('click', ()=>{
+        pagamentos.splice(+el.dataset.pr,1); atualizar();
+      }));
+    };
+
+    const atualizarResumo = ()=>{
+      const alvo = totalAPagar();
+      const pago = pagamentos.reduce((t,p)=>t+(Number(p.amount)||0),0);
+      const dif = pago - alvo;
+      const temDinheiro = pagamentos.some(p=>p.method==='dinheiro' && Number(p.amount)>0);
+      const el = root.querySelector('#ck-resumo');
+      const btn = root.querySelector('#ck-finalizar');
+
+      if(Math.abs(dif) < 0.01){
+        el.innerHTML = `<div style="text-align:center;font-size:12.5px;color:var(--ok);">✓ Valor fechado certinho.</div>`;
+        btn.disabled = false; btn.style.opacity = '1';
+        btn.textContent = `Finalizar — ${BRL(alvo)}`;
+      } else if(dif < 0){
+        el.innerHTML = `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);text-align:center;font-size:13px;color:var(--warn);">
+          Falta <b class="font-mono">${BRL(Math.abs(dif))}</b>
+        </div>`;
+        btn.disabled = true; btn.style.opacity = '.5';
+        btn.textContent = 'Complete o valor para finalizar';
+      } else if(temDinheiro){
+        el.innerHTML = `<div style="padding:10px 12px;border-radius:9px;background:var(--ok-bg);text-align:center;font-size:13px;color:var(--ok);">
+          Troco: <b class="font-mono">${BRL(dif)}</b>
+        </div>`;
+        btn.disabled = false; btn.style.opacity = '1';
+        btn.textContent = `Finalizar — ${BRL(alvo)}`;
+      } else {
+        el.innerHTML = `<div style="padding:10px 12px;border-radius:9px;background:var(--bad-bg);text-align:center;font-size:12.5px;color:var(--bad);line-height:1.5;">
+          Passou <b class="font-mono">${BRL(dif)}</b> do total.<br>
+          <span style="font-size:11.5px;">Sem dinheiro em espécie não há como dar troco — ajuste os valores.</span>
+        </div>`;
+        btn.disabled = true; btn.style.opacity = '.5';
+        btn.textContent = 'Ajuste os valores';
+      }
+    };
+
+    const atualizar = ()=>{
+      root.querySelector('#ck-total').textContent = BRL(totalAPagar());
+      // com uma só forma de pagamento, acompanha o total automaticamente
+      if(pagamentos.length===1) pagamentos[0].amount = totalAPagar();
+      desenharPagamentos();
+      atualizarResumo();
+    };
+
+    root.querySelector('#ck-desc').addEventListener('input', (e)=>{
+      let v = parseFloat(e.target.value)||0;
+      if(v < 0) v = 0;
+      if(v > valorOriginal){ v = valorOriginal; e.target.value = v.toFixed(2); }
+      desconto = v;
+      atualizar();
+    });
+
+    root.querySelector('#ck-add').addEventListener('click', ()=>{
+      const jaPago = pagamentos.reduce((t,p)=>t+(Number(p.amount)||0),0);
+      const restante = Math.max(0, totalAPagar() - jaPago);
+      const usados = new Set(pagamentos.map(p=>p.method));
+      const proximo = (PAYMENT_METHODS.find(m=>!usados.has(m.id)) || PAYMENT_METHODS[0]).id;
+      pagamentos.push({ method: proximo, amount: restante });
+      desenharPagamentos();
+      atualizarResumo();
+    });
+
+    root.querySelector('#ck-finalizar').addEventListener('click', ()=>{
+      const alvo = totalAPagar();
+      const pago = pagamentos.reduce((t,p)=>t+(Number(p.amount)||0),0);
+      if(pago + 0.01 < alvo){ showToast('O valor pago não cobre o total.'); return; }
+      // troco não é receita: registra só o que corresponde ao total
+      let restante = alvo;
+      const registrar = pagamentos
+        .filter(p=>Number(p.amount)>0)
+        .map(p=>{
+          const v = Math.min(Number(p.amount), restante);
+          restante = Math.max(0, restante - v);
+          return { method:p.method, amount:Number(v.toFixed(2)) };
+        })
+        .filter(p=>p.amount>0);
+      netAmount = alvo;
+      finish(registrar[0].method, registrar, desconto);
+    });
+
     root.querySelector('#pm-zerar')?.addEventListener('click', ()=>{
       if(!confirm('Registrar este atendimento sem cobrar nada?')) return;
       netAmount = 0; priceNote = ' (cortesia)';
-      finish('dinheiro');
+      finish('dinheiro', [{method:'dinheiro', amount:0}], valorOriginal);
     });
+
+    // começa com uma forma de pagamento cobrindo o total
+    pagamentos = [{ method:'dinheiro', amount: valorOriginal }];
+    atualizar();
   });
 }
 function servingProfissionaisOk(){
