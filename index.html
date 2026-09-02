@@ -2838,6 +2838,74 @@ function periodLabel(period){
 function monthAlreadyClosed(period){
   return state.commissionPayments.some(c=>c.source==='pote' && c.period===period);
 }
+/* Congela o valor cobrado nos atendimentos antigos.
+   Depois disso, mudar plano/status não altera mais comissões do passado. */
+function congelarValoresAntigos(view){
+  const pendentes = state.appointments.filter(a=>a.status==='concluido' && a.valorCobrado==null);
+  if(pendentes.length===0){ showToast('Todos os atendimentos já estão com o valor registrado.'); return; }
+
+  // calcula antes de gravar, para mostrar o resumo
+  const prev = pendentes.map(a=>{
+    const s = serviceById(a.serviceId);
+    const calc = s ? precoParaCobrar(a, s) : null;
+    return { a, s, valor: calc ? calc.basePrice : 0, coberto: calc ? calc.planoAtivo : false };
+  });
+  const cobertos = prev.filter(x=>x.coberto).length;
+  const comDesconto = prev.filter(x=>!x.coberto && x.s && x.valor < x.s.price && x.valor > 0).length;
+  const cheios = prev.length - cobertos - comDesconto;
+
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Registrar valores dos atendimentos</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.7;margin-bottom:16px;">
+        Atendimentos concluídos antes desta atualização não têm o valor cobrado registrado —
+        a comissão deles é recalculada toda hora. Isso significa que, se você mudar um plano depois,
+        a comissão de dias passados mudaria junto.<br><br>
+        Este botão <b>grava o valor de agora</b> em cada um, congelando o passado.
+      </div>
+
+      <div class="card" style="padding:15px 17px;background:var(--panel-2);margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--muted-2);margin-bottom:10px;">${pendentes.length} atendimento(s) serão registrados:</div>
+        <div style="display:flex;flex-direction:column;gap:7px;font-size:13px;">
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Cobertos pelo clube (R$ 0,00)</span><b class="font-mono" style="color:var(--ok);">${cobertos}</b></div>
+          ${comDesconto?`<div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Com desconto do clube</span><b class="font-mono" style="color:var(--warn);">${comDesconto}</b></div>`:''}
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Valor cheio</span><b class="font-mono">${cheios}</b></div>
+        </div>
+      </div>
+
+      <div style="font-size:11.5px;color:var(--muted-2);line-height:1.6;margin-bottom:16px;">
+        Não altera nada que já esteja registrado, não mexe no caixa e não apaga atendimento nenhum.
+        Só preenche o que estava faltando.
+      </div>
+
+      <button class="btn btn-gold" id="cv-ok" style="width:100%;justify-content:center;padding:13px;">Registrar os ${pendentes.length} valores</button>
+      <button class="btn btn-ghost" id="cv-cancelar" style="width:100%;justify-content:center;margin-top:9px;font-size:12.5px;">Agora não</button>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#cv-cancelar').addEventListener('click', closeModal);
+    root.querySelector('#cv-ok').addEventListener('click', ()=>{
+      let n = 0;
+      update(s=>{
+        s.appointments.forEach(ap=>{
+          if(ap.status!=='concluido' || ap.valorCobrado!=null) return;
+          const svc = s.services.find(x=>x.id===ap.serviceId);
+          const calc = svc ? precoParaCobrar(ap, svc) : null;
+          ap.valorCobrado = calc ? calc.basePrice : 0;
+          ap.cobertoPeloClube = calc ? calc.planoAtivo : false;
+          n++;
+        });
+      });
+      closeModal();
+      showToast(`${n} atendimento(s) registrados. O passado está congelado.`);
+      if(view) renderComissoes(view);
+    });
+  });
+}
+
 function renderComissoes(view){
   const fichasBreakdown = clubFichasBreakdown();
   const period = currentPeriod();
@@ -2851,6 +2919,22 @@ function renderComissoes(view){
 
   view.innerHTML = `
     ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
+
+    ${(()=>{
+      if(!isOwnerLevel()) return '';
+      const pend = state.appointments.filter(a=>a.status==='concluido' && a.valorCobrado==null).length;
+      if(pend===0) return '';
+      return `<div class="card" style="padding:15px 18px;margin-bottom:16px;border-color:var(--warn);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:12.5px;line-height:1.6;">
+            <b>${pend} atendimento(s) sem o valor registrado</b><br>
+            <span style="color:var(--muted-2);">São de antes desta atualização. A comissão deles é recalculada toda vez —
+            se você mudar um plano depois, mexeria no passado. Registre o valor para congelar.</span>
+          </div>
+          <button class="btn btn-gold" id="btn-congelar" style="flex-shrink:0;">Registrar valores</button>
+        </div>
+      </div>`;
+    })()}
     ${isOwnerLevel() ? `
     <div class="card" style="padding:14px 18px;margin-bottom:18px;">
       <div style="font-size:12.5px;color:var(--muted);">Comissão por serviço — configure o % específico de cada profissional na aba Profissionais.</div>
@@ -3029,6 +3113,7 @@ function renderComissoes(view){
       </table>
     `}
   `;
+  view.querySelector('#btn-congelar')?.addEventListener('click', ()=>congelarValoresAntigos(view));
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
   view.querySelectorAll('[data-vale]').forEach(b=>b.addEventListener('click', ()=>valeModal(b.dataset.vale, view)));
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
