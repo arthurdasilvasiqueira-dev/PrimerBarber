@@ -4642,6 +4642,12 @@ function memberModal(existing, prefill){
         </div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
         <div><label>E-mail (para o portal do cliente)</label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
+        ${isEdit && existing?.asaasSubscriptionId ? `
+          <div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--gold);font-size:11.5px;color:var(--muted);line-height:1.6;">
+            ${ICON.link} <b style="color:var(--gold-bright);">Cobrança ativa no Asaas.</b>
+            Se você trocar o plano, o valor lá é atualizado automaticamente — inclusive nas cobranças ainda não pagas.
+          </div>
+        ` : ''}
         ${isEdit ? `<div>
           <label>Cliente vinculado na agenda</label>
           <select id="f-linked" style="width:100%;">
@@ -4726,6 +4732,32 @@ function memberModal(existing, prefill){
         dueDate: root.querySelector('#f-due').value,
         status: root.querySelector('#f-status').value,
       };
+      // Trocou de plano num assinante que já paga pelo Asaas?
+      // Atualiza o valor lá também, senão continuaria cobrando o preço antigo.
+      if(isEdit && paymentMethod==='asaas' && existing?.asaasSubscriptionId && existing.planId !== planId){
+        const novoPlano = state.subscriptionPlans.find(p=>p.id===planId);
+        const planoAntigo = state.subscriptionPlans.find(p=>p.id===existing.planId);
+        if(novoPlano){
+          const btnEdit = root.querySelector('#f-submit');
+          btnEdit.disabled = true; btnEdit.textContent = 'Atualizando no Asaas...';
+          const { data: res, error } = await supa.functions.invoke('asaas-sync', {
+            body: { action:'update_subscription', subscriptionId: existing.asaasSubscriptionId,
+                    planPrice: novoPlano.price, planName: novoPlano.name }
+          });
+          btnEdit.disabled = false; btnEdit.textContent = 'Salvar';
+          if(error || res?.error){
+            const msg = res?.error || error?.message || 'erro desconhecido';
+            if(!confirm(
+              `Não foi possível atualizar o valor no Asaas:\n${msg}\n\n` +
+              `Se salvar assim, o cliente vai continuar sendo cobrado ${BRL(planoAntigo?.price||0)} ` +
+              `em vez de ${BRL(novoPlano.price)}.\n\nSalvar mesmo assim?`
+            )) return;
+          } else {
+            showToast(`Plano trocado e valor atualizado no Asaas para ${BRL(novoPlano.price)}.`);
+          }
+        }
+      }
+
       if(!isEdit && paymentMethod==='asaas'){
         if(!state.asaas.apiKey){ showToast('Configure sua API Key do Asaas em Integração Asaas antes de cadastrar via Pix/Cartão.'); return; }
         const submitBtn = root.querySelector('#f-submit');
