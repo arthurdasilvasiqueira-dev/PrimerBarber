@@ -1650,6 +1650,7 @@ function renderAgenda(view){
               ${a.status==='faltou'?'<span class="pill pill-bad">Faltou</span>':''}
               ${a.status==='agendado'?`<button class="btn btn-ghost" style="padding:7px 9px;color:var(--bad);border-color:var(--bad);" data-noshow="${a.id}" title="Cliente faltou">${ICON.bell}</button>`:''}
               ${a.status!=='concluido' && a.status!=='cancelado'?`<button class="btn btn-ghost" style="padding:7px 9px;" data-resched="${a.id}" title="Reagendar">${ICON.clock}</button>`:''}
+              ${a.status==='concluido' && isOwnerLevel()?`<button class="btn btn-ghost" style="padding:7px 9px;color:var(--warn);border-color:var(--warn);" data-reabrir="${a.id}" title="Reabrir comanda">${ICON.clock}</button>`:''}
               ${a.status==='agendado'?`<button class="btn btn-ghost" style="padding:7px 9px;color:var(--bad);border-color:var(--bad);" data-cancel="${a.id}" title="Cancelar">${ICON.x}</button>`:''}
               <button class="btn btn-ghost" style="padding:7px 9px;" data-del-appt="${a.id}" title="Excluir">${ICON.trash}</button>
             </div>
@@ -1698,6 +1699,7 @@ function renderAgenda(view){
     showToast('Sinal marcado como pago.');
   }));
   view.querySelectorAll('[data-resched]').forEach(b=>b.addEventListener('click', ()=>reagendarModal(b.dataset.resched, view)));
+  view.querySelectorAll('[data-reabrir]').forEach(b=>b.addEventListener('click', ()=>reabrirComanda(b.dataset.reabrir, view)));
   view.querySelectorAll('[data-cancel]').forEach(b=>b.addEventListener('click', ()=>cancelAppointment(b.dataset.cancel, 'cancelado')));
   view.querySelectorAll('[data-noshow]').forEach(b=>b.addEventListener('click', ()=>cancelAppointment(b.dataset.noshow, 'faltou')));
   view.querySelectorAll('[data-del-appt]').forEach(b=>b.addEventListener('click', ()=>{
@@ -1769,6 +1771,117 @@ function requestReviewModal(apptId){
 /* Calcula quanto realmente cobrar de um agendamento, considerando o clube.
    Usada tanto na tela de ações quanto no fechamento — assim o valor
    mostrado é sempre o mesmo que vai ser cobrado. */
+/* Desfaz o fechamento de um atendimento: tira do caixa, tira da comissão
+   e devolve para "agendado", para poder corrigir ou cancelar. */
+function reabrirComanda(apptId, view){
+  const a = state.appointments.find(x=>x.id===apptId);
+  if(!a) return;
+  const svc = serviceById(a.serviceId);
+
+  // acha o lançamento que este atendimento gerou no caixa
+  let sessaoDoLancamento = null, lancamento = null;
+  (state.cashSessions||[]).forEach(s=>{
+    (s.entries||[]).forEach(e=>{
+      if(e.apptId === apptId){ sessaoDoLancamento = s; lancamento = e; }
+    });
+  });
+  // atendimentos antigos não têm o vínculo — tenta pelo texto
+  if(!lancamento && svc){
+    const alvo = `${svc.name} — ${a.client}`;
+    (state.cashSessions||[]).forEach(s=>{
+      (s.entries||[]).forEach(e=>{
+        if(!lancamento && e.auto && e.type==='entrada' && String(e.desc||'').startsWith(alvo)){
+          sessaoDoLancamento = s; lancamento = e;
+        }
+      });
+    });
+  }
+
+  const caixaFechado = sessaoDoLancamento && sessaoDoLancamento.status === 'fechado';
+  const valor = lancamento ? Number(lancamento.amount) : 0;
+
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Reabrir comanda</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+        ${esc(a.client)} · ${esc(svc?svc.name:'serviço removido')} · ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time}
+      </div>
+
+      <div class="card" style="padding:14px 16px;background:var(--panel-2);margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--muted-2);margin-bottom:5px;">O que foi lançado no caixa</div>
+        ${lancamento
+          ? `<div class="font-mono" style="font-size:19px;color:var(--gold-bright);">${BRL(valor)}</div>
+             <div style="font-size:11.5px;color:var(--muted-2);margin-top:3px;">
+               ${methodLabelPay(lancamento.method)} · caixa de ${new Date((sessaoDoLancamento.date)+'T12:00').toLocaleDateString('pt-BR')}
+               ${caixaFechado?' <span style="color:var(--warn);">(já fechado)</span>':''}
+             </div>`
+          : `<div style="font-size:12.5px;color:var(--muted);">Nenhum lançamento encontrado no caixa para este atendimento.</div>`}
+      </div>
+
+      ${caixaFechado ? `
+        <div style="padding:12px 14px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;">
+          <b style="color:var(--warn);">O caixa desse dia já foi fechado.</b><br>
+          Não dá para apagar um lançamento de caixa fechado sem bagunçar a conferência daquele dia.
+          Em vez disso, vou registrar uma <b>saída de estorno</b> de ${BRL(valor)} no caixa aberto de hoje.
+        </div>
+      ` : ''}
+
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.7;margin-bottom:18px;">
+        Ao reabrir:<br>
+        • O atendimento volta para <b>"agendado"</b><br>
+        • O valor sai da <b>comissão</b> do profissional<br>
+        • ${caixaFechado ? 'Um estorno é lançado no caixa de hoje' : lancamento ? 'O lançamento sai do caixa' : 'Nada muda no caixa'}
+      </div>
+
+      <button class="btn btn-gold" id="rc-confirmar" style="width:100%;justify-content:center;padding:13px;">Reabrir comanda</button>
+      <button class="btn btn-ghost" id="rc-cancelar" style="width:100%;justify-content:center;margin-top:9px;font-size:12.5px;">Deixar como está</button>
+    </div>
+  `, root=>{
+    const fechar = ()=>closeModal();
+    root.querySelector('#m-close').addEventListener('click', fechar);
+    root.querySelector('#rc-cancelar').addEventListener('click', fechar);
+    root.querySelector('#rc-confirmar').addEventListener('click', ()=>{
+      const aberto = openSession();
+      if(caixaFechado && valor>0 && !aberto){
+        showToast('Abra o caixa de hoje para registrar o estorno.');
+        return;
+      }
+      update(s=>{
+        const ap = s.appointments.find(x=>x.id===apptId);
+        ap.status = 'agendado';
+        ap.paymentMethod = null;
+        ap.reabertoEm = new Date().toISOString();
+
+        if(lancamento){
+          const sess = s.cashSessions.find(x=>x.id===sessaoDoLancamento.id);
+          if(sess && sess.status==='aberto'){
+            sess.entries = sess.entries.filter(e=>e.id!==lancamento.id);
+          } else if(sess){
+            // caixa fechado: não mexe no passado, lança o estorno hoje
+            const hoje = s.cashSessions.find(x=>x.status==='aberto');
+            if(hoje){
+              hoje.entries.push({
+                id:uid(), type:'saida', method:lancamento.method || 'dinheiro',
+                estorno:true, apptId,
+                desc:`Estorno — ${svc?svc.name:'atendimento'} de ${ap.client} (comanda reaberta)`,
+                amount: valor, time:new Date().toTimeString().slice(0,5), auto:true,
+              });
+            }
+          }
+        }
+      });
+      closeModal();
+      showToast(caixaFechado && valor>0
+        ? `Comanda reaberta. Estorno de ${BRL(valor)} lançado no caixa de hoje.`
+        : 'Comanda reaberta. Agora é só corrigir ou cancelar o atendimento.');
+      if(view) renderAgenda(view);
+    });
+  });
+}
+
 function precoParaCobrar(appt, service){
   const svc = service || serviceById(appt.serviceId);
   const out = {
@@ -1833,7 +1946,7 @@ function concludeAppt(id){
       ap.status='concluido';
       ap.paymentMethod = method;
       const sess = s.cashSessions.find(c=>c.status==='aberto');
-      sess.entries.push({id:uid(), type:'entrada', method, desc:`${service.name} — ${ap.client}${priceNote}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
+      sess.entries.push({id:uid(), type:'entrada', method, apptId:id, desc:`${service.name} — ${ap.client}${priceNote}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`, amount:netAmount, time:new Date().toTimeString().slice(0,5), auto:true});
       const client = s.clients.find(c=>c.name.trim().toLowerCase()===ap.client.trim().toLowerCase());
       if(client) maybeAwardReferral(client);
     });
@@ -1974,6 +2087,21 @@ function apptActionsModal(apptId, view){
             <div style="font-size:12.5px;color:var(--muted);padding:10px 0;">
               ${a.status==='concluido' ? 'Atendimento já finalizado' + (a.paymentMethod?` — recebido em ${methodLabelPay(a.paymentMethod)}.`:'.') : 'Este agendamento foi cancelado.'}
             </div>
+            ${a.status==='concluido' && isOwnerLevel() ? `
+              <button class="btn btn-ghost" id="ac-reabrir" style="justify-content:center;padding:12px;border-color:var(--warn);color:var(--warn);">
+                ${ICON.clock} Reabrir comanda
+              </button>
+              <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.5;margin-top:-3px;">
+                Desfaz o fechamento: tira o valor do caixa e da comissão, e o atendimento volta para "agendado".
+              </div>
+            ` : a.status==='concluido' ? `
+              <div style="font-size:11.5px;color:var(--muted-2);line-height:1.5;">
+                Só o dono pode reabrir uma comanda já finalizada.
+              </div>
+            ` : ''}
+            ${a.status==='cancelado' && podeMexer ? `
+              <button class="btn btn-ghost" id="ac-reativar" style="justify-content:center;padding:12px;">Reativar agendamento</button>
+            ` : ''}
           `}
           ${messageChannelRow(
             (state.clients.find(cl=>cl.name.trim().toLowerCase()===a.client.trim().toLowerCase())||{}).phone || membro?.phone,
@@ -2001,6 +2129,11 @@ function apptActionsModal(apptId, view){
       if(!confirm('Cancelar este agendamento?')) return;
       update(s=>{ s.appointments.find(y=>y.id===a.id).status='cancelado'; });
       showToast('Agendamento cancelado.'); recarrega();
+    });
+    root.querySelector('#ac-reabrir')?.addEventListener('click', ()=>{ closeModal(); reabrirComanda(a.id, view); });
+    root.querySelector('#ac-reativar')?.addEventListener('click', ()=>{
+      update(s=>{ s.appointments.find(y=>y.id===a.id).status='agendado'; });
+      showToast('Agendamento reativado.'); recarrega();
     });
     root.querySelector('#ac-excluir')?.addEventListener('click', ()=>{
       if(!confirm('Excluir este agendamento da agenda? Não dá para desfazer.')) return;
@@ -2400,7 +2533,11 @@ function renderCaixa(view){
             <div style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};">${e.type==='entrada'?ICON.arrowUp:ICON.arrowDown}</div>
             <div style="flex:1;">
               <div style="font-size:13.5px;">${esc(e.desc)}</div>
-              <div style="font-size:11.5px;color:var(--muted-2);">${e.time} · ${methodLabelPay(e.method)} ${e.auto?'· automático':'· manual'}</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">
+                ${e.time} · ${methodLabelPay(e.method)} ${e.auto?'· automático':'· manual'}
+                ${e.estorno?' · <span style="color:var(--warn);">estorno</span>':''}
+                ${e.sangria?' · <span style="color:var(--muted);">sangria</span>':''}
+              </div>
             </div>
             <div class="font-mono" style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};font-size:14px;">${e.type==='entrada'?'+':'−'} ${BRL(e.amount)}</div>
           </div>
