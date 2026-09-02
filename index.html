@@ -4568,13 +4568,17 @@ async function syncAsaas(){
       const m = s.subscriptionMembers.find(x=>x.id===r.memberId);
       if(!m) return;
       const antes = m.lastPaymentDate;
+      // Se você já registrou o pagamento deste mês na mão (dinheiro, por
+      // exemplo), a sincronização não desfaz isso.
+      const jaRegistradoNoMes = antes && String(antes).slice(0,7) === mesAtual;
+      if(jaRegistradoNoMes && !r.pagouEsteMes){
+        return; // mantém o que você marcou
+      }
       m.status = r.status;
-      // só sobrescreve a data se o Asaas trouxe alguma — nunca apaga
       if(r.lastPaymentDate) m.lastPaymentDate = r.lastPaymentDate;
       if(r.lastPaymentAmount) m.lastPaymentAmount = r.lastPaymentAmount;
       if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
-      if(r.lastPaymentDate && r.lastPaymentDate !== antes &&
-         String(r.lastPaymentDate).slice(0,7) === mesAtual) novosPagamentos++;
+      if(r.pagouEsteMes && r.lastPaymentDate !== antes) novosPagamentos++;
     });
   });
   const total = (result.results||[]).length;
