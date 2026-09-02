@@ -637,6 +637,15 @@ function showToast(msg){
 
 /* ============ DERIVED HELPERS ============ */
 function profName(id){ return state.professionals.find(p=>p.id===id)?.name || '—'; }
+// Valor que realmente entrou por um atendimento: usa o que foi cobrado no
+// fechamento; para atendimentos antigos, recalcula pela regra do plano.
+function valorRealAtendimento(ap){
+  if(!ap) return 0;
+  if(ap.valorCobrado != null) return Number(ap.valorCobrado);
+  const s = serviceById(ap.serviceId);
+  if(!s) return 0;
+  return (typeof precoParaCobrar === 'function') ? precoParaCobrar(ap, s).basePrice : Number(s.price);
+}
 function serviceById(id){ return state.services.find(s=>s.id===id); }
 function openSession(){ return state.cashSessions.find(c=>c.status==='aberto') || null; }
 const PAYMENT_METHODS = [
@@ -758,7 +767,7 @@ function clientsPerProfPerDay(profId, date){
 function clientStats(name){
   const own = state.appointments.filter(a=>a.client.trim().toLowerCase()===name.trim().toLowerCase());
   const done = own.filter(a=>a.status==='concluido');
-  const total = done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0);
+  const total = done.reduce((a,ap)=>a+valorRealAtendimento(ap),0);
   const last = done.sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time))[0];
   return {visits: done.length, total, lastVisit: last ? last.date : null};
 }
@@ -1319,7 +1328,10 @@ function viewDashboard(){
     ? todaysAppointments().filter(a=>a.professionalId===myId)
     : todaysAppointments();
   const done = appts.filter(a=>a.status==='concluido');
-  const faturamentoServicos = done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0);
+  // Faturamento real: usa o valor cobrado (já com desconto e clube aplicados),
+  // não o preço de tabela. Antes um assinante que pagou R$ 0 entrava como R$ 35.
+  const faturamentoServicos = done.reduce((a,ap)=>a+valorRealAtendimento(ap),0);
+  const atendimentosClube = done.filter(ap=>valorRealAtendimento(ap) <= 0).length;
   const commissionsPending = isProfView
     ? commissionOwed(myId).owed
     : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
@@ -1332,7 +1344,11 @@ function viewDashboard(){
   return `
     ${pageHeader('Painel', new Date().toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'}))}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:22px;">
-      ${statCard(isProfView?'Seu faturamento hoje':'Faturamento em serviços hoje', BRL(faturamentoServicos), `${done.length} atendimento(s) concluído(s)`, 'ok')}
+      ${statCard(
+        isProfView?'Seu faturamento hoje':'Faturamento em serviços hoje',
+        BRL(faturamentoServicos),
+        `${done.length} atendimento(s)${atendimentosClube>0?` · ${atendimentosClube} pelo clube (não entram no valor)`:''}`,
+        'ok')}
       ${!isProfView ? statCard('Saldo do caixa', session?BRL(totals.balance):'—', session?`Entradas ${BRL(totals.in)} · Saídas ${BRL(totals.out)}`:'Nenhum caixa aberto', session?'ok':'bad') : ''}
       ${statCard(isProfView?'Você tem a receber':'Comissões pendentes', BRL(commissionsPending), isProfView?'em comissões':'a pagar aos profissionais', commissionsPending>0?'warn':'ok')}
       ${!isProfView ? statCard('Clube de assinatura', activeMembers+' membros ativos', 'MRR '+BRL(mrr), 'ok') : ''}
@@ -2125,11 +2141,25 @@ function concludeAppt(id){
         btn.disabled = false; btn.style.opacity = '1';
         btn.textContent = `Finalizar — ${BRL(alvo)}`;
       } else if(dif < 0){
-        el.innerHTML = `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);text-align:center;font-size:13px;color:var(--warn);">
+        el.innerHTML = `<div style="padding:11px 13px;border-radius:9px;background:var(--panel-2);text-align:center;font-size:13px;color:var(--warn);">
           Falta <b class="font-mono">${BRL(Math.abs(dif))}</b>
+          <div style="margin-top:9px;">
+            <button class="btn btn-ghost" id="ck-vira-desconto" style="font-size:12px;padding:7px 12px;">
+              Cliente não tem o restante — dar ${BRL(Math.abs(dif))} de desconto
+            </button>
+          </div>
         </div>`;
         btn.disabled = true; btn.style.opacity = '.5';
         btn.textContent = 'Complete o valor para finalizar';
+        el.querySelector('#ck-vira-desconto')?.addEventListener('click', ()=>{
+          // transforma o que falta em desconto, mantendo o que já foi pago
+          desconto = Math.min(valorOriginal, desconto + Math.abs(dif));
+          root.querySelector('#ck-desc').value = desconto.toFixed(2);
+          root.querySelector('#ck-total').textContent = BRL(totalAPagar());
+          desenharPagamentos();
+          atualizarResumo();
+          showToast(`Desconto de ${BRL(Math.abs(dif))} aplicado.`);
+        });
       } else if(temDinheiro){
         el.innerHTML = `<div style="padding:10px 12px;border-radius:9px;background:var(--ok-bg);text-align:center;font-size:13px;color:var(--ok);">
           Troco: <b class="font-mono">${BRL(dif)}</b>
@@ -5594,7 +5624,7 @@ function variacao(atual, anterior){
 function faturamentoMes(ym){
   const servicos = state.appointments
     .filter(a=>a.status==='concluido' && ymOf(a.date)===ym)
-    .reduce((t,a)=>t+(serviceById(a.serviceId)?.price||0),0);
+    .reduce((t,a)=>t+valorRealAtendimento(a),0);
   let entradas = 0, saidas = 0;
   (state.cashSessions||[]).forEach(s=>{
     if(ymOf(s.date||s.openedAt)!==ym) return;
@@ -5650,7 +5680,7 @@ function ocupacaoMes(ym){
 
   const concluidos = atendimentosMes(ym);
   const minutosUsados = concluidos.reduce((t,a)=>t+(serviceById(a.serviceId)?.duration||30),0);
-  const faturado = concluidos.reduce((t,a)=>t+(serviceById(a.serviceId)?.price||0),0);
+  const faturado = concluidos.reduce((t,a)=>t+valorRealAtendimento(a),0);
   const taxa = minutosPossiveis>0 ? (minutosUsados/minutosPossiveis)*100 : 0;
   const minutosVagos = Math.max(0, minutosPossiveis - minutosUsados);
   // valor estimado que ficou na mesa por cadeira vazia
@@ -5695,7 +5725,7 @@ function rankingClientes(ym){
   atendimentosMes(ym).forEach(a=>{
     const nome = (a.client||'').trim();
     if(!nome) return;
-    porCliente[nome] = (porCliente[nome]||0) + (serviceById(a.serviceId)?.price||0);
+    porCliente[nome] = (porCliente[nome]||0) + valorRealAtendimento(a);
   });
   const lista = Object.entries(porCliente).map(([nome,total])=>({nome,total})).sort((a,b)=>b.total-a.total);
   const soma = lista.reduce((t,x)=>t+x.total,0) || 1;
@@ -5704,14 +5734,14 @@ function rankingClientes(ym){
 
 function renderRelatorios(view){
   const done = state.appointments.filter(a=>a.status==='concluido');
-  const ticketMedio = done.length ? done.reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0)/done.length : 0;
+  const ticketMedio = done.length ? done.reduce((a,ap)=>a+valorRealAtendimento(ap),0)/done.length : 0;
   const totalAppts = state.appointments.length;
   const ocupacao = totalAppts ? Math.round((done.length/totalAppts)*100) : 0;
   const ns = noShowStats();
 
   const byProf = state.professionals.map(p=>({
     name:p.name,
-    value: done.filter(a=>a.professionalId===p.id).reduce((a,ap)=>a+(serviceById(ap.serviceId)?.price||0),0)
+    value: done.filter(a=>a.professionalId===p.id).reduce((a,ap)=>a+valorRealAtendimento(ap),0)
   })).sort((a,b)=>b.value-a.value);
   const maxProf = Math.max(1, ...byProf.map(b=>b.value));
 
