@@ -677,6 +677,11 @@ function clubMemberForClient(clientName){
   const alvo = normNome(clientName);
   const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
 
+  // 0) vínculo manual: se o dono ligou este assinante a um cliente,
+  // essa ligação vale acima de qualquer tentativa de adivinhar pelo nome.
+  const vinculado = ativos.find(m=>m.linkedClientName && normNome(m.linkedClientName)===alvo);
+  if(vinculado) return vinculado;
+
   // 1) nome igual (já ignorando acento e espaços)
   let achado = ativos.find(m=>normNome(m.name)===alvo);
   if(achado) return achado;
@@ -3790,6 +3795,77 @@ async function loadSubscriptionRequests(view){
     loadSubscriptionRequests(view);
   }));
 }
+/* Mostra quais assinantes o sistema não conseguiu casar com um cliente,
+   e deixa o dono ligar cada um manualmente. */
+function vinculosModal(view){
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+  // um assinante está "ok" se algum cliente cadastrado aponta para ele
+  const clientes = (state.clients||[]);
+  const casados = new Set();
+  clientes.forEach(cl=>{
+    const m = clubMemberForClient(cl.name);
+    if(m) casados.add(m.id);
+  });
+  const semVinculo = ativos.filter(m=>!casados.has(m.id));
+
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Assinantes sem cliente vinculado</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:16px;">
+        Estes assinantes o sistema não conseguiu ligar a nenhum cliente da barbearia —
+        por isso a estrela não aparece na agenda e o plano não é aplicado.
+        Escolha o cliente certo de cada um.
+      </div>
+
+      ${semVinculo.length===0 ? `
+        <div style="text-align:center;padding:24px 0;">
+          <div style="color:var(--ok);font-size:15px;font-weight:600;margin-bottom:6px;">✓ Todos vinculados!</div>
+          <div style="font-size:12.5px;color:var(--muted);">Os ${ativos.length} assinantes estão ligados a um cliente.</div>
+        </div>
+      ` : `
+        <div style="font-size:12px;color:var(--muted-2);margin-bottom:10px;">${semVinculo.length} de ${ativos.length} sem vínculo:</div>
+        <div style="display:flex;flex-direction:column;gap:12px;max-height:52vh;overflow-y:auto;">
+          ${semVinculo.map(m=>{
+            const plano = state.subscriptionPlans.find(p=>p.id===m.planId);
+            return `<div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+              <div style="font-size:13.5px;font-weight:600;">${esc(m.name)}</div>
+              <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:9px;">
+                ${plano?esc(plano.name):'sem plano'}${m.phone?' · '+esc(m.phone):''}
+              </div>
+              <select data-vinc="${m.id}" style="width:100%;font-size:13px;">
+                <option value="">— escolher o cliente —</option>
+                ${clientes.slice().sort(byName).map(cl=>`<option value="${esc(cl.name)}">${esc(cl.name)}${cl.phone?' · '+esc(cl.phone):''}</option>`).join('')}
+              </select>
+            </div>`;
+          }).join('')}
+        </div>
+        <button class="btn btn-gold" id="vinc-salvar" style="width:100%;justify-content:center;margin-top:16px;padding:13px;">Salvar vínculos</button>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">
+          Se o cliente ainda não existe na lista, cadastre ele em Clientes primeiro.
+        </div>
+      `}
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#vinc-salvar')?.addEventListener('click', ()=>{
+      let n = 0;
+      update(s=>{
+        root.querySelectorAll('[data-vinc]').forEach(sel=>{
+          if(!sel.value) return;
+          const m = s.subscriptionMembers.find(x=>x.id===sel.dataset.vinc);
+          if(m){ m.linkedClientName = sel.value; n++; }
+        });
+      });
+      closeModal();
+      showToast(n>0 ? `${n} assinante(s) vinculado(s).` : 'Nenhum vínculo escolhido.');
+      if(view) renderClube(view);
+    });
+  });
+}
+
 function renderClube(view){
   if(!planLimits(currentShop).club){
     view.innerHTML = `
@@ -3821,6 +3897,25 @@ function renderClube(view){
       ${statCard('Recebido em '+new Date().toLocaleDateString('pt-BR',{month:'long'}), BRL(recebidoMes), `${state.subscriptionMembers.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).length} de ${state.subscriptionMembers.filter(m=>m.status!=='cancelado').length} assinantes já pagaram`, 'ok')}
       ${statCard('Planos disponíveis', state.subscriptionPlans.length, 'configurados', 'ok')}
     </div>
+
+    ${(()=>{
+      // assinantes que nenhum cliente consegue "achar" — estrela não aparece
+      const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+      const casados = new Set();
+      (state.clients||[]).forEach(cl=>{ const m = clubMemberForClient(cl.name); if(m) casados.add(m.id); });
+      const semVinculo = ativos.filter(m=>!casados.has(m.id)).length;
+      if(semVinculo===0) return '';
+      return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--bad);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:12.5px;line-height:1.6;">
+            <b style="color:var(--bad);">${semVinculo} assinante(s) sem cliente vinculado</b><br>
+            <span style="color:var(--muted-2);">O nome no clube não bate com nenhum cliente cadastrado, então a estrela
+            não aparece na agenda e o plano não é aplicado no fechamento.</span>
+          </div>
+          <button class="btn btn-gold" id="btn-vinculos" style="flex-shrink:0;">Resolver agora</button>
+        </div>
+      </div>`;
+    })()}
 
     ${(()=>{
       const mesAtual = todayISO().slice(0,7);
@@ -3988,6 +4083,7 @@ function renderClube(view){
       }));
     });
   });
+  view.querySelector('#btn-vinculos')?.addEventListener('click', ()=>vinculosModal(view));
   view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
   view.querySelector('#btn-copy-plans-link')?.addEventListener('click', ()=>{
     navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?planos=${state.onlineBooking.slug}`);
@@ -4180,6 +4276,14 @@ function memberModal(existing, prefill){
         </div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
         <div><label>E-mail (para o portal do cliente)</label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
+        ${isEdit ? `<div>
+          <label>Cliente vinculado na agenda</label>
+          <select id="f-linked" style="width:100%;">
+            <option value="">Automático (pelo nome)</option>
+            ${(state.clients||[]).slice().sort(byName).map(cl=>`<option value="${esc(cl.name)}" ${existing?.linkedClientName===cl.name?'selected':''}>${esc(cl.name)}${cl.phone?' · '+esc(cl.phone):''}</option>`).join('')}
+          </select>
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Use quando o nome no clube for diferente do nome na agenda (apelido, nome incompleto, etc).</div>
+        </div>` : ''}
         <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
         <div><label>Forma de pagamento</label><select id="f-method" style="width:100%;">
           <option value="asaas" ${!existing||existing.paymentMethod==='asaas'?'selected':''}>Pix / Cartão (via Asaas)</option>
@@ -4250,8 +4354,9 @@ function memberModal(existing, prefill){
       const planId = root.querySelector('#f-plan').value;
       const paymentMethod = root.querySelector('#f-method').value;
       const email = root.querySelector('#f-email')?.value.trim() || '';
+      const linkedClientName = root.querySelector('#f-linked')?.value || (existing?.linkedClientName || '');
       const data = {
-        name, phone, email, planId, paymentMethod,
+        name, phone, email, planId, paymentMethod, linkedClientName,
         dueDate: root.querySelector('#f-due').value,
         status: root.querySelector('#f-status').value,
       };
