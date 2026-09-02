@@ -4734,9 +4734,11 @@ function memberModal(existing, prefill){
       };
       // Trocou de plano num assinante que já paga pelo Asaas?
       // Atualiza o valor lá também, senão continuaria cobrando o preço antigo.
-      if(isEdit && paymentMethod==='asaas' && existing?.asaasSubscriptionId && existing.planId !== planId){
+      // Sempre reenvia o valor do plano atual para o Asaas ao salvar um
+      // assinante Pix/Cartão. Se já estiver certo, nada muda; se estiver
+      // defasado (troca feita antes desta correção), acerta agora.
+      if(isEdit && paymentMethod==='asaas' && existing?.asaasSubscriptionId){
         const novoPlano = state.subscriptionPlans.find(p=>p.id===planId);
-        const planoAntigo = state.subscriptionPlans.find(p=>p.id===existing.planId);
         if(novoPlano){
           const btnEdit = root.querySelector('#f-submit');
           btnEdit.disabled = true; btnEdit.textContent = 'Atualizando no Asaas...';
@@ -4749,11 +4751,11 @@ function memberModal(existing, prefill){
             const msg = res?.error || error?.message || 'erro desconhecido';
             if(!confirm(
               `Não foi possível atualizar o valor no Asaas:\n${msg}\n\n` +
-              `Se salvar assim, o cliente vai continuar sendo cobrado ${BRL(planoAntigo?.price||0)} ` +
+              `O cliente pode continuar sendo cobrado o valor antigo ` +
               `em vez de ${BRL(novoPlano.price)}.\n\nSalvar mesmo assim?`
             )) return;
           } else {
-            showToast(`Plano trocado e valor atualizado no Asaas para ${BRL(novoPlano.price)}.`);
+            showToast(`Valor no Asaas confirmado: ${BRL(novoPlano.price)} (${novoPlano.name}).`);
           }
         }
       }
