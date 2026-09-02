@@ -4180,6 +4180,24 @@ function renderClube(view){
     </div>
 
     ${(()=>{
+      // marcados como pago mas sem data → não entram no recebido do mês
+      const mes = todayISO().slice(0,7);
+      const semData = (state.subscriptionMembers||[]).filter(m=>m.status==='pago' && !m.lastPaymentDate);
+      if(semData.length===0) return '';
+      const valor = semData.reduce((a,m)=>{ const p=state.subscriptionPlans.find(x=>x.id===m.planId); return a+(p?Number(p.price):0); },0);
+      return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--warn);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:12.5px;line-height:1.6;">
+            <b style="color:var(--warn);">${semData.length} assinante(s) marcados como pagos, mas sem data de pagamento</b><br>
+            <span style="color:var(--muted-2);">Por isso ${BRL(valor)} não entrou no "recebido no mês" nem no pote.
+            Confirme que o pagamento foi neste mês.</span>
+          </div>
+          <button class="btn btn-gold" id="btn-datar-pgto" style="flex-shrink:0;">Registrar como pago hoje</button>
+        </div>
+      </div>`;
+    })()}
+
+    ${(()=>{
       const orfaos = assinantesOrfaos();
       if(orfaos.length===0) return '';
       return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--warn);">
@@ -4352,8 +4370,9 @@ function renderClube(view){
             const msg = `Olá ${m.name}! Passando para lembrar da mensalidade do ${p?p.name:'clube'}. Qualquer dúvida é só chamar!`;
             return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
               <div style="font-size:13px;min-width:160px;">
-                <b>${esc(m.name)}</b> <span class="pill pill-muted" style="font-size:10px;">${esc(m.paymentMethod==='asaas'?'Asaas':'manual')}</span><br>
-                <span style="color:var(--muted-2);font-size:11.5px;">${p?esc(p.name)+' · '+BRL(p.price):'plano removido'}${m.lastPaymentDate?' · último pgto '+new Date(m.lastPaymentDate+'T12:00').toLocaleDateString('pt-BR'):' · nunca pagou'}</span>
+                <b>${esc(m.name)}</b> <span class="pill pill-muted" style="font-size:10px;">${esc(m.paymentMethod==='asaas'?'Asaas':'manual')}</span>
+                ${m.status==='pago' && !pagouNoMes(m, todayISO().slice(0,7)) ? `<span class="pill pill-warn" style="font-size:10px;">marcado pago, sem data</span>` : ''}<br>
+                <span style="color:var(--muted-2);font-size:11.5px;">${p?esc(p.name)+' · '+BRL(p.price):'plano removido'}${m.lastPaymentDate?' · último pgto '+new Date(String(m.lastPaymentDate).slice(0,10)+'T12:00').toLocaleDateString('pt-BR'):' · sem data de pagamento'}</span>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
                 ${messageChannelRow(m.phone, msg)}
@@ -4423,6 +4442,21 @@ function renderClube(view){
         renderClube(view);
       });
     });
+  });
+  view.querySelector('#btn-datar-pgto')?.addEventListener('click', ()=>{
+    const semData = (state.subscriptionMembers||[]).filter(m=>m.status==='pago' && !m.lastPaymentDate);
+    if(!confirm(`Registrar ${semData.length} pagamento(s) com a data de hoje?\n\nUse isso só se eles realmente pagaram neste mês.`)) return;
+    update(s=>{
+      s.subscriptionMembers.forEach(m=>{
+        if(m.status==='pago' && !m.lastPaymentDate){
+          const p = s.subscriptionPlans.find(x=>x.id===m.planId);
+          m.lastPaymentDate = todayISO();
+          m.lastPaymentAmount = p ? Number(p.price) : 0;
+        }
+      });
+    });
+    showToast('Pagamentos registrados. O valor do mês foi atualizado.');
+    renderClube(view);
   });
   view.querySelector('#btn-vinculos')?.addEventListener('click', ()=>vinculosModal(view));
   view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
@@ -4727,11 +4761,28 @@ function memberModal(existing, prefill){
       const paymentMethod = root.querySelector('#f-method').value;
       const email = root.querySelector('#f-email')?.value.trim() || '';
       const linkedClientName = root.querySelector('#f-linked')?.value || (existing?.linkedClientName || '');
+      const novoStatus = root.querySelector('#f-status').value;
       const data = {
         name, phone, email, planId, paymentMethod, linkedClientName,
         dueDate: root.querySelector('#f-due').value,
-        status: root.querySelector('#f-status').value,
+        status: novoStatus,
       };
+      // Marcar como "pago" na mão precisa registrar a DATA do pagamento —
+      // é ela que faz o valor entrar no "recebido no mês" e no pote.
+      const mesAtual = todayISO().slice(0,7);
+      if(novoStatus === 'pago'){
+        const jaContabilizado = existing?.lastPaymentDate &&
+          String(existing.lastPaymentDate).slice(0,7) === mesAtual;
+        if(!jaContabilizado){
+          const planoEscolhido = state.subscriptionPlans.find(p=>p.id===planId);
+          data.lastPaymentDate = todayISO();
+          data.lastPaymentAmount = planoEscolhido ? Number(planoEscolhido.price) : 0;
+        }
+      } else if(existing?.lastPaymentDate && String(existing.lastPaymentDate).slice(0,7) === mesAtual){
+        // tirou de "pago" ainda no mesmo mês: desfaz o recebimento
+        data.lastPaymentDate = null;
+        data.lastPaymentAmount = 0;
+      }
       // Trocou de plano num assinante que já paga pelo Asaas?
       // Atualiza o valor lá também, senão continuaria cobrando o preço antigo.
       // Sempre reenvia o valor do plano atual para o Asaas ao salvar um
