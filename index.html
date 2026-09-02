@@ -1782,6 +1782,12 @@ function requestReviewModal(apptId){
 /* Desfaz o fechamento de um atendimento: tira do caixa, tira da comissão
    e devolve para "agendado", para poder corrigir ou cancelar. */
 function reabrirComanda(apptId, view){
+  // Trava de verdade, não só o botão escondido: reabrir comanda mexe em
+  // caixa e comissão, então fica restrito ao dono/admin.
+  if(!isOwnerLevel()){
+    showToast('Apenas o dono ou administrador pode reabrir uma comanda.');
+    return;
+  }
   const a = state.appointments.find(x=>x.id===apptId);
   if(!a) return;
   const svc = serviceById(a.serviceId);
@@ -2730,6 +2736,7 @@ function closeCashModal(){
 }
 /* Sangria: tira dinheiro da gaveta durante o dia (banco, cofre, fornecedor) */
 function sangriaModal(view){
+  if(!isOwnerLevel() && userSession.role!=='recepcionista'){ showToast('Você não tem permissão para fazer sangria.'); return; }
   const session = openSession();
   if(!session){ showToast('Abra o caixa primeiro.'); return; }
   const totals = sessionTotals(session);
@@ -2841,6 +2848,7 @@ function monthAlreadyClosed(period){
 /* Congela o valor cobrado nos atendimentos antigos.
    Depois disso, mudar plano/status não altera mais comissões do passado. */
 function congelarValoresAntigos(view){
+  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode fazer isso.'); return; }
   const pendentes = state.appointments.filter(a=>a.status==='concluido' && a.valorCobrado==null);
   if(pendentes.length===0){ showToast('Todos os atendimentos já estão com o valor registrado.'); return; }
 
@@ -3176,6 +3184,7 @@ function withdrawalRequestModal(prof){
   });
 }
 function valeModal(profId, view){
+  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode dar vale.'); return; }
   const prof = state.professionals.find(p=>p.id===profId);
   if(!prof) return;
   const c = commissionOwed(profId);
@@ -3243,6 +3252,7 @@ function valeModal(profId, view){
   });
 }
 function payServiceCommission(profId){
+  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode pagar comissão.'); return; }
   const c = commissionOwed(profId);
   openModal(`
     <div style="padding:22px;">
