@@ -1108,7 +1108,15 @@ function render(){
             return `<div>
               <div style="font-size:10.5px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.08em;padding:0 10px;margin-bottom:5px;">${g.label}</div>
               <div style="display:flex;flex-direction:column;gap:3px;">
-                ${items.map(n=>`<div class="nav-item ${route===n.id?'active':''}" data-route="${n.id}">${n.icon}<span>${n.label}</span></div>`).join('')}
+                ${items.map(n=>{
+                  // contador de saques pendentes no menu Comissões
+                  const pend = (n.id==='comissoes' && isOwnerLevel())
+                    ? (state?.withdrawalRequests||[]).filter(w=>w.status==='pendente').length : 0;
+                  return `<div class="nav-item ${route===n.id?'active':''}" data-route="${n.id}">
+                    ${n.icon}<span style="flex:1;">${n.label}</span>
+                    ${pend>0?`<span style="background:var(--bad);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:17px;height:17px;display:flex;align-items:center;justify-content:center;padding:0 5px;">${pend}</span>`:''}
+                  </div>`;
+                }).join('')}
               </div>
             </div>`;
           }).join('')}
@@ -1187,6 +1195,9 @@ function render(){
     render();
   });
   app.querySelector('#notif-dropdown')?.addEventListener('click', e=>e.stopPropagation());
+  app.querySelectorAll('[data-ir-comissoes]').forEach(b=>b.addEventListener('click', ()=>{
+    notifState.open = false; route = 'comissoes'; render();
+  }));
   app.querySelectorAll('[data-notif-accept]').forEach(b=>b.addEventListener('click', async ()=>{
     const req = notifState.items.find(r=>r.id===b.dataset.notifAccept);
     if(req) await acceptBookingRequest(req);
@@ -5803,13 +5814,34 @@ function subscribeBookingNotifications(){
       tocarAlerta(); vibrarCelular();
       notificarSistema('Novo pedido de assinatura!', `${r.client_name} quer assinar o ${r.plan_name}`);
     })
+    // Solicitações de saque ficam dentro do JSON da barbearia, então
+    // escutamos a própria linha da loja para avisar o dono na hora.
+    .on('postgres_changes', {event:'UPDATE', schema:'public', table:'shops', filter:`id=eq.${currentShop.id}`}, payload=>{
+      if(!isOwnerLevel()) return;
+      const novos = (payload.new?.data?.withdrawalRequests || []).filter(w=>w.status==='pendente');
+      const atuais = (state?.withdrawalRequests || []).filter(w=>w.status==='pendente');
+      const idsAtuais = new Set(atuais.map(w=>w.id));
+      const chegaram = novos.filter(w=>!idsAtuais.has(w.id));
+      if(chegaram.length===0) return;
+      // traz os dados novos para a tela sem precisar recarregar
+      state.withdrawalRequests = payload.new.data.withdrawalRequests;
+      chegaram.forEach(w=>{
+        const nome = profName(w.professionalId);
+        showToast(`${nome} solicitou saque de ${BRL(w.amount)}`);
+        notificarSistema('Pedido de saque', `${nome} solicitou ${BRL(w.amount)}${w.note?' — '+w.note:''}`);
+      });
+      tocarAlerta(); vibrarCelular();
+      renderNotifUI();
+      if(route==='comissoes') render();
+    })
     .subscribe();
 }
 function renderNotifUI(){
   const badge = document.getElementById('notif-badge');
   const bell = document.getElementById('btn-notif-bell');
   if(bell){
-    const count = notifState.items.length;
+    const saquesPend = isOwnerLevel() ? (state?.withdrawalRequests||[]).filter(w=>w.status==='pendente').length : 0;
+    const count = notifState.items.length + saquesPend;
     let b = document.getElementById('notif-badge');
     if(count>0){
       if(!b){ b = document.createElement('span'); b.id='notif-badge'; b.style.cssText='position:absolute;top:-4px;right:-4px;background:var(--bad);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px;'; bell.appendChild(b); }
@@ -5820,8 +5852,22 @@ function renderNotifUI(){
   if(dropdown && notifState.open) dropdown.innerHTML = notifDropdownContent();
 }
 function notifDropdownContent(){
-  if(!notifState.items.length) return `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center;">Nenhum agendamento novo.</div>`;
-  return notifState.items.map(r=>`
+  const saques = isOwnerLevel() ? (state?.withdrawalRequests||[]).filter(w=>w.status==='pendente') : [];
+  const blocoSaques = saques.map(w=>`
+    <div style="padding:10px 12px;border-bottom:1px solid var(--border);background:var(--panel-2);">
+      <div style="font-size:13px;">${ICON.cash} <b>${esc(profName(w.professionalId))}</b> pediu saque</div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">
+        <span class="font-mono" style="color:var(--gold-bright);">${BRL(w.amount)}</span>${w.note?' · '+esc(w.note):''}
+        · ${new Date(w.createdAt).toLocaleDateString('pt-BR')}
+      </div>
+      <button class="btn btn-ghost" data-ir-comissoes="1" style="padding:5px 10px;font-size:11.5px;">Ver em Comissões</button>
+    </div>
+  `).join('');
+
+  if(!notifState.items.length && !saques.length){
+    return `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center;">Nada de novo por aqui.</div>`;
+  }
+  return blocoSaques + notifState.items.map(r=>`
     <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
       <div style="font-size:13px;"><b>${esc(r.client_name)}</b> agendou ${r.status==='aceito'?`<span class="pill pill-ok" style="font-size:10px;">já na agenda</span>`:''}</div>
       <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${esc(r.service_name)} com ${esc(r.professional_name)} · ${new Date(r.date+'T'+r.time).toLocaleDateString('pt-BR')} às ${esc(r.time)}</div>
