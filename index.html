@@ -4561,18 +4561,26 @@ async function syncAsaas(){
   if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
   if(result?.error){ showToast(result.error); return; }
   if(result?.note){ showToast(result.note); return; }
+  let novosPagamentos = 0;
+  const mesAtual = todayISO().slice(0,7);
   update(s=>{
     (result.results||[]).forEach(r=>{
       const m = s.subscriptionMembers.find(x=>x.id===r.memberId);
-      if(m){
-        m.status = r.status;
-        m.lastPaymentDate = r.lastPaymentDate;
-        m.lastPaymentAmount = r.lastPaymentAmount;
-        if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
-      }
+      if(!m) return;
+      const antes = m.lastPaymentDate;
+      m.status = r.status;
+      // só sobrescreve a data se o Asaas trouxe alguma — nunca apaga
+      if(r.lastPaymentDate) m.lastPaymentDate = r.lastPaymentDate;
+      if(r.lastPaymentAmount) m.lastPaymentAmount = r.lastPaymentAmount;
+      if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
+      if(r.lastPaymentDate && r.lastPaymentDate !== antes &&
+         String(r.lastPaymentDate).slice(0,7) === mesAtual) novosPagamentos++;
     });
   });
-  showToast(`Sincronizado — ${(result.results||[]).length} assinante(s) atualizados.`);
+  const total = (result.results||[]).length;
+  showToast(novosPagamentos > 0
+    ? `Sincronizado — ${novosPagamentos} pagamento(s) novo(s) deste mês encontrado(s).`
+    : `Sincronizado — ${total} assinante(s) verificados, nenhum pagamento novo neste mês.`);
 }
 function planModal(existing){
   const isEdit = !!existing;
