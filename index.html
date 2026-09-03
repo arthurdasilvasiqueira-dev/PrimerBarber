@@ -542,6 +542,7 @@ function migrateState(){
   state.withdrawalRequests = state.withdrawalRequests || [];
   state.onlineBooking = state.onlineBooking || {slug:'', allowCancel:true, allowReschedule:true, active:true, autoAccept:false};
   if(state.onlineBooking.autoAccept==null) state.onlineBooking.autoAccept = false;
+  if(state.onlineBooking.autoSubscribe==null) state.onlineBooking.autoSubscribe = false;
   state.waitlist = state.waitlist || [];
   state.commissionSettings = state.commissionSettings || {clubStaffPercent:60};
   if(state.commissionSettings.clubStaffPercent==null) state.commissionSettings.clubStaffPercent = 60;
@@ -4117,7 +4118,11 @@ async function loadSubscriptionRequests(view){
   listEl.querySelectorAll('[data-sub-accept]').forEach(b=>b.addEventListener('click', async ()=>{
     const req = data.find(r=>r.id===b.dataset.subAccept);
     await supa.from('subscription_requests').update({status:'aceito'}).eq('id', req.id);
-    memberModal(null, {name:req.client_name, phone:req.client_phone, planId:req.plan_id});
+    memberModal(null, {
+      name:req.client_name, phone:req.client_phone, planId:req.plan_id,
+      email:req.client_email || '', cpf:req.client_cpf || '',
+      paymentMethod:'asaas',
+    });
     loadSubscriptionRequests(view);
   }));
   listEl.querySelectorAll('[data-sub-decline]').forEach(b=>b.addEventListener('click', async ()=>{
@@ -4765,6 +4770,10 @@ function memberModal(existing, prefill){
         </div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" style="width:100%;"></div>
         <div><label>E-mail (para o portal do cliente)</label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
+        <div>
+          <label>CPF <span style="color:var(--muted-2);font-weight:400;">— obrigatório para cobrança pelo Asaas</span></label>
+          <input id="f-cpf" value="${esc(existing?.cpf)}" inputmode="numeric" placeholder="000.000.000-00" style="width:100%;">
+        </div>
         ${isEdit && existing?.asaasSubscriptionId ? `
           <div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--gold);font-size:11.5px;color:var(--muted);line-height:1.6;">
             ${ICON.link} <b style="color:var(--gold-bright);">Cobrança ativa no Asaas.</b>
@@ -4850,9 +4859,10 @@ function memberModal(existing, prefill){
       const paymentMethod = root.querySelector('#f-method').value;
       const email = root.querySelector('#f-email')?.value.trim() || '';
       const linkedClientName = root.querySelector('#f-linked')?.value || (existing?.linkedClientName || '');
+      const cpf = root.querySelector('#f-cpf').value.trim();
       const novoStatus = root.querySelector('#f-status').value;
       const data = {
-        name, phone, email, planId, paymentMethod, linkedClientName,
+        name, phone, email, cpf, planId, paymentMethod, linkedClientName,
         dueDate: root.querySelector('#f-due').value,
         status: novoStatus,
       };
@@ -4900,6 +4910,11 @@ function memberModal(existing, prefill){
         }
       }
 
+      if(!isEdit && paymentMethod==='asaas' && !cpf.replace(/\D/g,'')){
+        showToast('Para cobrar pelo Asaas é preciso informar o CPF do cliente.');
+        root.querySelector('#f-cpf').focus();
+        return;
+      }
       if(!isEdit && paymentMethod==='asaas'){
         if(!state.asaas.apiKey){ showToast('Configure sua API Key do Asaas em Integração Asaas antes de cadastrar via Pix/Cartão.'); return; }
         const submitBtn = root.querySelector('#f-submit');
@@ -4907,7 +4922,8 @@ function memberModal(existing, prefill){
         const plan = state.subscriptionPlans.find(p=>p.id===planId);
         const newMemberId = uid();
         const { data: result, error } = await supa.functions.invoke('asaas-sync', {
-          body: { action:'create_subscription', memberId: newMemberId, memberName:name, memberPhone:phone, planPrice:plan.price, planName:plan.name }
+          body: { action:'create_subscription', memberId: newMemberId, memberName:name, memberPhone:phone,
+                  memberEmail:email, memberCpf:cpf, planPrice:plan.price, planName:plan.name }
         });
         submitBtn.disabled = false; submitBtn.textContent = isEdit?'Salvar':'Adicionar membro';
         if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
@@ -6374,6 +6390,19 @@ function renderOnlineBooking(view){
         <div><label>Identificador do link (slug)</label><input id="f-slug" value="${ob.slug}" style="width:100%;"></div>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-active" ${ob.active?'checked':''} style="width:auto;padding:0;"> Página de agendamento ativa</label>
 
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:13px 15px;border:1px solid ${ob.autoSubscribe?'var(--gold)':'var(--border)'};border-radius:10px;cursor:pointer;">
+          <input type="checkbox" id="f-auto-subscribe" ${ob.autoSubscribe?'checked':''} style="width:auto;padding:0;margin-top:2px;">
+          <div>
+            <div style="font-size:13.5px;font-weight:600;">Criar assinatura automaticamente</div>
+            <div style="font-size:11.5px;color:var(--muted-2);margin-top:3px;line-height:1.6;">
+              ${ob.autoSubscribe
+                ? 'O cliente assina pela página de planos e a cobrança já é gerada no Asaas, com o link de pagamento na tela.'
+                : 'Hoje o pedido espera você confirmar. Ative para o cliente já sair com a cobrança gerada.'}
+              <br><span style="color:var(--warn);">Precisa da API Key do Asaas configurada.</span>
+            </div>
+          </div>
+        </label>
+
         <label style="display:flex;align-items:flex-start;gap:10px;padding:13px 15px;border:1px solid ${ob.autoAccept?'var(--gold)':'var(--border)'};border-radius:10px;cursor:pointer;">
           <input type="checkbox" id="f-auto-accept" ${ob.autoAccept?'checked':''} style="width:auto;padding:0;margin-top:2px;">
           <div>
@@ -6403,6 +6432,7 @@ function renderOnlineBooking(view){
       s.onlineBooking.slug = slugify(view.querySelector('#f-slug').value.trim()) || s.onlineBooking.slug;
       s.onlineBooking.active = view.querySelector('#f-active').checked;
       s.onlineBooking.autoAccept = view.querySelector('#f-auto-accept').checked;
+      s.onlineBooking.autoSubscribe = view.querySelector('#f-auto-subscribe').checked;
       s.onlineBooking.allowCancel = view.querySelector('#f-cancel').checked;
       s.onlineBooking.allowReschedule = view.querySelector('#f-resched').checked;
     });
@@ -7694,7 +7724,9 @@ function publicSubscribeModal(plan){
         <div><label>Nome completo</label><input id="ps-name" style="width:100%;"></div>
         <div><label>Telefone / WhatsApp</label><input id="ps-phone" placeholder="(00) 00000-0000" style="width:100%;"></div>
         <div><label>E-mail</label><input id="ps-email" type="email" style="width:100%;"></div>
-        <div><label>CPF (opcional)</label><input id="ps-cpf" style="width:100%;"></div>
+        <div><label>CPF</label><input id="ps-cpf" inputmode="numeric" placeholder="000.000.000-00" style="width:100%;">
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Necessário para emitir a cobrança da mensalidade.</div>
+        </div>
         <button class="btn btn-gold" id="ps-submit" style="justify-content:center;margin-top:4px;">Enviar pedido de assinatura</button>
         <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.5;">A barbearia vai receber seu pedido e entrar em contato com o link de pagamento.</div>
       </div>
@@ -7711,15 +7743,46 @@ function publicSubscribeModal(plan){
       const email = root.querySelector('#ps-email').value.trim();
       const cpf = root.querySelector('#ps-cpf').value.trim();
       if(!name || !phone){ showToast('Preencha ao menos nome e telefone.'); return; }
+      if(cpf.replace(/\D/g,'').length !== 11){ showToast('Informe um CPF válido (11 dígitos).'); return; }
       const btn = e.currentTarget;
-      btn.disabled = true; btn.textContent = 'Enviando...';
+      btn.disabled = true; btn.textContent = 'Criando sua assinatura...';
+
+      // Se a barbearia deixou no automático, a cobrança já é gerada aqui.
+      // O servidor devolve auto=false quando a opção está desligada.
+      const { data: auto, error: erroAuto } = await supa.functions.invoke('asaas-sync', {
+        body: { action:'public_subscribe', shopId: d.shop_id, planId: plan.id,
+                name, phone, email, cpf }
+      });
+      if(!erroAuto && auto?.error){
+        btn.disabled = false; btn.textContent = 'Enviar pedido de assinatura';
+        showToast(auto.error); return;
+      }
+      const criouSozinho = !erroAuto && auto?.auto === true;
+
+      // registra o pedido de qualquer forma (histórico e aviso para a barbearia)
       const { error } = await supa.from('subscription_requests').insert({
         shop_id: d.shop_id, plan_id: plan.id, plan_name: plan.name, plan_price: plan.price,
         client_name: name, client_phone: phone, client_email: email, client_cpf: cpf,
+        status: criouSozinho ? 'aceito' : 'pendente',
       });
       btn.disabled = false; btn.textContent = 'Enviar pedido de assinatura';
-      if(error){ showToast('Não foi possível enviar. Tente novamente.'); return; }
-      root.querySelector('#ps-done').style.display = 'block';
+      if(error && !criouSozinho){ showToast('Não foi possível enviar. Tente novamente.'); return; }
+
+      const done = root.querySelector('#ps-done');
+      if(criouSozinho){
+        done.innerHTML = `
+          <div style="font-size:40px;margin-bottom:10px;">🎉</div>
+          <div style="font-size:17px;font-weight:600;margin-bottom:8px;">Assinatura criada!</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:18px;">
+            ${esc(auto.planName)} — <b style="color:var(--gold-bright);">${BRL(auto.value)}/mês</b><br>
+            Sua primeira cobrança já está pronta.
+          </div>
+          ${auto.invoiceUrl ? `<a href="${esc(auto.invoiceUrl)}" target="_blank" class="btn btn-gold" style="width:100%;justify-content:center;text-decoration:none;padding:14px;">Pagar agora</a>` : ''}
+          <div style="font-size:11.5px;color:var(--muted-2);margin-top:12px;line-height:1.6;">
+            Você também recebe o link por e-mail. A partir do mês que vem a cobrança chega sozinha.
+          </div>`;
+      }
+      done.style.display = 'block';
       root.querySelector('#ps-submit').style.display = 'none';
     });
   });
