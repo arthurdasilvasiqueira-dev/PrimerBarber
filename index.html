@@ -821,13 +821,24 @@ function clubMemberForClient(clientName){
 function clubStarBadge(clientName){
   const m = clubMemberForClient(clientName);
   if(!m) return '';
-  const estilos = {
-    pago:      {cor:'var(--gold-bright)', txt:'Assinante do clube — em dia'},
-    atrasado:  {cor:'var(--bad)',         txt:'Assinante do clube — mensalidade atrasada'},
-    pendente:  {cor:'var(--warn)',        txt:'Assinante do clube — pagamento pendente'},
-  };
-  const e = estilos[m.status] || {cor:'var(--muted-2)', txt:'Assinante do clube'};
-  return `<span title="${e.txt}" style="color:${e.cor};display:inline-flex;">${ICON.star}</span>`;
+  const vencido = m.dueDate && String(m.dueDate) < todayISO();
+  let cor, txt;
+  if(m.status === 'atrasado' || vencido){
+    cor = 'var(--bad)';
+    txt = 'Assinante do clube — mensalidade atrasada (paga valor cheio)';
+  } else if(m.status === 'pago'){
+    cor = 'var(--gold-bright)';
+    txt = 'Assinante do clube — em dia';
+  } else if(m.status === 'pendente'){
+    cor = 'var(--gold-bright)';
+    txt = m.dueDate
+      ? `Assinante do clube — em dia (vence em ${new Date(String(m.dueDate)+'T12:00').toLocaleDateString('pt-BR')})`
+      : 'Assinante do clube — em dia';
+  } else {
+    cor = 'var(--muted-2)';
+    txt = `Assinante do clube — ${m.status}`;
+  }
+  return `<span title="${txt}" style="color:${cor};display:inline-flex;">${ICON.star}</span>`;
 }
 function clubOverdueWaButton(clientName, phone){
   const m = clubMemberForClient(clientName);
@@ -2046,7 +2057,12 @@ function precoParaCobrar(appt, service){
   const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
   out.plano = plan;
 
-  if(member.status === 'pago'){
+  // "Pendente" = cobrança emitida que ainda não venceu → o cliente está em
+  // dia e o plano vale normalmente. Só perde o benefício quem está atrasado.
+  const vencido = member.dueDate && String(member.dueDate) < todayISO();
+  const emDia = member.status === 'pago' || (member.status === 'pendente' && !vencido);
+
+  if(emDia){
     if(!plan){
       out.motivoCheio = 'O plano deste assinante foi removido do sistema.';
     } else if(!planValidOnDate(plan, appt.date)){
@@ -2062,12 +2078,14 @@ function precoParaCobrar(appt, service){
     } else {
       out.motivoCheio = `"${svc.name}" não está incluído no plano "${plan.name}". Se deveria estar, edite o plano e marque este serviço.`;
     }
-  } else if(member.status === 'atrasado'){
+  } else if(member.status === 'atrasado' || vencido){
     out.priceNote = ' (clube em atraso — valor cheio)';
-    out.motivoCheio = 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
+    out.motivoCheio = member.dueDate
+      ? `Mensalidade venceu em ${new Date(String(member.dueDate)+'T12:00').toLocaleDateString('pt-BR')} e não foi paga — o plano não vale enquanto estiver em atraso.`
+      : 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
   } else {
-    out.priceNote = ' (assinatura ainda não confirmada)';
-    out.motivoCheio = `Assinante com status "${member.status}" — o plano só vale depois que o pagamento é confirmado. Se ele já pagou, marque como recebido no Clube de Assinatura.`;
+    out.priceNote = ` (assinatura ${esc(member.status)})`;
+    out.motivoCheio = `Assinante com status "${member.status}" — o plano não está valendo. Verifique a situação dele no Clube de Assinatura.`;
   }
   return out;
 }
