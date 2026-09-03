@@ -927,7 +927,10 @@ function commissionOwed(profId){
     serviceEarned += valorCobrado * (pct/100);
   });
   const potEarned = potCommissionForProf(profId);
-  const serviceOwed = Math.max(0, serviceEarned - paidService);
+  // O vale e o saque são adiantamentos: saem do que o profissional tem a
+  // receber. Antes só abatiam do total geral, e a tela — que mostra o
+  // pendente de serviços — continuava exibindo o valor cheio.
+  const serviceOwed = Math.max(0, serviceEarned - paidService - paidSaque - paidVale);
   const potOwed = Math.max(0, potEarned - paidPote);
   const totalEarned = serviceEarned + potEarned;
   const totalPaid = paidService + paidPote + paidSaque + paidVale;
@@ -3295,6 +3298,9 @@ function renderComissoes(view){
               <div>
                 <div style="font-size:11.5px;color:var(--muted-2);">Serviços avulsos</div>
                 <div class="font-mono" style="font-size:15px;color:${c.serviceOwed>0?'var(--warn)':'var(--muted)'};">${BRL(c.serviceOwed)} <span style="font-size:11px;color:var(--muted-2);">a pagar</span></div>
+                ${(c.paidVale>0 || c.paidSaque>0) ? `<div style="font-size:11px;color:var(--muted-2);margin-top:3px;">
+                  ${BRL(c.serviceEarned)} de comissão${c.paidService>0?` − ${BRL(c.paidService)} já pago`:''}${c.paidVale>0?` − ${BRL(c.paidVale)} em vale`:''}${c.paidSaque>0?` − ${BRL(c.paidSaque)} em saque`:''}
+                </div>` : ''}
               </div>
               ${isOwnerLevel() ? `<button class="btn btn-ghost" style="padding:8px 12px;" data-vale="${p.id}">${ICON.cash} Vale</button>` : ''}
               ${isOwnerLevel() ? `<button class="btn btn-gold" style="padding:8px 12px;" ${c.serviceOwed<=0?'disabled':''} data-pay-service="${p.id}">Pagar</button>` : ''}
@@ -4184,15 +4190,22 @@ function renderClube(view){
       const mes = todayISO().slice(0,7);
       const semData = (state.subscriptionMembers||[]).filter(m=>m.status==='pago' && !m.lastPaymentDate);
       if(semData.length===0) return '';
-      const valor = semData.reduce((a,m)=>{ const p=state.subscriptionPlans.find(x=>x.id===m.planId); return a+(p?Number(p.price):0); },0);
+      const viaAsaas = semData.filter(m=>m.paymentMethod==='asaas').length;
       return `<div class="card" style="padding:15px 18px;margin-bottom:14px;border-color:var(--warn);">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-          <div style="font-size:12.5px;line-height:1.6;">
-            <b style="color:var(--warn);">${semData.length} assinante(s) marcados como pagos, mas sem data de pagamento</b><br>
-            <span style="color:var(--muted-2);">Por isso ${BRL(valor)} não entrou no "recebido no mês" nem no pote.
-            Confirme que o pagamento foi neste mês.</span>
-          </div>
-          <button class="btn btn-gold" id="btn-datar-pgto" style="flex-shrink:0;">Registrar como pago hoje</button>
+        <div style="font-size:12.5px;line-height:1.7;margin-bottom:12px;">
+          <b style="color:var(--warn);">${semData.length} assinante(s) com status "pago" sem data de pagamento</b><br>
+          <span style="color:var(--muted-2);">
+            Provavelmente é o status que veio da importação, referente a meses anteriores.
+            ${viaAsaas>0?`<b>${viaAsaas} deles pagam pelo Asaas</b> — o botão abaixo consulta o Asaas e corrige o status de cada um conforme o mês atual.`:''}
+          </span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${viaAsaas>0?`<button class="btn btn-gold" id="btn-sync-corrigir">${ICON.link} Consultar Asaas e corrigir</button>`:''}
+          <button class="btn btn-ghost" id="btn-datar-pgto" style="font-size:12.5px;">Marcar como pagos HOJE</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted-2);margin-top:9px;line-height:1.6;">
+          Use "marcar como pagos hoje" apenas se eles realmente pagaram neste mês em dinheiro.
+          Para quem paga pelo Asaas, prefira consultar — assim o mês certo é respeitado.
         </div>
       </div>`;
     })()}
@@ -4356,7 +4369,14 @@ function renderClube(view){
   view.querySelector('#btn-new-member').addEventListener('click', ()=>memberModal());
   view.querySelector('#btn-ver-faltando')?.addEventListener('click', ()=>{
     const mesAtual = todayISO().slice(0,7);
-    const faltando = state.subscriptionMembers.filter(m=>m.status!=='cancelado' && !pagouNoMes(m, mesAtual));
+    const faltando = state.subscriptionMembers
+      .filter(m=>m.status!=='cancelado' && !pagouNoMes(m, mesAtual))
+      .sort((a,b)=>{
+        // quem deve há mais tempo aparece primeiro
+        const da = a.lastPaymentDate || '0000-00';
+        const db = b.lastPaymentDate || '0000-00';
+        return String(da).localeCompare(String(db));
+      });
     openModal(`
       <div style="padding:22px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -4368,9 +4388,18 @@ function renderClube(view){
           ${faltando.map(m=>{
             const p = state.subscriptionPlans.find(x=>x.id===m.planId);
             const msg = `Olá ${m.name}! Passando para lembrar da mensalidade do ${p?p.name:'clube'}. Qualquer dúvida é só chamar!`;
+            // há quantos meses não paga?
+            const mesesSemPagar = (()=>{
+              if(!m.lastPaymentDate) return null;
+              const [ay,am] = String(m.lastPaymentDate).slice(0,7).split('-').map(Number);
+              const [hy,hm] = todayISO().slice(0,7).split('-').map(Number);
+              return (hy-ay)*12 + (hm-am);
+            })();
             return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
               <div style="font-size:13px;min-width:160px;">
                 <b>${esc(m.name)}</b> <span class="pill pill-muted" style="font-size:10px;">${esc(m.paymentMethod==='asaas'?'Asaas':'manual')}</span>
+                ${mesesSemPagar!=null && mesesSemPagar>1 ? `<span class="pill pill-bad" style="font-size:10px;">${mesesSemPagar} meses sem pagar</span>` : ''}
+                ${mesesSemPagar==null ? `<span class="pill pill-warn" style="font-size:10px;">nunca pagou</span>` : ''}
                 ${m.status==='pago' && !pagouNoMes(m, todayISO().slice(0,7)) ? `<span class="pill pill-warn" style="font-size:10px;">marcado pago, sem data</span>` : ''}<br>
                 <span style="color:var(--muted-2);font-size:11.5px;">${p?esc(p.name)+' · '+BRL(p.price):'plano removido'}${m.lastPaymentDate?' · último pgto '+new Date(String(m.lastPaymentDate).slice(0,10)+'T12:00').toLocaleDateString('pt-BR'):' · sem data de pagamento'}</span>
               </div>
@@ -4443,6 +4472,7 @@ function renderClube(view){
       });
     });
   });
+  view.querySelector('#btn-sync-corrigir')?.addEventListener('click', syncAsaas);
   view.querySelector('#btn-datar-pgto')?.addEventListener('click', ()=>{
     const semData = (state.subscriptionMembers||[]).filter(m=>m.status==='pago' && !m.lastPaymentDate);
     if(!confirm(`Registrar ${semData.length} pagamento(s) com a data de hoje?\n\nUse isso só se eles realmente pagaram neste mês.`)) return;
@@ -4578,6 +4608,9 @@ async function syncAsaas(){
       if(r.lastPaymentDate) m.lastPaymentDate = r.lastPaymentDate;
       if(r.lastPaymentAmount) m.lastPaymentAmount = r.lastPaymentAmount;
       if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
+      // Status "pago" sem data era resquício da importação. Se o Asaas diz
+      // que não pagou este mês, limpamos para não parecer em dia.
+      if(!r.pagouEsteMes && !r.lastPaymentDate) m.lastPaymentDate = null;
       if(r.pagouEsteMes && r.lastPaymentDate !== antes) novosPagamentos++;
     });
   });
