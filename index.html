@@ -948,8 +948,12 @@ function monthlyEarnedForProf(profId){
   let total = 0;
   concludedThisMonth.forEach(ap=>{
     const s = serviceById(ap.serviceId); if(!s) return;
+    // usa o valor REALMENTE cobrado (com desconto e clube aplicados),
+    // não o preço de tabela
+    const valorCobrado = (ap.valorCobrado != null) ? Number(ap.valorCobrado) : precoParaCobrar(ap, s).basePrice;
+    if(valorCobrado <= 0) return;
     const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
-    total += s.price * (pct/100);
+    total += valorCobrado * (pct/100);
   });
   return total + potCommissionForProf(profId);
 }
@@ -3249,15 +3253,37 @@ function renderComissoes(view){
     </div>` : ''}
 
     ${myProf ? `
-    <div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:var(--gold);">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
-        <div>
-          <div style="font-size:11.5px;color:var(--muted-2);">Total ganho em ${periodLabel(period)} (comissões)</div>
-          <div class="font-mono" style="font-size:22px;color:var(--gold-bright);">${BRL(monthlyEarnedForProf(myProf.id))}</div>
+    ${(()=>{
+      const cm = commissionOwed(myProf.id);
+      const ganho = monthlyEarnedForProf(myProf.id);
+      return `<div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:var(--gold);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
+          <div style="min-width:200px;">
+            <div style="font-size:11.5px;color:var(--muted-2);">A receber agora</div>
+            <div class="font-mono" style="font-size:26px;color:var(--gold-bright);">${BRL(cm.owed)}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;margin-top:12px;padding-top:11px;border-top:1px solid var(--border);font-size:12px;">
+              <div style="display:flex;justify-content:space-between;gap:14px;">
+                <span style="color:var(--muted);">Comissão em ${periodLabel(period)}</span>
+                <span class="font-mono">${BRL(ganho)}</span>
+              </div>
+              ${cm.paidService>0?`<div style="display:flex;justify-content:space-between;gap:14px;">
+                <span style="color:var(--muted);">Já recebido</span>
+                <span class="font-mono" style="color:var(--bad);">− ${BRL(cm.paidService)}</span></div>`:''}
+              ${cm.paidVale>0?`<div style="display:flex;justify-content:space-between;gap:14px;">
+                <span style="color:var(--muted);">Vale adiantado</span>
+                <span class="font-mono" style="color:var(--bad);">− ${BRL(cm.paidVale)}</span></div>`:''}
+              ${cm.paidSaque>0?`<div style="display:flex;justify-content:space-between;gap:14px;">
+                <span style="color:var(--muted);">Saques pagos</span>
+                <span class="font-mono" style="color:var(--bad);">− ${BRL(cm.paidSaque)}</span></div>`:''}
+              ${cm.paidPote>0?`<div style="display:flex;justify-content:space-between;gap:14px;">
+                <span style="color:var(--muted);">Pote já pago</span>
+                <span class="font-mono" style="color:var(--bad);">− ${BRL(cm.paidPote)}</span></div>`:''}
+            </div>
+          </div>
+          <button class="btn btn-gold" id="btn-request-withdrawal" style="flex-shrink:0;">${ICON.cash} Solicitar saque</button>
         </div>
-        <button class="btn btn-gold" id="btn-request-withdrawal">${ICON.cash} Solicitar saque</button>
-      </div>
-    </div>
+      </div>`;
+    })()}
     ${myWithdrawals.length>0 ? `
     <div class="card" style="padding:16px 18px;margin-bottom:20px;">
       <div class="font-display" style="font-size:14.5px;font-weight:600;margin-bottom:10px;">Meus pedidos de saque</div>
