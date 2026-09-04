@@ -1117,12 +1117,33 @@ function clubFichasBreakdown(){
   const potBarbearia = potTotal - potStaff;
   const byProf = {};
   entries.forEach(e=>{ byProf[e.appt.professionalId] = (byProf[e.appt.professionalId]||0) + e.fichas; });
-  const rows = servingProfessionals().map(p=>{
+  // usa TODOS os profissionais aqui (não só quem "atende clientes"), porque
+  // alguém pode ter feito atendimentos no passado e depois ter sido
+  // marcado como "não atende" — a ficha dele não pode sumir da conta.
+  const rows = (state.professionals||[]).map(p=>{
     const fichas = byProf[p.id] || 0;
     const value = totalFichas>0 ? potStaff*(fichas/totalFichas) : 0;
     return {prof:p, fichas, value};
   }).filter(r=>r.fichas>0);
   return {potTotal, potStaff, potBarbearia, staffPercent, totalFichas, entries, rows};
+}
+
+// Diagnóstico: por que um atendimento de assinante não gerou ficha?
+function diagnosticoFichas(){
+  const monthPrefix = todayISO().slice(0,7);
+  const problemas = [];
+  state.appointments
+    .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix))
+    .forEach(a=>{
+      const membro = clubMemberForClient(a.client);
+      if(!membro) return; // não é assinante, não deveria gerar ficha mesmo
+      const service = serviceById(a.serviceId);
+      const prof = state.professionals.find(p=>p.id===a.professionalId);
+      if(!service){ problemas.push({a, motivo:'Serviço foi excluído do sistema'}); return; }
+      if(!service.clubFichas){ problemas.push({a, motivo:`Serviço "${service.name}" está com 0 fichas configuradas`}); return; }
+      if(prof && prof.servesClients===false){ problemas.push({a, motivo:`${prof.name} está marcado como "não atende clientes" — a ficha conta, mas ele não aparece nas listas comuns`}); return; }
+    });
+  return problemas;
 }
 function potCommissionForProf(profId){
   const row = clubFichasBreakdown().rows.find(r=>r.prof.id===profId);
@@ -3369,6 +3390,26 @@ function renderComissoes(view){
       <div class="font-display" style="font-size:16px;font-weight:600;">Pote do clube — detalhamento de ${periodLabel(period)}</div>
     </div>
     <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">Atendimento de assinante coberto pelo plano <b>não gera comissão de serviço</b> — o pagamento vem por aqui, pelas fichas. As fichas contam assim que o profissional atende um assinante, mesmo antes da mensalidade entrar. O pote é formado pelas mensalidades recebidas no mês: uma % fica para a barbearia e o resto é dividido entre os profissionais, proporcional às fichas de cada um.</div>
+
+    ${(()=>{
+      const problemas = diagnosticoFichas();
+      if(problemas.length===0) return '';
+      // agrupa por motivo, pra não repetir texto igual várias vezes
+      const porMotivo = {};
+      problemas.forEach(p=>{ (porMotivo[p.motivo] = porMotivo[p.motivo]||[]).push(p.a); });
+      return `<div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--bad);">
+        <div style="font-size:12.5px;color:var(--bad);font-weight:600;margin-bottom:8px;">
+          ${problemas.length} atendimento(s) de assinante não geraram ficha este mês
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          ${Object.entries(porMotivo).map(([motivo,apps])=>`
+            <div style="font-size:12px;color:var(--muted);line-height:1.6;">
+              • ${esc(motivo)} — ${apps.length} atendimento(s): ${apps.slice(0,4).map(a=>esc(a.client)+' ('+esc(profName(a.professionalId))+')').join(', ')}${apps.length>4?` e mais ${apps.length-4}`:''}
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+    })()}
 
     ${fichasBreakdown.potTotal===0 && fichasBreakdown.totalFichas>0 ? `
       <div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--warn);">
