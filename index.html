@@ -6587,6 +6587,21 @@ function renderOnlineBooking(view){
 }
 
 async function acceptBookingRequest(req){
+  // Avisa se o pedido cair num dia de folga ou fora do expediente do
+  // profissional, antes de jogar direto na agenda sem querer.
+  const prof = state.professionals.find(p=>p.id===req.professional_id);
+  if(prof){
+    const dow = new Date(req.date+'T12:00').getDay();
+    const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
+    const foraDoDia = !dias.includes(dow);
+    const foraDoHorario = req.time < (prof.workStart||'09:00') || req.time >= (prof.workEnd||'18:00');
+    if(foraDoDia || foraDoHorario){
+      const motivo = foraDoDia
+        ? `${prof.name} não trabalha neste dia da semana`
+        : `${req.time} está fora do expediente de ${prof.name} (${prof.workStart||'09:00'} às ${prof.workEnd||'18:00'})`;
+      if(!confirm(`⚠ ${motivo}.\n\nAceitar mesmo assim como uma exceção?`)) return;
+    }
+  }
   update(s=>{
     s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null});
   });
@@ -7463,6 +7478,17 @@ async function loadPublicSlots(){
   const wrap = document.getElementById('pb-slots-wrap');
   const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
   if(!wrap || !prof) return;
+
+  // Confere se o profissional trabalha neste dia da semana ANTES de
+  // qualquer coisa. Sem isso, o sistema gerava horários mesmo em dias
+  // de folga (ex: domingo, ou antes do profissional começar na barbearia).
+  const diaSemana = new Date(pubBooking.date+'T12:00').getDay();
+  const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
+  if(!dias.includes(diaSemana)){
+    wrap.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">${esc(prof.name)} não atende neste dia. Escolha outra data.</div>`;
+    return;
+  }
+
   wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);">Carregando horários...</div>`;
   const { data: booked } = await supa.rpc('get_booked_times', { p_shop_id: pubBooking.shopId, p_professional_id: prof.id, p_date: pubBooking.date });
   const bookedSet = new Set(booked || []);
