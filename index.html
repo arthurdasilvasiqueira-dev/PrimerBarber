@@ -5267,9 +5267,18 @@ function renderMinhaAssinatura(view){
         <button class="btn btn-ghost" id="btn-save-owner-name" style="width:fit-content;">Salvar nome</button>
       </div>
       <div class="divider-blade" style="margin:18px 0;"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🔔 Notificação mesmo com o site fechado</div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:12px;line-height:1.6;">
+        Ative isso pra chegar na barra de notificações do celular ou do computador — igual WhatsApp ou Facebook.
+        Precisa ativar <b>em cada aparelho</b> que você quiser receber (celular, PC, etc).
+      </div>
+      <button class="btn btn-gold" id="btn-ativar-push" style="font-size:13px;">${ICON.bell} Ativar notificação neste dispositivo</button>
+      <div id="push-status" style="font-size:11.5px;color:var(--muted-2);margin-top:8px;"></div>
+
+      <div class="divider-blade" style="margin:18px 0;"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Alertas de novo agendamento</div>
       <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:12px;line-height:1.6;">
-        Funcionam enquanto o sistema estiver aberto no navegador.
+        Som e vibração — funcionam só enquanto o sistema estiver aberto no navegador.
       </div>
       <div style="display:flex;flex-direction:column;gap:10px;max-width:420px;">
         <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;cursor:pointer;">
@@ -5339,6 +5348,22 @@ function renderMinhaAssinatura(view){
       if(k==='push' && el.checked) pedirPermissaoAlertas();
     });
   });
+  view.querySelector('#btn-ativar-push')?.addEventListener('click', async (e)=>{
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = 'Ativando...';
+    await ativarNotificacaoPush();
+    btn.disabled = false; btn.textContent = `${ICON.bell} Ativar notificação neste dispositivo`;
+    atualizaStatusPush();
+  });
+  const atualizaStatusPush = async ()=>{
+    const el = view.querySelector('#push-status');
+    if(!el) return;
+    const st = await statusNotificacaoPush();
+    if(st==='on') el.innerHTML = '<span style="color:var(--ok);">✓ Ativado neste dispositivo.</span>';
+    else if(st==='unsupported') el.textContent = 'Este navegador não suporta (funciona no Chrome, Edge e similares).';
+    else el.textContent = 'Ainda não ativado neste dispositivo.';
+  };
+  atualizaStatusPush();
   view.querySelector('#btn-test-alert')?.addEventListener('click', ()=>{
     alertarNovoAgendamento({
       client_name:'Cliente Teste', service_name:'Corte', professional_name:'Você',
@@ -6679,6 +6704,70 @@ async function pedirPermissaoAlertas(){
   showToast('Permissão não concedida.');
   return false;
 }
+
+/* ===== NOTIFICAÇÃO PUSH DE VERDADE (chega com o site fechado) =====
+   Diferente do alerta sonoro (que só funciona com a aba aberta), isto
+   usa o Service Worker do navegador — a mesma tecnologia por trás das
+   notificações do Facebook, WhatsApp Web, etc. */
+const VAPID_PUBLIC_KEY = 'BCbZm9QgNYBtE7Lg_urxVLUoXvlCRN8A5Bo5cbFVqjNunQyldFqtooNy9H3PDcLbuNmwvT0cRUoVuX7_D1Ib5VU';
+
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+async function ativarNotificacaoPush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    showToast('Este navegador não suporta notificações em segundo plano. Tente pelo Chrome ou Edge.');
+    return false;
+  }
+  const ok = await pedirPermissaoAlertas();
+  if(!ok) return false;
+  try{
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+    const json = sub.toJSON();
+    const { error } = await supa.from('push_subscriptions').upsert({
+      shop_id: currentShop.id,
+      endpoint: sub.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+    }, { onConflict: 'endpoint' });
+    if(error){ showToast('Não foi possível ativar: '+error.message); return false; }
+    showToast('Notificações ativadas neste dispositivo! Você vai receber avisos mesmo com o site fechado.');
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast('Não foi possível ativar as notificações neste navegador.');
+    return false;
+  }
+}
+
+async function statusNotificacaoPush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+  try{
+    const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+    if(!reg) return 'off';
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? 'on' : 'off';
+  }catch(e){ return 'off'; }
+}
+
+async function enviarPushParaLoja(shopId, title, message, url){
+  try{
+    await supa.functions.invoke('push-notify', { body: { shopId, title, message, url } });
+  }catch(e){ /* notificação é extra, nunca deve travar o fluxo principal */ }
+}
+
 function subscribeBookingNotifications(){
   if(!supa || !currentShop || notifState.channel) return;
   notifState.channel = supa.channel('booking-notify-'+currentShop.id)
@@ -7436,7 +7525,13 @@ async function submitPublicBooking(){
     p_client_phone: phone,
   });
   if(!erroAuto && auto?.error){ alert(auto.error); return; }
-  const aceitoNaHora = !erroAuto && auto?.auto === true;
+  if(erroAuto){
+    // Sem confirmação da automação: melhor avisar do que deixar o cliente
+    // achar que está tudo certo quando pode não estar.
+    alert('Não foi possível confirmar seu agendamento agora. Tente novamente ou fale direto com a barbearia.');
+    return;
+  }
+  const aceitoNaHora = auto?.auto === true;
 
   // Registra o pedido de qualquer forma — é o que aciona o aviso e fica no histórico
   const { error } = await supa.from('booking_requests').insert({
@@ -7447,7 +7542,17 @@ async function submitPublicBooking(){
     date: pubBooking.date, time: pubBooking.time,
     status: aceitoNaHora ? 'aceito' : 'pendente',
   });
-  if(error && !aceitoNaHora){ alert('Não foi possível enviar o pedido. Tente novamente.'); return; }
+  if(error){
+    alert('Não foi possível enviar o pedido. Tente novamente.'); return;
+  }
+
+  // Avisa a barbearia na hora — chega mesmo com o site fechado
+  enviarPushParaLoja(
+    pubBooking.shopId,
+    aceitoNaHora ? 'Novo agendamento confirmado!' : 'Novo pedido de agendamento',
+    `${name} — ${service.name} com ${prof.name}, ${new Date(pubBooking.date+'T'+pubBooking.time).toLocaleDateString('pt-BR')} às ${pubBooking.time}`,
+    aceitoNaHora ? '?agenda' : '?route=agendamento-online'
+  );
 
   document.getElementById('pb-form').style.display = 'none';
   const done = document.getElementById('pb-done');
@@ -7456,6 +7561,13 @@ async function submitPublicBooking(){
     const s = done.querySelector('[data-done-sub]');
     if(t) t.textContent = 'Horário confirmado! ✅';
     if(s) s.textContent = `${new Date(pubBooking.date+'T'+pubBooking.time).toLocaleDateString('pt-BR')} às ${pubBooking.time} com ${prof.name}. Te esperamos!`;
+  } else {
+    // Deixa claro que ISSO NÃO É uma confirmação — evita o cliente achar
+    // que já está agendado quando na verdade a barbearia ainda precisa aceitar.
+    const t = done.querySelector('[data-done-title]');
+    const s = done.querySelector('[data-done-sub]');
+    if(t) t.textContent = 'Pedido enviado — aguarde a confirmação';
+    if(s) s.innerHTML = `A barbearia precisa <b>confirmar</b> este horário antes dele valer. Você será avisado. Se não tiver retorno logo, entre em contato direto para garantir.`;
   }
   done.style.display = 'block';
 }
@@ -7887,6 +7999,13 @@ function publicSubscribeModal(plan){
       btn.disabled = false; btn.textContent = 'Enviar pedido de assinatura';
       if(error && !criouSozinho){ showToast('Não foi possível enviar. Tente novamente.'); return; }
 
+      enviarPushParaLoja(
+        d.shop_id,
+        criouSozinho ? 'Nova assinatura do clube!' : 'Novo pedido de assinatura',
+        `${name} — ${plan.name} (${BRL(plan.price)}/mês)`,
+        '?route=clube'
+      );
+
       const done = root.querySelector('#ps-done');
       if(criouSozinho){
         done.innerHTML = `
@@ -8299,6 +8418,12 @@ async function boot(){
   const icon = document.createElement('link');
   icon.rel = 'apple-touch-icon'; icon.href = APP_LOGO_ICON;
   document.head.appendChild(icon);
+
+  // Registra o Service Worker cedo, para as notificações funcionarem
+  // assim que o dono ativar (não precisa esperar entrar no painel).
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  }
 })();
 
 /* ============ INIT ============ */
