@@ -1620,8 +1620,9 @@ function agendaGridView(dateISO, profList){
       const top = ((h - minH) + m/60) * SLOT_H;
       const height = Math.max(26, (dur/60) * SLOT_H - 3);
       const done = a.status==='concluido';
-      return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${done?'var(--ok)':'var(--gold)'};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
-        <div class="font-mono" style="font-size:10px;color:var(--muted-2);">${a.time}${svc?` · ${dur}min`:''}</div>
+      const veioDoLink = a.origem==='online';
+      return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}${veioDoLink?' (agendado pelo próprio cliente)':''}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${veioDoLink?'#4a9fd8':(done?'var(--ok)':'var(--gold)')};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
+        <div class="font-mono" style="font-size:10px;color:var(--muted-2);display:flex;align-items:center;gap:4px;">${a.time}${svc?` · ${dur}min`:''}${veioDoLink?` <span style="color:#4a9fd8;" title="Agendado pelo próprio cliente, pelo link">${ICON.globe}</span>`:''}</div>
         <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>
         ${height>44 && svc?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(svc.name)}</div>`:''}
       </div>`;
@@ -1811,7 +1812,7 @@ function renderAgenda(view){
           return `<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
             <div class="font-mono" style="font-size:15px;color:var(--gold-bright);min-width:50px;">${a.time}</div>
             <div style="flex:1;min-width:180px;">
-              <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${clubStarBadge(a.client)} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
+              <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${clubStarBadge(a.client)} ${a.origem==='online'?`<span class="pill" style="background:rgba(74,159,216,.15);color:#4a9fd8;border-color:rgba(74,159,216,.35);font-size:10px;">${ICON.globe} agendou pelo link</span>`:''} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
               <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${s?esc(s.name):'Serviço removido'} · ${esc(profName(a.professionalId))} ${s?`· ${ICON.clock} ${s.duration} min`:''}</div>
               ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+esc(a.rating.comment):''}</div>` : ''}
               ${clubMemberForClient(a.client)?.status==='atrasado' ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="pill pill-bad" style="font-size:11px;">Clube em atraso — cobrança em valor cheio</span>${clubOverdueWaButton(a.client)}</div>` : ''}
@@ -2422,6 +2423,7 @@ function apptActionsModal(apptId, view){
 
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px;">
         <span class="pill pill-${st.t}">${st.l}</span>
+        ${a.origem==='online'?`<span class="pill" style="background:rgba(74,159,216,.15);color:#4a9fd8;border-color:rgba(74,159,216,.35);">${ICON.globe} Agendado pelo cliente (link)${a.clientPhone?' · '+esc(a.clientPhone):''}</span>`:`<span class="pill pill-muted">${ICON.shield} Marcado pela barbearia${a.criadoPor?' · '+esc(a.criadoPor):''}</span>`}
         ${a.seriesId?`<span class="pill pill-muted">${ICON.clock} recorrente (${a.seriesFreqDias||7} em ${a.seriesFreqDias||7} dias)</span>`:''}
         ${svc ? (cobranca.planoAtivo
           ? `<span class="pill pill-ok" style="font-weight:600;">★ PLANO ATIVO · R$ 0,00</span>`
@@ -2914,6 +2916,7 @@ function openApptModal(pre){
             depositStatus: (dep>0 && d===date) ?'pendente':'nao_aplicavel', depositAmount: d===date?dep:0,
             createdAt:new Date().toISOString(), rating:null,
             seriesId, seriesFreqDias: seriesId?freqDias:undefined,
+            origem: 'painel', criadoPor: userSession.role==='profissional' ? profName(userSession.professionalId) : (state.ownerName || 'equipe'),
           });
           criados++;
         });
@@ -6693,7 +6696,7 @@ async function acceptBookingRequest(req){
     }
   }
   update(s=>{
-    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null});
+    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||''});
   });
   await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
   showToast('Agendamento aceito e adicionado à agenda.');
