@@ -6222,6 +6222,26 @@ function ymLabel(ym){
   const [y,m] = ym.split('-').map(Number);
   return new Date(y, m-1, 1).toLocaleDateString('pt-BR',{month:'short', year:'numeric'}).replace('.','').toUpperCase();
 }
+
+/* ============ RELATÓRIOS — desempenho por semana/mês ============ */
+let relatSemana = null; // segunda-feira da semana em exibição (YYYY-MM-DD)
+let relatMes = null;
+function addDaysISO(dateStr, dias){
+  const d = new Date(dateStr+'T12:00');
+  d.setDate(d.getDate()+dias);
+  return d.toISOString().slice(0,10);
+}
+function mondayOfWeek(dateStr){
+  const d = new Date(dateStr+'T12:00');
+  const dow = (d.getDay()+6)%7; // 0=segunda
+  return addDaysISO(dateStr, -dow);
+}
+function weekRangeLabel(inicioISO){
+  const fim = addDaysISO(inicioISO, 6);
+  const f = d => new Date(d+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  return `${f(inicioISO)} a ${f(fim)}`;
+}
+
 function variacao(atual, anterior){
   if(!anterior) return atual>0 ? 100 : 0;
   return ((atual - anterior) / Math.abs(anterior)) * 100;
@@ -6358,6 +6378,26 @@ function renderRelatorios(view){
   })).sort((a,b)=>b.count-a.count);
   const maxSvc = Math.max(1, ...bySvc.map(b=>b.count));
 
+  // ---- Desempenho por profissional: semana e mês navegáveis ----
+  if(!relatSemana) relatSemana = mondayOfWeek(todayISO());
+  if(!relatMes) relatMes = todayISO().slice(0,7);
+
+  const inicioSemana = relatSemana;
+  const fimSemana = addDaysISO(inicioSemana, 6);
+  const doneSemana = state.appointments.filter(a=>a.status==='concluido' && a.date>=inicioSemana && a.date<=fimSemana);
+  const porProfSemana = servingProfessionals().map(p=>{
+    const apps = doneSemana.filter(a=>a.professionalId===p.id);
+    return { prof:p, valor: apps.reduce((t,a)=>t+valorRealAtendimento(a),0), qtd: apps.length };
+  }).sort((a,b)=>b.valor-a.valor);
+  const maxSemana = Math.max(1, ...porProfSemana.map(r=>r.valor));
+
+  const doneMes = state.appointments.filter(a=>a.status==='concluido' && a.date.startsWith(relatMes));
+  const porProfMes = servingProfessionals().map(p=>{
+    const apps = doneMes.filter(a=>a.professionalId===p.id);
+    return { prof:p, valor: apps.reduce((t,a)=>t+valorRealAtendimento(a),0), qtd: apps.length };
+  }).sort((a,b)=>b.valor-a.valor);
+  const maxMes = Math.max(1, ...porProfMes.map(r=>r.valor));
+
   view.innerHTML = `
     ${pageHeader('Relatórios', 'Desempenho com base nos atendimentos concluídos')}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;">
@@ -6365,6 +6405,52 @@ function renderRelatorios(view){
       ${statCard('Taxa de ocupação', ocupacao+'%', 'agendamentos concluídos vs. total', 'ok')}
       ${statCard('Atendimentos concluídos', done.length, 'no histórico atual', 'ok')}
       ${statCard('Taxa de no-show', ns.rate.toFixed(0)+'%', ns.total+' falta(s) registrada(s)', ns.rate>10?'bad':'ok')}
+    </div>
+
+    <div class="card" style="padding:20px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:10px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Desempenho por profissional — semana</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn btn-ghost" id="rel-sem-prev" style="padding:6px 10px;">‹</button>
+          <span class="pill" style="padding:6px 12px;font-size:12.5px;">${esc(weekRangeLabel(inicioSemana))}</span>
+          <button class="btn btn-ghost" id="rel-sem-next" style="padding:6px 10px;" ${fimSemana>=todayISO()?'disabled':''}>›</button>
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin.</div>
+      ${porProfSemana.length===0 ? emptyState('Nenhum profissional cadastrado.') : porProfSemana.map(r=>`
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-size:11.5px;">${r.qtd} atend.</span></span>
+            <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
+          </div>
+          <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
+            <div style="height:100%;width:${(r.valor/maxSemana*100).toFixed(0)}%;background:var(--gold);border-radius:99px;"></div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="card" style="padding:20px;margin-bottom:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:10px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Desempenho por profissional — mês</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn btn-ghost" id="rel-mes-prev" style="padding:6px 10px;">‹</button>
+          <span class="pill" style="padding:6px 12px;font-size:12.5px;">${ymLabel(relatMes)}</span>
+          <button class="btn btn-ghost" id="rel-mes-next" style="padding:6px 10px;" ${relatMes>=currentYM()?'disabled':''}>›</button>
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin.</div>
+      ${porProfMes.length===0 ? emptyState('Nenhum profissional cadastrado.') : porProfMes.map(r=>`
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+            <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-size:11.5px;">${r.qtd} atend.</span></span>
+            <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
+          </div>
+          <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
+            <div style="height:100%;width:${(r.valor/maxMes*100).toFixed(0)}%;background:var(--gold);border-radius:99px;"></div>
+          </div>
+        </div>
+      `).join('')}
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="dash-grid">
@@ -6420,6 +6506,10 @@ function renderRelatorios(view){
     </div>
     <div style="margin-top:14px;font-size:12px;color:var(--muted-2);">Os relatórios são calculados em tempo real a partir da agenda e do caixa — sem necessidade de exportação manual.</div>
   `;
+  view.querySelector('#rel-sem-prev')?.addEventListener('click', ()=>{ relatSemana = addDaysISO(relatSemana,-7); renderRelatorios(view); });
+  view.querySelector('#rel-sem-next')?.addEventListener('click', ()=>{ relatSemana = addDaysISO(relatSemana,7); renderRelatorios(view); });
+  view.querySelector('#rel-mes-prev')?.addEventListener('click', ()=>{ relatMes = shiftYM(relatMes,-1); renderRelatorios(view); });
+  view.querySelector('#rel-mes-next')?.addEventListener('click', ()=>{ relatMes = shiftYM(relatMes,1); renderRelatorios(view); });
 }
 
 /* ============ FIDELIDADE ============ */
