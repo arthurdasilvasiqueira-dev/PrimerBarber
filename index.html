@@ -6390,16 +6390,34 @@ function renderRelatorios(view){
   const doneSemana = state.appointments.filter(a=>a.status==='concluido' && a.date>=inicioSemana && a.date<=fimSemana);
   const porProfSemana = servingProfessionals().map(p=>{
     const apps = doneSemana.filter(a=>a.professionalId===p.id);
-    return { prof:p, valor: apps.reduce((t,a)=>t+valorRealAtendimento(a),0), qtd: apps.length };
+    const bruto = apps.reduce((t,a)=>t+valorRealAtendimento(a),0);
+    const comissao = apps.reduce((t,a)=>{
+      const v = valorRealAtendimento(a);
+      if(v<=0) return t; // coberto pelo clube: não gera comissão de serviço
+      return t + v*(effectiveCommissionPercent(p, a.serviceId)/100);
+    },0);
+    return { prof:p, valor:bruto, comissao, lucro: bruto-comissao, qtd: apps.length };
   }).sort((a,b)=>b.valor-a.valor);
   const maxSemana = Math.max(1, ...porProfSemana.map(r=>r.valor));
+  const totSemana = porProfSemana.reduce((t,r)=>({
+    bruto:t.bruto+r.valor, comissao:t.comissao+r.comissao, lucro:t.lucro+r.lucro
+  }), {bruto:0, comissao:0, lucro:0});
 
   const doneMes = state.appointments.filter(a=>a.status==='concluido' && a.date.startsWith(relatMes));
   const porProfMes = servingProfessionals().map(p=>{
     const apps = doneMes.filter(a=>a.professionalId===p.id);
-    return { prof:p, valor: apps.reduce((t,a)=>t+valorRealAtendimento(a),0), qtd: apps.length };
+    const bruto = apps.reduce((t,a)=>t+valorRealAtendimento(a),0);
+    const comissao = apps.reduce((t,a)=>{
+      const v = valorRealAtendimento(a);
+      if(v<=0) return t;
+      return t + v*(effectiveCommissionPercent(p, a.serviceId)/100);
+    },0);
+    return { prof:p, valor:bruto, comissao, lucro: bruto-comissao, qtd: apps.length };
   }).sort((a,b)=>b.valor-a.valor);
   const maxMes = Math.max(1, ...porProfMes.map(r=>r.valor));
+  const totMes = porProfMes.reduce((t,r)=>({
+    bruto:t.bruto+r.valor, comissao:t.comissao+r.comissao, lucro:t.lucro+r.lucro
+  }), {bruto:0, comissao:0, lucro:0});
 
   view.innerHTML = `
     ${pageHeader('Relatórios', 'Desempenho com base nos atendimentos concluídos')}
@@ -6419,18 +6437,36 @@ function renderRelatorios(view){
           <button class="btn btn-ghost" id="rel-sem-next" style="padding:6px 10px;" ${fimSemana>=todayISO()?'disabled':''}>›</button>
         </div>
       </div>
-      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin.</div>
-      ${porProfSemana.length===0 ? emptyState('Nenhum profissional cadastrado.') : porProfSemana.map(r=>`
-        <div style="margin-bottom:12px;">
-          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-            <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-size:11.5px;">${r.qtd} atend.</span></span>
-            <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
-          </div>
-          <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
-            <div style="height:100%;width:${(r.valor/maxSemana*100).toFixed(0)}%;background:var(--gold);border-radius:99px;"></div>
-          </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin. Não inclui o pote do clube (esse é sempre mensal — veja em Comissões).</div>
+      ${porProfSemana.length===0 ? emptyState('Nenhum profissional cadastrado.') : `
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          ${porProfSemana.map(r=>`
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:600;margin-bottom:8px;">
+                <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-weight:400;font-size:11.5px;">${r.qtd} atend.</span></span>
+                <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
+              </div>
+              <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;margin-bottom:9px;display:flex;">
+                <div style="height:100%;width:${r.valor>0?(r.comissao/r.valor*100).toFixed(0):0}%;background:var(--gold);"></div>
+                <div style="height:100%;flex:1;background:var(--muted-2);opacity:.4;"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;flex-wrap:wrap;">
+                <span style="color:var(--muted);">🟡 Comissão do profissional</span>
+                <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.comissao)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;flex-wrap:wrap;">
+                <span style="color:var(--muted);">⬛ Lucro da barbearia</span>
+                <span class="font-mono">${BRL(r.lucro)}</span>
+              </div>
+            </div>
+          `).join('')}
         </div>
-      `).join('')}
+        <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);flex-wrap:wrap;">
+          <span style="color:var(--muted);">Total bruto: <b class="font-mono" style="color:var(--ink);">${BRL(totSemana.bruto)}</b></span>
+          <span style="color:var(--muted);">Comissões: <b class="font-mono" style="color:var(--gold-bright);">${BRL(totSemana.comissao)}</b></span>
+          <span style="color:var(--muted);">Lucro barbearia: <b class="font-mono" style="color:var(--ink);">${BRL(totSemana.lucro)}</b></span>
+        </div>
+      `}
     </div>
 
     <div class="card" style="padding:20px;margin-bottom:24px;">
@@ -6442,18 +6478,36 @@ function renderRelatorios(view){
           <button class="btn btn-ghost" id="rel-mes-next" style="padding:6px 10px;" ${relatMes>=currentYM()?'disabled':''}>›</button>
         </div>
       </div>
-      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin.</div>
-      ${porProfMes.length===0 ? emptyState('Nenhum profissional cadastrado.') : porProfMes.map(r=>`
-        <div style="margin-bottom:12px;">
-          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-            <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-size:11.5px;">${r.qtd} atend.</span></span>
-            <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
-          </div>
-          <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;">
-            <div style="height:100%;width:${(r.valor/maxMes*100).toFixed(0)}%;background:var(--gold);border-radius:99px;"></div>
-          </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:16px;">Visível apenas para dono/admin. Não inclui o pote do clube (esse é sempre mensal — veja em Comissões).</div>
+      ${porProfMes.length===0 ? emptyState('Nenhum profissional cadastrado.') : `
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          ${porProfMes.map(r=>`
+            <div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:600;margin-bottom:8px;">
+                <span>${esc(r.prof.name)} <span style="color:var(--muted-2);font-weight:400;font-size:11.5px;">${r.qtd} atend.</span></span>
+                <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.valor)}</span>
+              </div>
+              <div style="height:7px;background:var(--panel-2);border-radius:99px;overflow:hidden;margin-bottom:9px;display:flex;">
+                <div style="height:100%;width:${r.valor>0?(r.comissao/r.valor*100).toFixed(0):0}%;background:var(--gold);"></div>
+                <div style="height:100%;flex:1;background:var(--muted-2);opacity:.4;"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;flex-wrap:wrap;">
+                <span style="color:var(--muted);">🟡 Comissão do profissional</span>
+                <span class="font-mono" style="color:var(--gold-bright);">${BRL(r.comissao)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;flex-wrap:wrap;">
+                <span style="color:var(--muted);">⬛ Lucro da barbearia</span>
+                <span class="font-mono">${BRL(r.lucro)}</span>
+              </div>
+            </div>
+          `).join('')}
         </div>
-      `).join('')}
+        <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);flex-wrap:wrap;">
+          <span style="color:var(--muted);">Total bruto: <b class="font-mono" style="color:var(--ink);">${BRL(totMes.bruto)}</b></span>
+          <span style="color:var(--muted);">Comissões: <b class="font-mono" style="color:var(--gold-bright);">${BRL(totMes.comissao)}</b></span>
+          <span style="color:var(--muted);">Lucro barbearia: <b class="font-mono" style="color:var(--ink);">${BRL(totMes.lucro)}</b></span>
+        </div>
+      `}
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" class="dash-grid">
