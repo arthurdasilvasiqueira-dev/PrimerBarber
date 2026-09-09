@@ -870,6 +870,84 @@ function clientStats(name){
   const last = done.sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time))[0];
   return {visits: done.length, total, lastVisit: last ? last.date : null};
 }
+
+/* ===== DETECÇÃO E MESCLAGEM DE CLIENTES DUPLICADOS =====
+   O sistema liga tudo (agenda, assinatura, comissão) pelo NOME digitado.
+   Por isso, mesclar não é só apagar — é trocar o nome em cada lugar que
+   aponta pro registro removido, para o histórico não se perder. */
+function encontrarClientesDuplicados(){
+  const clientes = state.clients||[];
+  const porTelefone = {};
+  const porNome = {};
+  clientes.forEach(c=>{
+    const tel = soDigitos(c.phone).slice(-8);
+    if(tel.length>=8){ (porTelefone[tel] = porTelefone[tel]||[]).push(c); }
+    const n = normNome(c.name);
+    if(n){ (porNome[n] = porNome[n]||[]).push(c); }
+  });
+
+  const grupos = [];
+  const jaAgrupados = new Set();
+
+  // confiança alta: mesmo telefone
+  Object.values(porTelefone).forEach(lista=>{
+    if(lista.length<2) return;
+    grupos.push({tipo:'telefone', confianca:'alta', clientes:lista});
+    lista.forEach(c=>jaAgrupados.add(c.id));
+  });
+
+  // confiança média: nome idêntico (ignorando acento/maiúscula), mas não
+  // já resolvido pelo grupo de telefone
+  Object.values(porNome).forEach(lista=>{
+    const restantes = lista.filter(c=>!jaAgrupados.has(c.id));
+    if(restantes.length<2) return;
+    grupos.push({tipo:'nome', confianca:'media', clientes:restantes});
+    restantes.forEach(c=>jaAgrupados.add(c.id));
+  });
+
+  return grupos;
+}
+
+/* Junta um grupo de clientes duplicados num só registro, e atualiza
+   todos os lugares do sistema que referenciam os nomes removidos. */
+function mesclarClientesDuplicados(grupo, idParaManter){
+  const manter = grupo.find(c=>c.id===idParaManter);
+  const outros = grupo.filter(c=>c.id!==idParaManter);
+  const nomesAntigos = outros.map(c=>c.name);
+  const nomeNovo = manter.name;
+
+  update(s=>{
+    const alvo = s.clients.find(c=>c.id===manter.id);
+    // soma pontos, mantém o telefone/aniversário se o principal não tiver,
+    // e junta as observações sem duplicar texto
+    outros.forEach(o=>{
+      alvo.points = (alvo.points||0) + (o.points||0);
+      if(!alvo.phone && o.phone) alvo.phone = o.phone;
+      if(!alvo.birthday && o.birthday) alvo.birthday = o.birthday;
+      if(o.notes && !(alvo.notes||'').includes(o.notes)){
+        alvo.notes = alvo.notes ? `${alvo.notes} | ${o.notes}` : o.notes;
+      }
+    });
+
+    const bateAlgumNomeAntigo = (valor) => {
+      const n = normNome(valor);
+      return nomesAntigos.some(x=>normNome(x)===n);
+    };
+
+    // renomeia em cada lugar que referencia os nomes removidos
+    s.appointments.forEach(a=>{ if(bateAlgumNomeAntigo(a.client)) a.client = nomeNovo; });
+    s.subscriptionMembers.forEach(m=>{
+      if(bateAlgumNomeAntigo(m.name)) m.name = nomeNovo;
+      if(m.linkedClientName && bateAlgumNomeAntigo(m.linkedClientName)) m.linkedClientName = nomeNovo;
+    });
+    s.clients.forEach(c=>{ if(c.referredBy && bateAlgumNomeAntigo(c.referredBy)) c.referredBy = nomeNovo; });
+
+    // remove os registros de cliente duplicados
+    const idsRemover = new Set(outros.map(o=>o.id));
+    s.clients = s.clients.filter(c=>!idsRemover.has(c.id));
+  });
+}
+
 function monthDayLabel(md){
   if(!md) return '—';
   const [m,d] = md.split('-');
@@ -941,16 +1019,19 @@ function commissionOwed(profId){
   });
   const potEarned = potCommissionForProf(profId);
   // O vale e o saque são adiantamentos: saem do que o profissional tem a
-  // receber. Antes só abatiam do total geral, e a tela — que mostra o
-  // pendente de serviços — continuava exibindo o valor cheio.
-  const serviceOwed = Math.max(0, serviceEarned - paidService - paidSaque - paidVale);
+  // receber. Se o vale for MAIOR que o que ele já ganhou, o saldo fica
+  // negativo de propósito — ele "deve" à barbearia, e isso é abatido
+  // sozinho conforme novas comissões entram (basta o cálculo não
+  // travar em zero: totalEarned sobe a cada atendimento novo).
+  const serviceOwed = serviceEarned - paidService - paidSaque - paidVale;
   const potOwed = Math.max(0, potEarned - paidPote);
   const totalEarned = serviceEarned + potEarned;
   const totalPaid = paidService + paidPote + paidSaque + paidVale;
   return {
     earned: totalEarned, serviceEarned, potEarned,
     paid: totalPaid, paidService, paidPote, paidSaque, paidVale,
-    owed: Math.max(0, totalEarned - totalPaid), serviceOwed, potOwed,
+    owed: totalEarned - totalPaid, serviceOwed, potOwed,
+    devendo: (totalEarned - totalPaid) < 0,
   };
 }
 function monthlyEarnedForProf(profId){
@@ -1511,7 +1592,7 @@ function viewDashboard(){
             const c = commissionOwed(p.id);
             return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;">
               <span style="color:var(--ink);">${esc(p.name)}</span>
-              <span class="font-mono" style="color:${c.owed>0?'var(--warn)':'var(--muted-2)'};">${BRL(c.owed)}</span>
+              <span class="font-mono" style="color:${c.owed<0?'var(--bad)':(c.owed>0?'var(--warn)':'var(--muted-2)')};">${BRL(c.owed)}${c.owed<0?' (deve)':''}</span>
             </div>`;
           }).join('')}
         </div>
@@ -3374,11 +3455,12 @@ function renderComissoes(view){
     ${(()=>{
       const cm = commissionOwed(myProf.id);
       const ganho = monthlyEarnedForProf(myProf.id);
-      return `<div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:var(--gold);">
+      return `<div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:${cm.owed<0?'var(--bad)':'var(--gold)'};">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
           <div style="min-width:200px;">
-            <div style="font-size:11.5px;color:var(--muted-2);">A receber agora</div>
-            <div class="font-mono" style="font-size:26px;color:var(--gold-bright);">${BRL(cm.owed)}</div>
+            <div style="font-size:11.5px;color:var(--muted-2);">${cm.owed<0?'Saldo devedor':'A receber agora'}</div>
+            <div class="font-mono" style="font-size:26px;color:${cm.owed<0?'var(--bad)':'var(--gold-bright)'};">${BRL(cm.owed)}</div>
+            ${cm.owed<0?`<div style="font-size:11.5px;color:var(--bad);margin-top:4px;">Vale acima da comissão ganha — vai sendo abatido conforme novos atendimentos entram.</div>`:''}
             <div style="display:flex;flex-direction:column;gap:4px;margin-top:12px;padding-top:11px;border-top:1px solid var(--border);font-size:12px;">
               <div style="display:flex;justify-content:space-between;gap:14px;">
                 <span style="color:var(--muted);">Comissão em ${periodLabel(period)}</span>
@@ -3398,7 +3480,7 @@ function renderComissoes(view){
                 <span class="font-mono" style="color:var(--bad);">− ${BRL(cm.paidPote)}</span></div>`:''}
             </div>
           </div>
-          <button class="btn btn-gold" id="btn-request-withdrawal" style="flex-shrink:0;">${ICON.cash} Solicitar saque</button>
+          <button class="btn btn-gold" id="btn-request-withdrawal" style="flex-shrink:0;" ${cm.owed<=0?'disabled title="Sem saldo disponível para saque"':''}>${ICON.cash} Solicitar saque</button>
         </div>
       </div>`;
     })()}
@@ -3441,7 +3523,8 @@ function renderComissoes(view){
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
               <div>
                 <div style="font-size:11.5px;color:var(--muted-2);">Serviços avulsos</div>
-                <div class="font-mono" style="font-size:15px;color:${c.serviceOwed>0?'var(--warn)':'var(--muted)'};">${BRL(c.serviceOwed)} <span style="font-size:11px;color:var(--muted-2);">a pagar</span></div>
+                <div class="font-mono" style="font-size:15px;color:${c.serviceOwed<0?'var(--bad)':(c.serviceOwed>0?'var(--warn)':'var(--muted)')};">${BRL(c.serviceOwed)} <span style="font-size:11px;color:var(--muted-2);">${c.serviceOwed<0?'em débito':'a pagar'}</span></div>
+                ${c.serviceOwed<0 ? `<div style="font-size:11px;color:var(--bad);margin-top:3px;">Vale maior que a comissão — será abatido conforme ele atender mais clientes.</div>` : ''}
                 ${(c.paidVale>0 || c.paidSaque>0) ? `<div style="font-size:11px;color:var(--muted-2);margin-top:3px;">
                   ${BRL(c.serviceEarned)} de comissão${c.paidService>0?` − ${BRL(c.paidService)} já pago`:''}${c.paidVale>0?` − ${BRL(c.paidVale)} em vale`:''}${c.paidSaque>0?` − ${BRL(c.paidSaque)} em saque`:''}
                 </div>` : ''}
@@ -3621,6 +3704,7 @@ function renderComissoes(view){
 }
 function withdrawalRequestModal(prof){
   const owed = commissionOwed(prof.id).owed;
+  if(owed<=0){ showToast(owed<0 ? 'Sem saldo — há vale a descontar ainda.' : 'Sem saldo disponível para saque no momento.'); return; }
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -3663,7 +3747,12 @@ function valeModal(profId, view){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">${esc(prof.name)}</div>
-      <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:18px;">Tem <b style="color:var(--gold-bright);">${BRL(c.owed)}</b> a receber no momento.</div>
+      <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:18px;">
+        ${c.owed<0
+          ? `Já deve <b style="color:var(--bad);">${BRL(Math.abs(c.owed))}</b> de vale anterior — outro vale aumenta essa dívida.`
+          : `Tem <b style="color:var(--gold-bright);">${BRL(c.owed)}</b> a receber no momento.`}
+      </div>
+      <div style="font-size:11px;color:var(--muted-2);margin:-12px 0 6px;line-height:1.5;">Pode dar mais vale que ele tem a receber — o saldo fica negativo e é abatido sozinho conforme ele atende novos clientes.</div>
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div><label>Valor do vale (R$)</label><input id="v-amount" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;"></div>
         <div>
@@ -3721,6 +3810,7 @@ function valeModal(profId, view){
 function payServiceCommission(profId){
   if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode pagar comissão.'); return; }
   const c = commissionOwed(profId);
+  if(c.serviceOwed<=0){ showToast('Não há valor pendente para pagar — o profissional está com vale além da comissão.'); return; }
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -5762,6 +5852,7 @@ function importServicesFromRows(rows){
   showToast(`Importação concluída: ${added} novo(s), ${updated} atualizado(s).`);
 }
 function renderClientes(view){
+  const duplicados = encontrarClientesDuplicados();
   view.innerHTML = `
     ${pageHeader('Clientes', state.clients.length+' cadastrado(s)', `
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -5771,6 +5862,17 @@ function renderClientes(view){
         <button class="btn btn-gold" id="btn-new-client">${ICON.plus} Novo cliente</button>
       </div>
     `)}
+    ${duplicados.length>0 ? `
+      <div class="card" style="padding:14px 16px;margin-bottom:16px;border-color:var(--warn);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:12.5px;line-height:1.6;">
+            <b style="color:var(--warn);">${duplicados.length} grupo(s) de clientes possivelmente duplicados</b><br>
+            <span style="color:var(--muted-2);">Mesmo telefone, ou nome idêntico cadastrado mais de uma vez.</span>
+          </div>
+          <button class="btn btn-gold" id="btn-ver-duplicados" style="flex-shrink:0;">Revisar duplicados</button>
+        </div>
+      </div>
+    ` : ''}
     <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Aceita Excel (.xlsx) ou CSV. Colunas esperadas, nesta ordem: Nome, Telefone, Aniversario(DD/MM), Pontos, Observacoes.</div>
     ${state.clients.length===0 ? emptyState('Nenhum cliente cadastrado ainda.') : `
       <table>
@@ -5807,7 +5909,68 @@ function renderClientes(view){
   });
   view.querySelectorAll('[data-edit-client]').forEach(b=>b.addEventListener('click', ()=>clientModal(state.clients.find(c=>c.id===b.dataset.editClient))));
   view.querySelectorAll('[data-del-client]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.clients = s.clients.filter(c=>c.id!==b.dataset.delClient); })));
+  view.querySelector('#btn-ver-duplicados')?.addEventListener('click', ()=>duplicadosModal(view));
 }
+
+function duplicadosModal(view){
+  const grupos = encontrarClientesDuplicados();
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Clientes duplicados</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px;line-height:1.6;">
+        Escolha qual cadastro manter em cada grupo. O histórico de agendamentos, pontos e assinatura dos outros é transferido para ele antes de removê-los — nada se perde.
+      </div>
+      <div id="dup-lista" style="display:flex;flex-direction:column;gap:16px;max-height:56vh;overflow-y:auto;"></div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const desenhar = ()=>{
+      const grupos = encontrarClientesDuplicados();
+      const lista = root.querySelector('#dup-lista');
+      if(grupos.length===0){
+        lista.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--ok);font-size:14px;">✓ Nenhum duplicado encontrado.</div>`;
+        return;
+      }
+      lista.innerHTML = grupos.map((g,gi)=>`
+        <div style="border:1px solid ${g.confianca==='alta'?'var(--warn)':'var(--border)'};border-radius:10px;padding:14px;">
+          <div style="font-size:11.5px;color:${g.confianca==='alta'?'var(--warn)':'var(--muted-2)'};margin-bottom:10px;">
+            ${g.tipo==='telefone' ? `${ICON.phone||''} Mesmo telefone` : 'Nome idêntico'} · ${g.confianca==='alta'?'alta confiança':'confira antes de mesclar'}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+            ${g.clientes.map(c=>{
+              const st = clientStats(c.name);
+              return `<label style="display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;cursor:pointer;">
+                <input type="radio" name="dup-manter-${gi}" value="${c.id}" ${c===g.clientes.reduce((a,b)=>(clientStats(b.name).visits>clientStats(a.name).visits?b:a))?'checked':''} style="width:auto;margin-top:2px;">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:500;">${esc(c.name)}</div>
+                  <div style="font-size:11.5px;color:var(--muted-2);">${esc(c.phone)||'sem telefone'} · ${st.visits} visita(s) · ${BRL(st.total)} gasto</div>
+                </div>
+              </label>`;
+            }).join('')}
+          </div>
+          <button class="btn btn-gold dup-mesclar" data-grupo="${gi}" style="padding:8px 14px;font-size:12.5px;">Mesclar este grupo</button>
+        </div>
+      `).join('');
+      lista.querySelectorAll('.dup-mesclar').forEach(btn=>btn.addEventListener('click', ()=>{
+        const gi = parseInt(btn.dataset.grupo);
+        const grupo = grupos[gi].clientes;
+        const escolhido = root.querySelector(`input[name="dup-manter-${gi}"]:checked`);
+        if(!escolhido){ showToast('Escolha qual cadastro manter.'); return; }
+        const nomesRemovidos = grupo.filter(c=>c.id!==escolhido.value).map(c=>c.name).join(', ');
+        if(!confirm(`Mesclar e remover: ${nomesRemovidos}?\n\nO histórico deles passa a contar no cadastro escolhido.`)) return;
+        mesclarClientesDuplicados(grupo, escolhido.value);
+        showToast('Clientes mesclados.');
+        desenhar();
+        if(view) renderClientes(view);
+      }));
+    };
+    desenhar();
+  });
+}
+
 function clientModal(existing){
   const isEdit = !!existing;
   openModal(`
