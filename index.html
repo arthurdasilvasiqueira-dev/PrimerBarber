@@ -820,11 +820,82 @@ function clubMemberForClient(clientName){
   return achado || null;
 }
 
+/* Igual à função acima, mas devolve TODOS os planos ativos que o cliente
+   tem — não só o primeiro. É comum um cliente ter mais de uma assinatura
+   ao mesmo tempo (ex: plano de cabelo seg-sáb + plano de barba seg-qui),
+   e cada serviço precisa ser cobrado pelo plano certo, não pelo primeiro
+   que o sistema encontrar. Usa a mesma ordem de confiança de antes, mas
+   pega TODOS os que baterem no primeiro nível que encontrar algo. */
+function clubMembersForClient(clientName){
+  if(!clientName) return [];
+  const alvo = normNome(clientName);
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+
+  const vinculados = ativos.filter(m=>m.linkedClientName && normNome(m.linkedClientName)===alvo);
+  if(vinculados.length) return vinculados;
+
+  const porNome = ativos.filter(m=>normNome(m.name)===alvo);
+  if(porNome.length) return porNome;
+
+  const cliente = (state.clients||[]).find(cl=>normNome(cl.name)===alvo);
+  const tel = soDigitos(cliente?.phone);
+  if(tel.length>=8){
+    const porTel = ativos.filter(m=>{
+      const t = soDigitos(m.phone);
+      return t.length>=8 && t.slice(-8)===tel.slice(-8);
+    });
+    if(porTel.length) return porTel;
+  }
+
+  const porParcial = ativos.filter(m=>{
+    const n = normNome(m.name);
+    if(n.length<5 || alvo.length<5) return false;
+    return n.startsWith(alvo+' ') || alvo.startsWith(n+' ');
+  });
+  if(porParcial.length) return porParcial;
+
+  const ignorar = new Set(['da','de','do','dos','das','e']);
+  const partes = t => t.split(' ').filter(x=>x.length>1 && !ignorar.has(x));
+  const alvoP = partes(alvo);
+  if(alvoP.length >= 2){
+    const porSobrenome = ativos.filter(m=>{
+      const mP = partes(normNome(m.name));
+      if(mP.length < 2) return false;
+      if(mP[0] !== alvoP[0]) return false;
+      const sobrenomesAlvo = new Set(alvoP.slice(1));
+      return mP.slice(1).some(s=>sobrenomesAlvo.has(s));
+    });
+    if(porSobrenome.length) return porSobrenome;
+  }
+  return [];
+}
+
 function clubStarBadge(clientName){
-  const m = clubMemberForClient(clientName);
-  if(!m) return '';
-  const vencido = m.dueDate && String(m.dueDate) < todayISO();
+  const membros = clubMembersForClient(clientName);
+  if(membros.length === 0) return '';
+
+  const vencidoM = m => m.dueDate && String(m.dueDate) < todayISO();
+  const emDiaM = m => m.status === 'pago' || (m.status === 'pendente' && !vencidoM(m));
+  const emDiaCount = membros.filter(emDiaM).length;
+
   let cor, txt;
+  if(membros.length > 1){
+    // mais de um plano: mostra a situação combinada
+    if(emDiaCount === membros.length){
+      cor = 'var(--gold-bright)';
+      txt = `Assinante do clube — ${membros.length} planos, todos em dia`;
+    } else if(emDiaCount === 0){
+      cor = 'var(--bad)';
+      txt = `Assinante do clube — ${membros.length} planos, todos em atraso`;
+    } else {
+      cor = 'var(--warn)';
+      txt = `Assinante do clube — ${emDiaCount} de ${membros.length} planos em dia (confira qual está atrasado)`;
+    }
+    return `<span title="${txt}" style="color:${cor};display:inline-flex;">${ICON.star}</span>`;
+  }
+
+  const m = membros[0];
+  const vencido = vencidoM(m);
   if(m.status === 'atrasado' || vencido){
     cor = 'var(--bad)';
     txt = 'Assinante do clube — mensalidade atrasada (paga valor cheio)';
@@ -2155,42 +2226,78 @@ function precoParaCobrar(appt, service){
   };
   if(!svc) return out;
 
-  const member = clubMemberForClient(appt.client);
-  out.member = member;
-  if(!member) return out;
+  // Um cliente pode ter mais de uma assinatura ao mesmo tempo — por
+  // exemplo, cabelo de segunda a sábado e barba só de segunda a quinta,
+  // pra economizar. Cada atendimento precisa achar o plano CERTO pra
+  // aquele serviço, não sempre o primeiro assinante encontrado — senão
+  // um plano acaba sendo aplicado sobre um serviço que não é dele.
+  const membros = clubMembersForClient(appt.client);
+  if(membros.length === 0) return out;
 
-  const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-  out.plano = plan;
+  let melhor = null;              // o plano que cobre este serviço com o menor preço
+  let algumEmDiaSemCobrir = null; // usado só para explicar o motivo, se nada cobrir
 
-  // "Pendente" = cobrança emitida que ainda não venceu → o cliente está em
-  // dia e o plano vale normalmente. Só perde o benefício quem está atrasado.
-  const vencido = member.dueDate && String(member.dueDate) < todayISO();
-  const emDia = member.status === 'pago' || (member.status === 'pendente' && !vencido);
+  membros.forEach(member=>{
+    const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
+    const vencido = member.dueDate && String(member.dueDate) < todayISO();
+    const emDia = member.status === 'pago' || (member.status === 'pendente' && !vencido);
+    if(!emDia || !plan || !planValidOnDate(plan, appt.date)) return;
+
+    let candidato = null;
+    if(plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
+      candidato = { member, plan, basePrice: 0, priceNote: ' (incluso no clube)', planoAtivo: true };
+    } else if(plan.discountPercent > 0){
+      candidato = { member, plan, basePrice: svc.price * (1 - plan.discountPercent/100), priceNote: ` (${plan.discountPercent}% desconto clube)`, planoAtivo: false };
+    } else {
+      if(!algumEmDiaSemCobrir) algumEmDiaSemCobrir = { member, plan };
+      return;
+    }
+    if(!melhor || candidato.basePrice < melhor.basePrice) melhor = candidato;
+  });
+
+  if(melhor){
+    out.member = melhor.member;
+    out.plano = melhor.plan;
+    out.basePrice = melhor.basePrice;
+    out.priceNote = melhor.priceNote;
+    out.planoAtivo = melhor.planoAtivo;
+    return out;
+  }
+
+  // Nenhum plano em dia cobre este serviço — explica o motivo usando o
+  // plano mais relevante pra essa mensagem (o que estava em dia mas não
+  // incluía o serviço, ou senão o principal do cliente).
+  const principal = algumEmDiaSemCobrir?.member || clubMemberForClient(appt.client);
+  const planoPrincipal = algumEmDiaSemCobrir?.plan || (principal ? state.subscriptionPlans.find(p=>p.id===principal.planId) : null);
+  out.member = principal;
+  out.plano = planoPrincipal;
+  if(!principal) return out;
+
+  const vencido = principal.dueDate && String(principal.dueDate) < todayISO();
+  const emDia = principal.status === 'pago' || (principal.status === 'pendente' && !vencido);
+  const maisDeUm = membros.length > 1;
 
   if(emDia){
-    if(!plan){
+    if(!planoPrincipal){
       out.motivoCheio = 'O plano deste assinante foi removido do sistema.';
-    } else if(!planValidOnDate(plan, appt.date)){
+    } else if(!planValidOnDate(planoPrincipal, appt.date)){
       out.priceNote = ' (fora dos dias do plano)';
-      out.motivoCheio = `${plan.name}: ${planDaysLabel(plan.validDays).toLowerCase()}. Hoje não está incluído.`;
-    } else if(plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
-      out.basePrice = 0; out.priceNote = ' (incluso no clube)'; out.planoAtivo = true;
-    } else if(plan.discountPercent > 0){
-      out.basePrice = svc.price * (1 - plan.discountPercent/100);
-      out.priceNote = ` (${plan.discountPercent}% desconto clube)`;
-    } else if(!plan.includedServiceIds || plan.includedServiceIds.length === 0){
-      out.motivoCheio = `O plano "${plan.name}" está sem serviços inclusos. Edite o plano em Clube de Assinatura e marque quais serviços entram.`;
+      out.motivoCheio = `${planoPrincipal.name}: ${planDaysLabel(planoPrincipal.validDays).toLowerCase()}. Hoje não está incluído.`;
+    } else if(!planoPrincipal.includedServiceIds || planoPrincipal.includedServiceIds.length === 0){
+      out.motivoCheio = `O plano "${planoPrincipal.name}" está sem serviços inclusos. Edite o plano em Clube de Assinatura e marque quais serviços entram.`;
     } else {
-      out.motivoCheio = `"${svc.name}" não está incluído no plano "${plan.name}". Se deveria estar, edite o plano e marque este serviço.`;
+      out.motivoCheio = maisDeUm
+        ? `"${svc.name}" não está incluído em nenhum dos ${membros.length} planos ativos deste cliente. Se deveria estar, edite o plano certo e marque este serviço.`
+        : `"${svc.name}" não está incluído no plano "${planoPrincipal.name}". Se deveria estar, edite o plano e marque este serviço.`;
     }
-  } else if(member.status === 'atrasado' || vencido){
+  } else if(principal.status === 'atrasado' || vencido){
     out.priceNote = ' (clube em atraso — valor cheio)';
-    out.motivoCheio = member.dueDate
-      ? `Mensalidade venceu em ${new Date(String(member.dueDate)+'T12:00').toLocaleDateString('pt-BR')} e não foi paga — o plano não vale enquanto estiver em atraso.`
+    out.motivoCheio = principal.dueDate
+      ? `Mensalidade venceu em ${new Date(String(principal.dueDate)+'T12:00').toLocaleDateString('pt-BR')} e não foi paga — o plano não vale enquanto estiver em atraso.`
       : 'Assinante com mensalidade atrasada — o plano não vale enquanto estiver em atraso.';
   } else {
-    out.priceNote = ` (assinatura ${esc(member.status)})`;
-    out.motivoCheio = `Assinante com status "${member.status}" — o plano não está valendo. Verifique a situação dele no Clube de Assinatura.`;
+    out.priceNote = ` (assinatura ${esc(principal.status)})`;
+    out.motivoCheio = `Assinante com status "${principal.status}" — o plano não está valendo. Verifique a situação dele no Clube de Assinatura.`;
   }
   return out;
 }
