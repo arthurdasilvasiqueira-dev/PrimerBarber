@@ -4976,6 +4976,10 @@ async function syncAsaas(){
       if(r.lastPaymentDate) m.lastPaymentDate = r.lastPaymentDate;
       if(r.lastPaymentAmount) m.lastPaymentAmount = r.lastPaymentAmount;
       if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
+      // Atualiza o vencimento com o que o Asaas tem de mais recente — sem
+      // isso, uma data antiga ficava guardada e o sistema achava "venceu"
+      // de novo mesmo já corrigido o status, tirando o benefício do plano.
+      if(r.dueDate) m.dueDate = r.dueDate;
       // Status "pago" sem data era resquício da importação. Se o Asaas diz
       // que não pagou este mês, limpamos para não parecer em dia.
       if(!r.pagouEsteMes && !r.lastPaymentDate) m.lastPaymentDate = null;
