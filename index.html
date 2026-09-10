@@ -2315,12 +2315,48 @@ function precoParaCobrar(appt, service){
   return out;
 }
 
+/* Quando um atendimento chega na hora de finalizar sem um serviço válido
+   (ex: o profissional esqueceu de escolher, ou o serviço foi excluído
+   depois), pede pra escolher aqui mesmo, antes de seguir pro fechamento. */
+function escolherServicoAntesDeConcluir(appt, id){
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Falta escolher o serviço</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">${esc(appt.client)} · ${new Date(appt.date+'T12:00').toLocaleDateString('pt-BR')} às ${appt.time}</div>
+      <label>Qual serviço foi feito?</label>
+      <select id="esc-service" style="width:100%;margin-bottom:16px;">
+        <option value="">— selecione —</option>
+        ${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)}</option>`).join('')}
+      </select>
+      <button class="btn btn-gold" id="esc-save" style="width:100%;justify-content:center;">Continuar para o fechamento</button>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#esc-save').addEventListener('click', ()=>{
+      const serviceId = root.querySelector('#esc-service').value;
+      if(!serviceId){ showToast('Escolha um serviço.'); return; }
+      update(s=>{ const ap = s.appointments.find(a=>a.id===id); if(ap) ap.serviceId = serviceId; });
+      closeModal();
+      concludeAppt(id);
+    });
+  });
+}
+
 function concludeAppt(id){
   const session = openSession();
   if(!session){ showToast('Abra o caixa antes de concluir atendimentos.'); route='caixa'; render(); return; }
   const appt = state.appointments.find(a=>a.id===id);
   const service = serviceById(appt.serviceId);
-  if(!service){ showToast('Serviço não encontrado.'); return; }
+  if(!service){
+    // Não deixa finalizar sem um serviço de verdade — é exatamente o que
+    // causava atendimento sem ficha e sem valor certo de comissão.
+    showToast('Este agendamento está sem serviço definido. Escolha o serviço correto antes de finalizar.');
+    escolherServicoAntesDeConcluir(appt, id);
+    return;
+  }
 
   // Calcula o valor considerando o clube de assinatura
   const calc = precoParaCobrar(appt, service);
@@ -2905,7 +2941,10 @@ function openApptModal(pre){
           <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${preDate}" style="width:100%;"></div>
         </div>
         <div><label>Profissional</label><select id="f-prof" style="width:100%;">${servingProfessionals().map(p=>`<option value="${p.id}" ${preProf===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
-        <div><label>Serviço</label><select id="f-service" style="width:100%;">${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}</select></div>
+        <div><label>Serviço</label><select id="f-service" style="width:100%;">
+          <option value="">— selecione o serviço —</option>
+          ${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}
+        </select></div>
         <div id="deposit-note" style="font-size:12px;color:var(--warn);"></div>
         <div id="availability-note" style="font-size:12px;color:var(--muted-2);"></div>
 
@@ -3077,7 +3116,9 @@ function openApptModal(pre){
       const time = root.querySelector('#f-time').value;
       const date = root.querySelector('#f-date').value;
       if(!client || !time || !date){ showToast('Preencha cliente, data e horário.'); return; }
-      const service = serviceById(root.querySelector('#f-service').value);
+      const serviceId = root.querySelector('#f-service').value;
+      if(!serviceId){ showToast('Escolha o serviço antes de agendar.'); root.querySelector('#f-service').focus(); return; }
+      const service = serviceById(serviceId);
       const professionalId = root.querySelector('#f-prof').value;
       const dep = depositAmountFor(service);
       const recorrente = root.querySelector('#f-recorrente').checked;
@@ -3672,7 +3713,7 @@ function renderComissoes(view){
     </div>
     <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:14px;">Atendimento de assinante coberto pelo plano <b>não gera comissão de serviço</b> — o pagamento vem por aqui, pelas fichas. As fichas contam assim que o profissional atende um assinante, mesmo antes da mensalidade entrar. O pote é formado pelas mensalidades recebidas no mês: uma % fica para a barbearia e o resto é dividido entre os profissionais, proporcional às fichas de cada um.</div>
 
-    ${(()=>{
+    ${isOwnerLevel() ? (()=>{
       const { total, grupos } = diagnosticoFichasAgrupado();
       if(total===0) return '';
       return `<div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--bad);">
@@ -3685,16 +3726,19 @@ function renderComissoes(view){
               <div style="font-size:12px;color:var(--muted);line-height:1.6;flex:1;min-width:220px;">
                 • ${esc(g.motivo)} — ${g.apps.length} atendimento(s): ${g.apps.slice(0,4).map(a=>esc(a.client)+' ('+esc(profName(a.professionalId))+')').join(', ')}${g.apps.length>4?` e mais ${g.apps.length-4}`:''}
               </div>
-              ${g.tipo==='servico_sem_fichas'?`<button class="btn btn-gold" data-fix-fichas-servico="${esc(g.refId)}" style="flex-shrink:0;padding:6px 12px;font-size:12px;">Corrigir serviço</button>`:''}
-              ${g.tipo==='prof_nao_atende'?`<button class="btn btn-gold" data-fix-fichas-prof="${esc(g.refId)}" style="flex-shrink:0;padding:6px 12px;font-size:12px;">Corrigir profissional</button>`:''}
+              <div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;">
+                ${g.tipo==='servico_sem_fichas'?`<button class="btn btn-ghost" data-fix-fichas-servico="${esc(g.refId)}" style="padding:6px 12px;font-size:12px;">Ajustar fichas</button>`:''}
+                ${(g.tipo==='servico_sem_fichas' || g.tipo==='servico_excluido')?`<button class="btn btn-gold" data-trocar-servico-grupo="${esc(g.tipo)}|${esc(g.refId||'')}" style="padding:6px 12px;font-size:12px;">Trocar serviço</button>`:''}
+                ${g.tipo==='prof_nao_atende'?`<button class="btn btn-gold" data-fix-fichas-prof="${esc(g.refId)}" style="padding:6px 12px;font-size:12px;">Corrigir profissional</button>`:''}
+              </div>
             </div>
           `).join('')}
         </div>
         <div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">
-          Ao corrigir, as fichas destes atendimentos já feitos são contadas automaticamente — não precisa refazer nada, o valor é recalculado sozinho.
+          "Trocar serviço" corrige os atendimentos que foram marcados com o serviço errado (ex: alguém esqueceu de escolher e ficou no padrão). Ao corrigir, as fichas são contadas automaticamente — não precisa refazer nada.
         </div>
       </div>`;
-    })()}
+    })() : ''}
 
     ${fichasBreakdown.potTotal===0 && fichasBreakdown.totalFichas>0 ? `
       <div class="card" style="padding:13px 16px;margin-bottom:14px;border-color:var(--warn);">
@@ -3720,9 +3764,19 @@ function renderComissoes(view){
       ` : ''}
     </div>
 
-    ${fichasBreakdown.rows.length===0 ? emptyState('Nenhuma ficha gerada neste mês ainda.', 'Assim que um profissional concluir um atendimento de um assinante pago, as fichas do serviço aparecem aqui.') : `
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
-        ${fichasBreakdown.rows.map(r=>`
+    ${(()=>{
+      // Só o dono/admin vê o pote inteiro. Profissional vê só a própria
+      // linha — o valor que os colegas fizeram não é dele pra ver.
+      const rowsVisiveis = isOwnerLevel()
+        ? fichasBreakdown.rows
+        : fichasBreakdown.rows.filter(r=>r.prof.id === myProf?.id);
+      if(rowsVisiveis.length===0){
+        return isOwnerLevel()
+          ? emptyState('Nenhuma ficha gerada neste mês ainda.', 'Assim que um profissional concluir um atendimento de um assinante pago, as fichas do serviço aparecem aqui.')
+          : emptyState('Você ainda não tem fichas neste mês.', 'Assim que atender um assinante pago, sua parte do pote aparece aqui.');
+      }
+      return `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+        ${rowsVisiveis.map(r=>`
           <div class="card" style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
             <div>
               <span style="font-weight:600;font-size:14px;">${esc(r.prof.name)}</span>
@@ -3731,8 +3785,8 @@ function renderComissoes(view){
             <div class="font-mono" style="color:var(--gold-bright);font-size:14.5px;">${BRL(r.value)}</div>
           </div>
         `).join('')}
-      </div>
-    `}
+      </div>`;
+    })()}
 
     ${isOwnerLevel() ? `
     <div class="card" style="padding:18px 20px;margin-bottom:26px;border-color:var(--gold);">
@@ -3835,6 +3889,54 @@ function renderComissoes(view){
     if(!prof){ showToast('Profissional não encontrado.'); return; }
     profModal(prof);
   }));
+  view.querySelectorAll('[data-trocar-servico-grupo]').forEach(b=>b.addEventListener('click', ()=>{
+    const [tipo, refId] = b.dataset.trocarServicoGrupo.split('|');
+    const { grupos } = diagnosticoFichasAgrupado();
+    const g = grupos.find(x=>x.tipo===tipo && String(x.refId||'')===refId);
+    if(!g || g.apps.length===0){ showToast('Nada para corrigir — já foi resolvido.'); renderComissoes(view); return; }
+    trocarServicoGrupoModal(g, view);
+  }));
+}
+/* Corrige em lote atendimentos que ficaram com o serviço errado (ex: o
+   profissional esqueceu de escolher e o sistema pegou o primeiro da
+   lista). Troca todos de uma vez para o serviço certo. */
+function trocarServicoGrupoModal(g, view){
+  const idsAfetados = g.apps.map(a=>a.id);
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Trocar serviço</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.6;">
+        ${idsAfetados.length} atendimento(s) provavelmente foram registrados com o serviço errado. Escolha o serviço correto e ele é aplicado a todos de uma vez.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;max-height:30vh;overflow-y:auto;margin-bottom:16px;padding:10px 12px;background:var(--panel-2);border-radius:9px;">
+        ${g.apps.map(a=>`<div style="font-size:12px;color:var(--muted);">${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} · ${esc(a.client)} · ${esc(profName(a.professionalId))}</div>`).join('')}
+      </div>
+      <label>Serviço correto</label>
+      <select id="tg-service" style="width:100%;margin-bottom:16px;">
+        <option value="">— selecione —</option>
+        ${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)}</option>`).join('')}
+      </select>
+      <button class="btn btn-gold" id="tg-save" style="width:100%;justify-content:center;">Corrigir ${idsAfetados.length} atendimento(s)</button>
+      <div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">
+        Isso não muda o valor já lançado no caixa nem a comissão já paga — só corrige o registro do serviço, para as fichas contarem certinho daqui pra frente.
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#tg-save').addEventListener('click', ()=>{
+      const novoServId = root.querySelector('#tg-service').value;
+      if(!novoServId){ showToast('Escolha o serviço correto.'); return; }
+      update(s=>{
+        s.appointments.forEach(ap=>{ if(idsAfetados.includes(ap.id)) ap.serviceId = novoServId; });
+      });
+      closeModal();
+      showToast(`${idsAfetados.length} atendimento(s) corrigido(s).`);
+      if(view) renderComissoes(view);
+    });
+  });
 }
 function withdrawalRequestModal(prof){
   const owed = commissionOwed(prof.id).owed;
