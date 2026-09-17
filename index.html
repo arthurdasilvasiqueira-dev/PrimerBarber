@@ -7920,8 +7920,25 @@ function waitlistModal(){
    escritos aparecem como "em breve" em vez de sumir do menu. */
 const GUIAS_AJUDA = [
   // { id, titulo, rotas: ['dono','recepcionista','profissional'], passos: [{titulo, texto, imagem}] }
-  { id:'agenda', titulo:'Agenda', papeis:['dono','recepcionista','profissional'], passos:[] },
-  { id:'caixa', titulo:'Caixa', papeis:['dono','recepcionista'], passos:[] },
+  { id:'agenda', titulo:'Agenda', papeis:['dono','recepcionista','profissional'], passos:[
+    { titulo:'Escolhendo como ver a agenda', texto:'No topo da tela existem três formas de ver os horários: Grade (colunas por profissional, é a mais usada no dia a dia), Lista (todos os horários em sequência) e Semana (visão geral da semana inteira, ótima pra ver quem está mais ocupado). Clique em qualquer uma pra trocar.', imagem:null },
+    { titulo:'Navegando entre os dias', texto:'Use as setas "‹" e "›" no topo para ir pro dia anterior ou seguinte, ou clique em "Hoje" pra voltar direto pro dia atual. Também dá pra clicar no calendário e pular direto pra uma data específica.', imagem:null },
+    { titulo:'Criando um agendamento novo', texto:'Clique no botão "+ Novo agendamento" no canto superior, ou direto num espaço vazio da grade no horário desejado — os dados já vêm preenchidos com o profissional e o horário daquela coluna. Preencha o nome do cliente (o sistema sugere quem já é cadastrado enquanto você digita), escolha um ou mais serviços e confirme.', imagem:null },
+    { titulo:'Marcando mais de um serviço no mesmo horário', texto:'Ao criar o agendamento, marque quantas caixinhas de serviço quiser (ex: Corte + Barba). O sistema soma a duração e o valor de todos automaticamente e já avisa se algum deles bate com outro horário.', imagem:null },
+    { titulo:'Abrindo as opções de um agendamento', texto:'Clique em cima de qualquer agendamento já criado (na grade ou na lista) pra abrir o menu com as ações: Finalizar e receber, Editar serviço, Reagendar, Confirmar, Marcar falta ou Cancelar.', imagem:null },
+    { titulo:'A estrelinha ao lado do nome do cliente', texto:'Quando aparece uma estrela dourada, o cliente é assinante do Clube e está em dia — alguns serviços podem sair grátis ou com desconto. Estrela vermelha significa que a mensalidade dele está atrasada, então ele paga o valor cheio.', imagem:null },
+    { titulo:'Bloqueando um horário (folga, almoço)', texto:'Clique em "Bloquear horário" no topo da tela, escolha o profissional, o motivo e o período. Dá pra marcar pra repetir toda semana no mesmo dia — ótimo pro horário de almoço, por exemplo. Ninguém mais consegue agendar em cima de um horário bloqueado.', imagem:null },
+    { titulo:'Finalizando um atendimento e recebendo o pagamento', texto:'Depois de atender o cliente, clique no agendamento e depois em "Finalizar e receber". O sistema já calcula o valor certo (considerando desconto do clube, se for o caso) e permite dividir o pagamento em mais de uma forma, ou dar um desconto na hora.', imagem:null },
+  ] },
+  { id:'caixa', titulo:'Caixa', papeis:['dono','recepcionista'], passos:[
+    { titulo:'Abrindo o caixa no início do dia', texto:'Ao entrar na tela de Caixa pela primeira vez no dia, clique em "Abrir caixa". O valor já vem sugerido com o que sobrou no fechamento anterior — confira o dinheiro na gaveta e corrija se estiver diferente. O sistema avisa na hora se faltar ou sobrar algo em relação ao esperado.', imagem:null },
+    { titulo:'Como o dinheiro entra sozinho no caixa', texto:'Você não precisa lançar nada na mão quando finaliza um atendimento — o valor recebido já entra automaticamente no caixa, separado por forma de pagamento (dinheiro, PIX, débito ou crédito).', imagem:null },
+    { titulo:'Lançando uma entrada ou saída manual', texto:'Use os botões "Lançar entrada" ou "Lançar saída" pra registrar algo que não veio de um atendimento — por exemplo, pagar um fornecedor ou receber algo fora do sistema. Preencha o valor, a forma de pagamento e uma descrição.', imagem:null },
+    { titulo:'Vendendo um produto do estoque', texto:'Na tela de Estoque, clique em "Vender" ao lado do produto desejado. Escolha a quantidade e, se o comprador for assinante do clube, o desconto dele é aplicado automaticamente. O valor cai direto no caixa.', imagem:null },
+    { titulo:'Fazendo uma sangria', texto:'Sangria é quando você tira dinheiro físico da gaveta pra guardar no cofre ou levar ao banco, sem que isso seja uma despesa do negócio. Clique em "Sangria", informe o valor e pra onde ele vai.', imagem:null },
+    { titulo:'Fechando o caixa no final do dia', texto:'Clique em "Fechar caixa", conte o dinheiro físico da gaveta e digite o valor. O sistema mostra na hora se bateu certinho com o esperado, ou se está faltando/sobrando algo — assim dá pra conferir antes de ir embora.', imagem:null },
+    { titulo:'Consultando o histórico de caixas', texto:'Mais abaixo na mesma tela fica a lista de todos os caixas já fechados, com a data, o valor de abertura, entradas, saídas e a diferença encontrada no fechamento — útil pra revisar qualquer dia passado.', imagem:null },
+  ] },
   { id:'comissoes', titulo:'Comissões', papeis:['dono','profissional'], passos:[] },
   { id:'clube', titulo:'Clube de Assinatura', papeis:['dono'], passos:[] },
   { id:'clientes', titulo:'Clientes', papeis:['dono','recepcionista'], passos:[] },
@@ -8003,7 +8020,12 @@ function renderGuiasAjuda(guias){
                       <div style="flex:1;min-width:0;">
                         <div style="font-size:13.5px;font-weight:600;margin-bottom:3px;">${esc(p.titulo)}</div>
                         <div style="font-size:12.5px;color:var(--muted);line-height:1.6;">${esc(p.texto)}</div>
-                        ${p.imagem ? `<img src="${esc(p.imagem)}" style="width:100%;max-width:420px;border-radius:9px;border:1px solid var(--border);margin-top:9px;">` : ''}
+                        ${p.imagem
+                          ? `<img src="${esc(p.imagem)}" style="width:100%;max-width:420px;border-radius:9px;border:1px solid var(--border);margin-top:9px;">`
+                          : `<div style="margin-top:9px;max-width:420px;border:1px dashed var(--border);border-radius:9px;padding:26px 16px;text-align:center;color:var(--muted-2);">
+                              <div style="margin-bottom:6px;">${ICON.image}</div>
+                              <div style="font-size:11px;">Espaço reservado para captura de tela</div>
+                            </div>`}
                       </div>
                     </div>
                   `).join('')}
