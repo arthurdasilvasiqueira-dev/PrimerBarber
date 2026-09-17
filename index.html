@@ -7920,6 +7920,14 @@ function waitlistModal(){
    escritos aparecem como "em breve" em vez de sumir do menu. */
 const GUIAS_AJUDA = [
   // { id, titulo, rotas: ['dono','recepcionista','profissional'], passos: [{titulo, texto, imagem}] }
+  { id:'dashboard', titulo:'Painel', papeis:['dono','recepcionista','profissional'], passos:[
+    { titulo:'O que você vê aqui depende do seu nível de acesso', texto:'O dono e a recepcionista veem os números da barbearia inteira. O profissional vê só os próprios atendimentos e a própria comissão — não vê o faturamento total nem o saldo do caixa.', imagem:null },
+    { titulo:'Faturamento do dia', texto:'Mostra o valor já recebido em serviços concluídos hoje. Se algum atendimento foi de um assinante do clube e saiu de graça, ele conta como atendimento mas não entra no valor — o painel avisa quantos foram assim.', imagem:null },
+    { titulo:'Saldo do caixa (dono e recepcionista)', texto:'Mostra quanto tem no caixa aberto agora, com o total de entradas e saídas do dia. Se aparecer "Nenhum caixa aberto", é preciso abrir o caixa na tela de Caixa antes de começar a receber pagamentos.', imagem:null },
+    { titulo:'Comissões pendentes', texto:'O dono vê o total a pagar pra todos os profissionais somado. O profissional vê só quanto ele mesmo tem a receber.', imagem:null },
+    { titulo:'Clube de assinatura e atrasados (dono e recepcionista)', texto:'Mostra quantos assinantes estão ativos, a receita recorrente mensal (MRR) e quantos estão com a mensalidade atrasada — um alerta rápido pra saber se precisa cobrar alguém.', imagem:null },
+    { titulo:'Agenda de hoje', texto:'Lista os próximos atendimentos do dia. O profissional vê só os dele; o dono e a recepcionista veem a agenda inteira da barbearia.', imagem:null },
+  ] },
   { id:'agenda', titulo:'Agenda', papeis:['dono','recepcionista','profissional'], passos:[
     { titulo:'Escolhendo como ver a agenda', texto:'No topo da tela existem três formas de ver os horários: Grade (colunas por profissional, é a mais usada no dia a dia), Lista (todos os horários em sequência) e Semana (visão geral da semana inteira, ótima pra ver quem está mais ocupado). Clique em qualquer uma pra trocar.', imagem:null },
     { titulo:'Navegando entre os dias', texto:'Use as setas "‹" e "›" no topo para ir pro dia anterior ou seguinte, ou clique em "Hoje" pra voltar direto pro dia atual. Também dá pra clicar no calendário e pular direto pra uma data específica.', imagem:null },
@@ -8000,9 +8008,30 @@ const GUIAS_AJUDA = [
     { titulo:'Desempenho por profissional — mês', texto:'A mesma divisão de bruto, comissão e lucro, mas olhando o mês inteiro — útil pra comparar o desempenho de cada um ao longo do tempo.', imagem:null },
     { titulo:'Faturamento por serviço', texto:'Mostra quais serviços mais venderam, ajudando a identificar o que vale a pena divulgar mais.', imagem:null },
   ] },
+  { id:'configuracoes', titulo:'Configurações da Página', papeis:['dono'], passos:[
+    { titulo:'Nome da barbearia', texto:'É o nome que aparece na página pública de agendamento, na página de planos e no topo do sistema.', imagem:null },
+    { titulo:'Logo', texto:'Envie uma imagem quadrada, de preferência 512×512 px, com no máximo 600KB. PNG com fundo transparente costuma ficar melhor.', imagem:null },
+    { titulo:'Banner', texto:'É a faixa que aparece no topo da página de agendamento e da página de planos. Tamanho recomendado: 1200×400 px, até 600KB. A imagem é ajustada pra preencher a largura, então evite colocar texto muito perto das bordas.', imagem:null },
+    { titulo:'Bio, endereço, telefone e horário', texto:'Essas informações aparecem pro cliente na página pública, ajudando ele a saber onde fica a barbearia e quando ela funciona antes mesmo de agendar.', imagem:null },
+    { titulo:'Texto sobre o Clube de Assinatura', texto:'Um espaço livre pra explicar como funcionam seus planos, regras e vantagens — esse texto aparece na página pública de planos, ajudando a convencer quem está em dúvida se assina ou não.', imagem:null },
+    { titulo:'Redes sociais', texto:'Adicione os links do Instagram, Facebook, TikTok, WhatsApp e site — eles aparecem como botões na sua página pública.', imagem:null },
+  ] },
+  { id:'fidelidade', titulo:'Fidelidade', papeis:['dono'], passos:[
+    { titulo:'Configurando a regra de pontos', texto:'Defina quantos pontos o cliente ganha a cada R$1 gasto em serviços, quantos pontos são necessários pra resgatar, e o valor do desconto que esse resgate vale.', imagem:null },
+    { titulo:'Programa de indicação', texto:'Quando um cliente indicado (preenchido no campo "Indicado por" no cadastro dele) tem o primeiro atendimento concluído, quem indicou ganha pontos de bônus automaticamente. Defina quantos pontos valem essa indicação.', imagem:null },
+    { titulo:'Aniversariantes do mês', texto:'A tela lista automaticamente os clientes que fazem aniversário no mês atual, com o telefone à mão — bom pra mandar uma mensagem especial.', imagem:null },
+    { titulo:'Pontuação por cliente', texto:'A tabela mostra o total de pontos de cada cliente e o progresso até o próximo resgate. Dá pra adicionar pontos manualmente com o botão "+10 pts", útil pra alguma bonificação especial.', imagem:null },
+  ] },
 ];
 const FAQ_AJUDA = [
   // { pergunta, resposta, papeis:[...] }
+  { pergunta:'Esqueci minha senha, como faço?', resposta:'Na tela de login, clique em "Esqueci minha senha" e siga as instruções enviadas por e-mail.', papeis:['dono','recepcionista','profissional'] },
+  { pergunta:'Como meu profissional acessa o sistema pelo celular dele?', resposta:'Cadastre-o na tela de Profissionais com um PIN de acesso, e envie o link de equipe (disponível em "Meus Links"). Ele entra direto pelo celular, sem precisar do seu login e senha.', papeis:['dono'] },
+  { pergunta:'Por que um cliente assinante está sendo cobrado valor cheio?', resposta:'Confira três coisas: se o serviço realmente está marcado como incluso no plano dele (em Clube de Assinatura, ao editar o plano), se a mensalidade dele está em dia, e se hoje é um dos dias em que o plano vale.', papeis:['dono'] },
+  { pergunta:'A estrelinha do cliente não aparece na agenda, o que fazer?', resposta:'Isso acontece quando o nome cadastrado no clube não bate exatamente com o nome na lista de Clientes. Vá em Clube de Assinatura — se houver assinantes sem vínculo, aparece um aviso com um botão pra resolver isso manualmente.', papeis:['dono'] },
+  { pergunta:'Posso agendar mais de um serviço no mesmo horário?', resposta:'Sim. Ao criar o agendamento, marque quantas caixinhas de serviço quiser — o sistema soma a duração e o valor de todos automaticamente.', papeis:['dono','recepcionista','profissional'] },
+  { pergunta:'Como eu recebo aviso quando um cliente agenda pelo link?', resposta:'Ative as notificações em Configurações da Conta. Com o navegador aberto, você recebe som e vibração; ativando a notificação push, o aviso chega mesmo com o sistema fechado, direto na barra de notificações do celular ou computador.', papeis:['dono','recepcionista'] },
+  { pergunta:'O profissional pode ver quanto os colegas ganham?', resposta:'Não. Cada profissional vê apenas a própria comissão e a própria fatia do pote do clube — os valores dos colegas ficam visíveis só pro dono e administrador.', papeis:['dono','profissional'] },
 ];
 
 let ajudaAba = 'guias'; // 'guias' | 'faq'
