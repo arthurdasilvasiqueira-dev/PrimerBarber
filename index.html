@@ -324,6 +324,7 @@ const ICON = {
   timer:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M9 2h6"/></svg>`,
   listPlus:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h11M4 12h7M4 18h7"/><path d="M18 14v6M15 17h6"/></svg>`,
   bell:`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 21a2 2 0 004 0"/></svg>`,
+  help:`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 .5c0 1.5-2 1.7-2.4 3.1M12 17h.01"/></svg>`,
 };
 
 /* ============ CONFIGURAÇÃO — PREENCHA ANTES DE PUBLICAR ============ */
@@ -712,14 +713,74 @@ function showToast(msg){
 function profName(id){ return state.professionals.find(p=>p.id===id)?.name || '—'; }
 // Valor que realmente entrou por um atendimento: usa o que foi cobrado no
 // fechamento; para atendimentos antigos, recalcula pela regra do plano.
+function serviceById(id){ return state.services.find(s=>s.id===id); }
+
+/* ===== SUPORTE A MAIS DE UM SERVIÇO POR AGENDAMENTO =====
+   Guardamos os serviços em appt.serviceIds (array). appt.serviceId
+   continua existindo, apontando para o primeiro — é o que todo o
+   código antigo (relatórios, lembretes, etc.) ainda lê sozinho. */
+function appointmentServiceIds(appt){
+  if(!appt) return [];
+  if(Array.isArray(appt.serviceIds) && appt.serviceIds.length) return appt.serviceIds;
+  return appt.serviceId ? [appt.serviceId] : [];
+}
+function appointmentServices(appt){
+  return appointmentServiceIds(appt).map(id=>serviceById(id)).filter(Boolean);
+}
+function appointmentDuration(appt){
+  const svcs = appointmentServices(appt);
+  if(svcs.length===0) return 30;
+  return svcs.reduce((t,s)=>t+(Number(s.duration)||30),0);
+}
+function appointmentServiceNames(appt){
+  const svcs = appointmentServices(appt);
+  return svcs.length ? svcs.map(s=>s.name).join(' + ') : 'Serviço removido';
+}
+// Preço de cada serviço do agendamento, já considerando o clube — soma o
+// total e guarda o detalhe de cada item (necessário pra comissão e fichas
+// funcionarem certo quando um dos serviços está coberto e outro não).
+function precoParaCobrarMultiplo(appt){
+  const svcs = appointmentServices(appt);
+  if(svcs.length===0) return { total:0, itens:[], motivoCheio:'', membro:null, todosCobertos:false };
+  let total = 0, motivoCheio = '', membro = null;
+  const itens = svcs.map(svc=>{
+    const calc = precoParaCobrar(appt, svc);
+    total += calc.basePrice;
+    if(calc.member && !membro) membro = calc.member;
+    if(calc.motivoCheio && !motivoCheio) motivoCheio = calc.motivoCheio;
+    return { service: svc, calc };
+  });
+  const todosCobertos = itens.every(i=>i.calc.planoAtivo);
+  return { total, itens, motivoCheio, membro, todosCobertos };
+}
+
 function valorRealAtendimento(ap){
   if(!ap) return 0;
+  if(Array.isArray(ap.valorPorServico) && ap.valorPorServico.length){
+    return ap.valorPorServico.reduce((t,i)=>t+Number(i.valor||0),0);
+  }
   if(ap.valorCobrado != null) return Number(ap.valorCobrado);
-  const s = serviceById(ap.serviceId);
-  if(!s) return 0;
-  return (typeof precoParaCobrar === 'function') ? precoParaCobrar(ap, s).basePrice : Number(s.price);
+  return precoParaCobrarMultiplo(ap).total;
 }
-function serviceById(id){ return state.services.find(s=>s.id===id); }
+// Comissão de SERVIÇO gerada por um atendimento, para um profissional —
+// usa o detalhe salvo por serviço quando existe (atendimento com mais de
+// um serviço, cada um podendo ter % diferente), senão cai no cálculo
+// simples de antes (atendimentos de um serviço só).
+function comissaoDoAtendimento(ap, prof){
+  if(Array.isArray(ap.valorPorServico) && ap.valorPorServico.length){
+    return ap.valorPorServico.reduce((t,item)=>{
+      if(item.valor<=0) return t;
+      const pct = effectiveCommissionPercent(prof, item.serviceId);
+      return t + item.valor*(pct/100);
+    },0);
+  }
+  const svc = serviceById(ap.serviceId);
+  if(!svc) return 0;
+  const valorCobrado = (ap.valorCobrado != null) ? Number(ap.valorCobrado) : precoParaCobrar(ap, svc).basePrice;
+  if(valorCobrado<=0) return 0;
+  return valorCobrado * (effectiveCommissionPercent(prof, svc.id)/100);
+}
+
 function openSession(){ return state.cashSessions.find(c=>c.status==='aberto') || null; }
 const PAYMENT_METHODS = [
   {id:'dinheiro', label:'Dinheiro', inDrawer:true},
@@ -1077,16 +1138,12 @@ function commissionOwed(profId){
   const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   let serviceEarned = 0;
   concludedAppts.forEach(ap=>{
-    const s = serviceById(ap.serviceId); if(!s) return;
     // Comissão sobre o que REALMENTE foi cobrado. Atendimento coberto pelo
     // clube não gera comissão de serviço — o profissional é pago por ele
     // através das fichas do pote. Sem isso, ele receberia duas vezes.
-    const valorCobrado = (ap.valorCobrado != null)
-      ? Number(ap.valorCobrado)                 // gravado no fechamento
-      : precoParaCobrar(ap, s).basePrice;        // atendimentos antigos
-    if(valorCobrado <= 0) return;
-    const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
-    serviceEarned += valorCobrado * (pct/100);
+    // comissaoDoAtendimento já lida com atendimentos de 1 ou vários
+    // serviços, cada um com seu próprio percentual quando configurado.
+    serviceEarned += comissaoDoAtendimento(ap, prof);
   });
   const potEarned = potCommissionForProf(profId);
   // O vale e o saque são adiantamentos: saem do que o profissional tem a
@@ -1112,13 +1169,10 @@ function monthlyEarnedForProf(profId){
   const concludedThisMonth = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido' && a.date.startsWith(period));
   let total = 0;
   concludedThisMonth.forEach(ap=>{
-    const s = serviceById(ap.serviceId); if(!s) return;
     // usa o valor REALMENTE cobrado (com desconto e clube aplicados),
-    // não o preço de tabela
-    const valorCobrado = (ap.valorCobrado != null) ? Number(ap.valorCobrado) : precoParaCobrar(ap, s).basePrice;
-    if(valorCobrado <= 0) return;
-    const pct = (prof.serviceOverrides && prof.serviceOverrides[ap.serviceId]!=null) ? prof.serviceOverrides[ap.serviceId] : prof.commission;
-    total += valorCobrado * (pct/100);
+    // não o preço de tabela — comissaoDoAtendimento já soma certo
+    // quando o atendimento tem mais de um serviço
+    total += comissaoDoAtendimento(ap, prof);
   });
   return total + potCommissionForProf(profId);
 }
@@ -1161,7 +1215,7 @@ function generateSlotsForProfessional(prof, dateStr, durationMin){
     const timeStr = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
     if(h*60+m+durationMin <= workEndMinutes){
       const conflict = state.appointments.some(a=>a.professionalId===prof.id && a.date===dateStr && a.status!=='cancelado' && a.status!=='faltou' &&
-        timesOverlap(a.time, serviceById(a.serviceId)?.duration||30, timeStr, durationMin));
+        timesOverlap(a.time, appointmentDuration(a), timeStr, durationMin));
       // horários bloqueados (folga, almoço) também saem da lista
       const blocked = blocksForDay(prof.id, dateStr).some(b=>{
         const [bsh,bsm] = b.start.split(':').map(Number);
@@ -1252,14 +1306,19 @@ function clubFichaEntries(){
   // A ficha é do trabalho feito: se o profissional atendeu um assinante,
   // ela conta mesmo que a mensalidade ainda não tenha entrado. O que
   // depende do pagamento é o VALOR do pote, não a contagem de fichas.
-  return state.appointments
-    .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix) && clubMemberForClient(a.client))
-    .map(a=>{
-      const service = serviceById(a.serviceId);
+  // Um agendamento com mais de um serviço soma a ficha de cada um.
+  const entries = [];
+  state.appointments
+    .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix))
+    .forEach(a=>{
       const membro = clubMemberForClient(a.client);
-      return {appt:a, service, membro, fichas: service?.clubFichas||0};
-    })
-    .filter(e=>e.fichas>0);
+      if(!membro) return;
+      appointmentServices(a).forEach(service=>{
+        const fichas = service?.clubFichas || 0;
+        if(fichas>0) entries.push({appt:a, service, membro, fichas});
+      });
+    });
+  return entries;
 }
 function clubFichasBreakdown(){
   const entries = clubFichaEntries();
@@ -1290,11 +1349,13 @@ function diagnosticoFichas(){
     .forEach(a=>{
       const membro = clubMemberForClient(a.client);
       if(!membro) return; // não é assinante, não deveria gerar ficha mesmo
-      const service = serviceById(a.serviceId);
+      const svcs = appointmentServices(a);
       const prof = state.professionals.find(p=>p.id===a.professionalId);
-      if(!service){ problemas.push({a, tipo:'servico_excluido', motivo:'Serviço foi excluído do sistema'}); return; }
-      if(!service.clubFichas){ problemas.push({a, tipo:'servico_sem_fichas', refId:service.id, motivo:`Serviço "${service.name}" está com 0 fichas configuradas`}); return; }
-      if(prof && prof.servesClients===false){ problemas.push({a, tipo:'prof_nao_atende', refId:prof.id, motivo:`${prof.name} está marcado como "não atende clientes" — a ficha conta, mas ele não aparece nas listas comuns`}); return; }
+      if(svcs.length===0){ problemas.push({a, tipo:'servico_excluido', motivo:'Serviço foi excluído do sistema'}); return; }
+      svcs.forEach(service=>{
+        if(!service.clubFichas) problemas.push({a, tipo:'servico_sem_fichas', refId:service.id, motivo:`Serviço "${service.name}" está com 0 fichas configuradas`});
+      });
+      if(prof && prof.servesClients===false){ problemas.push({a, tipo:'prof_nao_atende', refId:prof.id, motivo:`${prof.name} está marcado como "não atende clientes" — a ficha conta, mas ele não aparece nas listas comuns`}); }
     });
   return problemas;
 }
@@ -1380,13 +1441,16 @@ const NAV_GROUPS = [
     {id:'config', label:'Integração Asaas', icon:ICON.gear},
     {id:'notafiscal', label:'Notas Fiscais', icon:ICON.receipt},
   ]},
+  {label:'Ajuda', items:[
+    {id:'ajuda', label:'Central de Ajuda', icon:ICON.help},
+  ]},
 ];
 const NAV = NAV_GROUPS.flatMap(g=>g.items);
 function navAllowedForSession(){
   if(isOwnerLevel()) return NAV.map(n=>n.id);
-  if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque'];
-  // profissional: acesso restrito à própria agenda, comissões e mensagens
-  return ['dashboard','agenda','espera','comissoes'];
+  if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque','ajuda'];
+  // profissional: acesso restrito à própria agenda, comissões, mensagens e ajuda
+  return ['dashboard','agenda','espera','comissoes','ajuda'];
 }
 
 /* ============ ROOT RENDER ============ */
@@ -1603,6 +1667,7 @@ function renderView(){
   if(route==='mensagens') return renderMensagens(view);
   if(route==='espera') return renderWaitlist(view);
   if(route==='notafiscal') return renderNotaFiscal(view);
+  if(route==='ajuda') return renderAjuda(view);
   if(route==='configuracoes') return renderConfiguracoes(view);
 }
 
@@ -1719,14 +1784,14 @@ function emptyState(msg, hint=''){
   </div>`;
 }
 function agendaRow(a){
-  const s = serviceById(a.serviceId);
+  const nomeServ = appointmentServiceNames(a);
   const statusPill = a.status==='concluido' ? '<span class="pill pill-ok">Concluído</span>'
     : a.status==='cancelado' ? '<span class="pill pill-bad">Cancelado</span>'
     : '<span class="pill pill-warn">Agendado</span>';
   return `<div style="display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:9px;background:var(--panel-2);">
     <div class="font-mono" style="font-size:13px;color:var(--gold-bright);min-width:44px;">${a.time}</div>
     <div style="flex:1;min-width:0;">
-      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.client)} ${clubStarBadge(a.client)} <span style="color:var(--muted-2);">— ${esc(s?s.name:'')}</span></div>
+      <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.client)} ${clubStarBadge(a.client)} <span style="color:var(--muted-2);">— ${esc(nomeServ)}</span></div>
       <div style="font-size:12px;color:var(--muted);">${esc(profName(a.professionalId))}</div>
     </div>
     ${statusPill}
@@ -1780,16 +1845,17 @@ function agendaGridView(dateISO, profList){
     const list = appts.filter(a=>a.professionalId===prof.id);
     return list.map(a=>{
       const [h,m] = a.time.split(':').map(Number);
-      const svc = serviceById(a.serviceId);
-      const dur = svc?.duration || 30;
+      const svcs = appointmentServices(a);
+      const dur = appointmentDuration(a);
+      const nomesServicos = appointmentServiceNames(a);
       const top = ((h - minH) + m/60) * SLOT_H;
       const height = Math.max(26, (dur/60) * SLOT_H - 3);
       const done = a.status==='concluido';
       const veioDoLink = a.origem==='online';
       return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}${veioDoLink?' (agendado pelo próprio cliente)':''}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${veioDoLink?'#4a9fd8':(done?'var(--ok)':'var(--gold)')};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
-        <div class="font-mono" style="font-size:10px;color:var(--muted-2);display:flex;align-items:center;gap:4px;">${a.time}${svc?` · ${dur}min`:''}${veioDoLink?` <span style="color:#4a9fd8;" title="Agendado pelo próprio cliente, pelo link">${ICON.globe}</span>`:''}</div>
+        <div class="font-mono" style="font-size:10px;color:var(--muted-2);display:flex;align-items:center;gap:4px;">${a.time}${svcs.length?` · ${dur}min`:''}${veioDoLink?` <span style="color:#4a9fd8;" title="Agendado pelo próprio cliente, pelo link">${ICON.globe}</span>`:''}</div>
         <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>
-        ${height>44 && svc?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(svc.name)}</div>`:''}
+        ${height>44 && svcs.length?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(nomesServicos)}</div>`:''}
       </div>`;
     }).join('');
   };
@@ -1908,7 +1974,7 @@ function renderAgenda(view){
   };
   const dayLabel = new Date(viewDate+'T12:00').toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'});
   const doneCount = appts.filter(a=>a.status==='concluido').length;
-  const revenue = appts.filter(a=>a.status==='concluido').reduce((t,a)=>{ const s=serviceById(a.serviceId); return t+(s?s.price:0); },0);
+  const revenue = appts.filter(a=>a.status==='concluido').reduce((t,a)=>t+valorRealAtendimento(a),0);
 
   view.innerHTML = `
     ${pageHeader('Agenda', dayLabel.charAt(0).toUpperCase()+dayLabel.slice(1), `
@@ -1973,12 +2039,14 @@ function renderAgenda(view){
     ${agendaMode==='lista' ? (appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
       <div style="display:flex;flex-direction:column;gap:10px;">
         ${appts.map(a=>{
-          const s = serviceById(a.serviceId);
+          const svcsList = appointmentServices(a);
+          const nomeServ = appointmentServiceNames(a);
+          const durTotal = appointmentDuration(a);
           return `<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
             <div class="font-mono" style="font-size:15px;color:var(--gold-bright);min-width:50px;">${a.time}</div>
             <div style="flex:1;min-width:180px;">
               <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${clubStarBadge(a.client)} ${a.origem==='online'?`<span class="pill" style="background:rgba(74,159,216,.15);color:#4a9fd8;border-color:rgba(74,159,216,.35);font-size:10px;">${ICON.globe} agendou pelo link</span>`:''} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
-              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${s?esc(s.name):'Serviço removido'} · ${esc(profName(a.professionalId))} ${s?`· ${ICON.clock} ${s.duration} min`:''}</div>
+              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${svcsList.length?esc(nomeServ):'Serviço removido'} · ${esc(profName(a.professionalId))} ${svcsList.length?`· ${ICON.clock} ${durTotal} min`:''}</div>
               ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+esc(a.rating.comment):''}</div>` : ''}
               ${clubMemberForClient(a.client)?.status==='atrasado' ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="pill pill-bad" style="font-size:11px;">Clube em atraso — cobrança em valor cheio</span>${clubOverdueWaButton(a.client)}</div>` : ''}
             </div>
@@ -2156,7 +2224,7 @@ function reabrirComanda(apptId, view){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">
-        ${esc(a.client)} · ${esc(svc?svc.name:'serviço removido')} · ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time}
+        ${esc(a.client)} · ${esc(appointmentServiceNames(a))} · ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time}
       </div>
 
       <div class="card" style="padding:14px 16px;background:var(--panel-2);margin-bottom:16px;">
@@ -2215,7 +2283,7 @@ function reabrirComanda(apptId, view){
               hoje.entries.push({
                 id:uid(), type:'saida', method:lancamento.method || 'dinheiro',
                 estorno:true, apptId,
-                desc:`Estorno — ${svc?svc.name:'atendimento'} de ${ap.client} (comanda reaberta)`,
+                desc:`Estorno — ${appointmentServiceNames(ap)} de ${ap.client} (comanda reaberta)`,
                 amount: valor, time:new Date().toTimeString().slice(0,5), auto:true,
               });
             }
@@ -2349,8 +2417,8 @@ function concludeAppt(id){
   const session = openSession();
   if(!session){ showToast('Abra o caixa antes de concluir atendimentos.'); route='caixa'; render(); return; }
   const appt = state.appointments.find(a=>a.id===id);
-  const service = serviceById(appt.serviceId);
-  if(!service){
+  const svcs = appointmentServices(appt);
+  if(svcs.length===0){
     // Não deixa finalizar sem um serviço de verdade — é exatamente o que
     // causava atendimento sem ficha e sem valor certo de comissão.
     showToast('Este agendamento está sem serviço definido. Escolha o serviço correto antes de finalizar.');
@@ -2358,13 +2426,18 @@ function concludeAppt(id){
     return;
   }
 
-  // Calcula o valor considerando o clube de assinatura
-  const calc = precoParaCobrar(appt, service);
-  const member = calc.member;
-  const basePrice = calc.basePrice;
-  let priceNote = calc.priceNote;
-  const motivoCheio = calc.motivoCheio;
-  const planoAtivo = calc.planoAtivo;
+  // Calcula o valor de CADA serviço considerando o clube — um pode estar
+  // incluso no plano e outro não, então cada um é avaliado por si.
+  const multi = precoParaCobrarMultiplo(appt);
+  const member = multi.membro;
+  const basePrice = multi.total;
+  const motivoCheio = multi.motivoCheio;
+  const planoAtivo = multi.todosCobertos; // só mostra a telinha verde se TODOS os serviços estiverem inclusos
+  const nomesServicos = appointmentServiceNames(appt);
+  // nota combinada para o lançamento do caixa (ex: "Corte (incluso no clube), Barba (15% desconto)")
+  let priceNote = multi.itens.length>1
+    ? ' — ' + multi.itens.map(i=>`${i.service.name}${i.calc.priceNote||''}`).join(', ')
+    : (multi.itens[0]?.calc.priceNote || '');
 
   let netAmount = appt.depositStatus==='pago' ? Math.max(0, basePrice - appt.depositAmount) : basePrice;
 
@@ -2372,6 +2445,26 @@ function concludeAppt(id){
   const finish = (method, pagamentos, desconto)=>{
     const lista = (pagamentos && pagamentos.length) ? pagamentos : [{method, amount: netAmount}];
     const totalCobrado = lista.reduce((t,p)=>t+Number(p.amount),0);
+    // Guarda o valor de CADA serviço separadamente — é isso que permite a
+    // comissão e as fichas calcularem certo depois, mesmo quando um
+    // serviço estava incluso no plano e outro não. Se o total final for
+    // diferente da soma original (desconto, cortesia), distribui
+    // proporcionalmente entre os serviços — sem isso, uma cortesia
+    // continuaria gerando comissão sobre o preço cheio de cada serviço.
+    const somaOriginal = multi.itens.reduce((t,i)=>t+i.calc.basePrice,0);
+    let acumulado = 0;
+    const valorPorServico = multi.itens.map((i,idx)=>{
+      let valor;
+      if(somaOriginal<=0 || totalCobrado<=0){
+        valor = 0;
+      } else if(idx === multi.itens.length-1){
+        valor = Math.max(0, Math.round((totalCobrado - acumulado)*100)/100); // o último absorve o arredondamento
+      } else {
+        valor = Math.round((i.calc.basePrice/somaOriginal)*totalCobrado*100)/100;
+        acumulado += valor;
+      }
+      return { serviceId: i.service.id, valor, coberto: i.calc.planoAtivo };
+    });
     update(s=>{
       const ap = s.appointments.find(a=>a.id===id);
       ap.status='concluido';
@@ -2380,9 +2473,10 @@ function concludeAppt(id){
       ap.desconto = Number(desconto)||0;
       // guarda quanto foi cobrado de fato — é a base da comissão.
       ap.valorCobrado = totalCobrado;
+      ap.valorPorServico = valorPorServico;
       ap.cobertoPeloClube = planoAtivo;
       const sess = s.cashSessions.find(c=>c.status==='aberto');
-      const obs = `${service.name} — ${ap.client}${priceNote}${(Number(desconto)>0)?` (desconto ${BRL(desconto)})`:''}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`;
+      const obs = `${nomesServicos} — ${ap.client}${priceNote}${(Number(desconto)>0)?` (desconto ${BRL(desconto)})`:''}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`;
       // um lançamento por forma de pagamento, para o caixa somar certo
       lista.forEach((p,i)=>{
         if(Number(p.amount) <= 0) return;
@@ -2404,7 +2498,7 @@ function concludeAppt(id){
 
   const planoNome = member ? (state.subscriptionPlans.find(p=>p.id===member.planId)?.name || '') : '';
 
-  // Serviço coberto pelo plano: tela própria, deixando claro que não se cobra
+  // Todos os serviços cobertos pelo plano: tela própria, deixando claro que não se cobra
   if(netAmount<=0 && planoAtivo){
     openModal(`
       <div style="padding:26px 22px;text-align:center;">
@@ -2414,11 +2508,11 @@ function concludeAppt(id){
         </div>
         <div class="pill pill-ok" style="font-size:12px;padding:6px 16px;letter-spacing:.05em;">★ PLANO ATIVO</div>
         <div class="font-display" style="font-size:20px;font-weight:600;margin:14px 0 4px;">${esc(appt.client)}</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(service.name)}${planoNome?` · ${esc(planoNome)}`:''}</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(nomesServicos)}${planoNome?` · ${esc(planoNome)}`:''}</div>
         <div class="font-mono" style="font-size:38px;font-weight:600;color:var(--ok);line-height:1;">R$ 0,00</div>
         <div style="font-size:13px;color:var(--ok);margin-top:8px;font-weight:600;">NADA A COBRAR</div>
         <div style="font-size:12px;color:var(--muted-2);margin-top:12px;line-height:1.6;">
-          Este serviço já está incluído na assinatura.<br>
+          ${svcs.length>1?'Todos os serviços já estão incluídos na assinatura.':'Este serviço já está incluído na assinatura.'}<br>
           As fichas entram no pote do mês normalmente.
         </div>
         <button class="btn btn-gold" id="pa-ok" style="width:100%;justify-content:center;margin-top:20px;padding:14px;font-size:14.5px;">Confirmar atendimento</button>
@@ -2443,9 +2537,19 @@ function concludeAppt(id){
         <div class="font-display" style="font-size:19px;font-weight:600;">Finalizar atendimento</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">
-        ${esc(appt.client)} ${clubStarBadge(appt.client)} · ${esc(service.name)}${esc(priceNote)}
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+        ${esc(appt.client)} ${clubStarBadge(appt.client)}
       </div>
+      ${multi.itens.length>1 ? `
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
+          ${multi.itens.map(i=>`
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);">
+              <span>${esc(i.service.name)}${i.calc.priceNote?esc(i.calc.priceNote):''}</span>
+              <span class="font-mono">${BRL(i.calc.basePrice)}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : `<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">${esc(multi.itens[0]?.service.name||'')}${esc(multi.itens[0]?.calc.priceNote||'')}</div>`}
 
       ${motivoCheio ? `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);
         font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
@@ -2454,7 +2558,7 @@ function concludeAppt(id){
 
       <div class="card" style="padding:15px 17px;background:var(--panel-2);margin-bottom:16px;">
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:9px;">
-          <span style="color:var(--muted);">Valor do serviço</span>
+          <span style="color:var(--muted);">Valor ${multi.itens.length>1?'dos serviços':'do serviço'}</span>
           <span class="font-mono">${BRL(valorOriginal)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;">
@@ -2629,12 +2733,15 @@ function servingProfissionaisOk(){
 function apptActionsModal(apptId, view){
   const a = state.appointments.find(x=>x.id===apptId);
   if(!a) return;
-  const svc = serviceById(a.serviceId);
+  const svcs = appointmentServices(a);
+  const nomesServicos = appointmentServiceNames(a);
+  const duracaoTotal = appointmentDuration(a);
   const membro = clubMemberForClient(a.client);
   const podeMexer = isOwnerLevel() || userSession.role==='recepcionista' || a.professionalId===userSession.professionalId;
-  // valor real considerando o plano do cliente
-  const cobranca = svc ? precoParaCobrar(a, svc) : null;
-  const valorReal = cobranca ? (a.depositStatus==='pago' ? Math.max(0, cobranca.basePrice - a.depositAmount) : cobranca.basePrice) : 0;
+  // valor real considerando o plano do cliente, somando todos os serviços
+  const multi = svcs.length ? precoParaCobrarMultiplo(a) : null;
+  const precoTabela = svcs.reduce((t,s)=>t+Number(s.price),0);
+  const valorReal = multi ? (a.depositStatus==='pago' ? Math.max(0, multi.total - a.depositAmount) : multi.total) : 0;
   const statusMap = {
     agendado:{l:'Agendado',t:'muted'}, confirmado:{l:'Confirmado',t:'ok'},
     concluido:{l:'Concluído',t:'ok'}, cancelado:{l:'Cancelado',t:'bad'}, faltou:{l:'Faltou',t:'bad'},
@@ -2649,10 +2756,10 @@ function apptActionsModal(apptId, view){
             ${esc(a.client)} ${clubStarBadge(a.client)}
           </div>
           <div style="font-size:13px;color:var(--muted);margin-top:4px;">
-            ${esc(svc?svc.name:'Serviço removido')} · ${esc(profName(a.professionalId))}
+            ${esc(nomesServicos)} · ${esc(profName(a.professionalId))}
           </div>
           <div class="font-mono" style="font-size:12.5px;color:var(--muted-2);margin-top:3px;">
-            ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR',{weekday:'short', day:'2-digit', month:'2-digit'})} às ${a.time}${svc?` · ${svc.duration} min`:''}
+            ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR',{weekday:'short', day:'2-digit', month:'2-digit'})} às ${a.time}${svcs.length?` · ${duracaoTotal} min`:''}
           </div>
         </div>
         <button class="btn btn-ghost" style="padding:6px;flex-shrink:0;" id="m-close">${ICON.x}</button>
@@ -2662,23 +2769,24 @@ function apptActionsModal(apptId, view){
         <span class="pill pill-${st.t}">${st.l}</span>
         ${a.origem==='online'?`<span class="pill" style="background:rgba(74,159,216,.15);color:#4a9fd8;border-color:rgba(74,159,216,.35);">${ICON.globe} Agendado pelo cliente (link)${a.clientPhone?' · '+esc(a.clientPhone):''}</span>`:`<span class="pill pill-muted">${ICON.shield} Marcado pela barbearia${a.criadoPor?' · '+esc(a.criadoPor):''}</span>`}
         ${a.seriesId?`<span class="pill pill-muted">${ICON.clock} recorrente (${a.seriesFreqDias||7} em ${a.seriesFreqDias||7} dias)</span>`:''}
-        ${svc ? (cobranca.planoAtivo
+        ${svcs.length ? (multi.todosCobertos
           ? `<span class="pill pill-ok" style="font-weight:600;">★ PLANO ATIVO · R$ 0,00</span>`
-          : `<span class="pill pill-muted font-mono">${BRL(valorReal)}${valorReal < svc.price ? ` <span style="text-decoration:line-through;opacity:.6;">${BRL(svc.price)}</span>` : ''}</span>`) : ''}
+          : `<span class="pill pill-muted font-mono">${BRL(valorReal)}${valorReal < precoTabela ? ` <span style="text-decoration:line-through;opacity:.6;">${BRL(precoTabela)}</span>` : ''}</span>`) : `<span class="pill pill-bad">Sem serviço definido</span>`}
         ${membro && membro.status==='atrasado'?`<span class="pill pill-bad">Clube em atraso</span>`:''}
         ${a.depositStatus==='pago'?`<span class="pill pill-ok">Sinal pago ${BRL(a.depositAmount)}</span>`:''}
       </div>
 
-      ${cobranca?.motivoCheio ? `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
-        <b style="color:var(--warn);">Vai cobrar valor cheio</b><br>${esc(cobranca.motivoCheio)}
+      ${multi?.motivoCheio ? `<div style="padding:10px 12px;border-radius:9px;background:var(--panel-2);border:1px solid var(--warn);font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
+        <b style="color:var(--warn);">Vai cobrar valor cheio${svcs.length>1?' em algum item':''}</b><br>${esc(multi.motivoCheio)}
       </div>` : ''}
       ${!podeMexer ? `<div style="font-size:12.5px;color:var(--muted-2);">Este agendamento é de outro profissional.</div>` : `
         <div style="display:flex;flex-direction:column;gap:9px;">
           ${a.status!=='concluido' && a.status!=='cancelado' ? `
             <button class="btn btn-gold" id="ac-concluir" style="justify-content:center;padding:14px;font-size:14.5px;">
-              ${cobranca?.planoAtivo ? `${ICON.check} Finalizar — nada a cobrar` : `${ICON.cash} Finalizar e receber ${valorReal>0?BRL(valorReal):''}`}
+              ${multi?.todosCobertos ? `${ICON.check} Finalizar — nada a cobrar` : `${ICON.cash} Finalizar e receber ${valorReal>0?BRL(valorReal):''}`}
             </button>
             <div style="display:flex;gap:9px;flex-wrap:wrap;">
+              <button class="btn btn-ghost" id="ac-editar-servico" style="flex:1;justify-content:center;min-width:130px;">${ICON.edit||''} Editar serviço</button>
               <button class="btn btn-ghost" id="ac-reagendar" style="flex:1;justify-content:center;min-width:130px;">${ICON.clock} Reagendar</button>
               ${!a.confirmed?`<button class="btn btn-ghost" id="ac-confirmar" style="flex:1;justify-content:center;min-width:130px;">${ICON.check} Confirmar</button>`:''}
             </div>
@@ -2720,6 +2828,7 @@ function apptActionsModal(apptId, view){
     const recarrega = ()=>{ closeModal(); if(view) renderAgenda(view); };
 
     root.querySelector('#ac-concluir')?.addEventListener('click', ()=>{ closeModal(); concludeAppt(a.id); });
+    root.querySelector('#ac-editar-servico')?.addEventListener('click', ()=>{ closeModal(); editarServicoModal(a.id, view); });
     root.querySelector('#ac-reagendar')?.addEventListener('click', ()=>{ closeModal(); reagendarModal(a.id, view); });
     root.querySelector('#ac-confirmar')?.addEventListener('click', ()=>{
       update(s=>{ const x=s.appointments.find(y=>y.id===a.id); x.confirmed=true; x.status='confirmado'; });
@@ -2760,6 +2869,80 @@ function apptActionsModal(apptId, view){
 }
 
 /* Reagendar: muda dia, horário e profissional */
+/* Troca o(s) serviço(s) de um agendamento já criado — sem precisar
+   cancelar e refazer. Revalida conflito de horário, já que a duração
+   total pode mudar (ex: trocar um corte por corte+barba). */
+function editarServicoModal(apptId, view){
+  const a = state.appointments.find(x=>x.id===apptId);
+  if(!a) return;
+  const marcadosAtuais = new Set(appointmentServiceIds(a));
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Editar serviço</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">
+        ${esc(a.client)} — ${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} às ${a.time}
+      </div>
+      <label>Serviço(s) <span style="color:var(--muted-2);font-weight:400;">— pode marcar mais de um</span></label>
+      <div id="es-services-box" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-top:6px;">
+        ${state.services.map(s=>`
+          <label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;padding:4px 0;">
+            <input type="checkbox" class="es-service-chk" value="${s.id}" ${marcadosAtuais.has(s.id)?'checked':''} style="width:auto;">
+            <span style="flex:1;">${esc(s.name)}</span>
+            <span class="font-mono" style="color:var(--muted-2);font-size:12px;">${BRL(s.price)} · ${s.duration}min</span>
+          </label>
+        `).join('')}
+      </div>
+      <div id="es-total" style="font-size:12px;color:var(--muted-2);margin-top:6px;"></div>
+      <div id="es-aviso" style="font-size:12px;margin-top:8px;"></div>
+      <button class="btn btn-gold" id="es-save" style="width:100%;justify-content:center;margin-top:16px;">Salvar</button>
+      <div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">
+        Se o atendimento já foi finalizado, isso não muda o valor lançado no caixa — só corrige o registro do serviço.
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const servicosMarcados = ()=>[...root.querySelectorAll('.es-service-chk:checked')].map(el=>serviceById(el.value)).filter(Boolean);
+
+    const checar = ()=>{
+      const svcs = servicosMarcados();
+      const durTotal = svcs.reduce((t,s)=>t+(Number(s.duration)||30),0);
+      const precoTotal = svcs.reduce((t,s)=>t+Number(s.price),0);
+      root.querySelector('#es-total').textContent = svcs.length
+        ? `${svcs.length} serviço(s) — ${durTotal} min · ${BRL(precoTotal)}`
+        : 'Nenhum serviço selecionado.';
+      const aviso = root.querySelector('#es-aviso');
+      if(svcs.length===0){ aviso.textContent=''; return; }
+      // só revalida conflito se o agendamento ainda não foi concluído/cancelado
+      if(a.status==='concluido' || a.status==='cancelado'){ aviso.textContent=''; return; }
+      const choque = state.appointments.some(x=>x.id!==a.id && x.professionalId===a.professionalId && x.date===a.date &&
+        x.status!=='cancelado' && x.status!=='faltou' &&
+        timesOverlap(x.time, appointmentDuration(x), a.time, durTotal));
+      if(choque){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Com essa duração, o horário passa a bater com outro agendamento.'; }
+      else { aviso.textContent=''; }
+    };
+    root.querySelectorAll('.es-service-chk').forEach(el=>el.addEventListener('change', checar));
+    checar();
+
+    root.querySelector('#es-save').addEventListener('click', ()=>{
+      const svcs = servicosMarcados();
+      if(svcs.length===0){ showToast('Marque ao menos um serviço.'); return; }
+      const serviceIds = svcs.map(s=>s.id);
+      update(s=>{
+        const ap = s.appointments.find(x=>x.id===apptId);
+        if(!ap) return;
+        ap.serviceIds = serviceIds;
+        ap.serviceId = serviceIds[0];
+      });
+      closeModal();
+      showToast('Serviço atualizado.');
+      if(view) renderAgenda(view);
+    });
+  });
+}
+
 function reagendarModal(apptId, view){
   const a = state.appointments.find(x=>x.id===apptId);
   if(!a) return;
@@ -2795,10 +2978,10 @@ function reagendarModal(apptId, view){
       const t = root.querySelector('#r-time').value;
       const aviso = root.querySelector('#r-aviso');
       if(!d || !t){ aviso.textContent=''; return; }
-      const dur = serviceById(a.serviceId)?.duration || 30;
+      const dur = appointmentDuration(a);
       const choque = state.appointments.some(x=>x.id!==a.id && x.professionalId===pid && x.date===d &&
         x.status!=='cancelado' && x.status!=='faltou' &&
-        timesOverlap(x.time, serviceById(x.serviceId)?.duration||30, t, dur));
+        timesOverlap(x.time, appointmentDuration(x), t, dur));
       const bloqueado = blocksForDay(pid, d).some(b=> t >= b.start && t < b.end);
       const prof = state.professionals.find(p=>p.id===pid);
       if(choque){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Já existe outro agendamento nesse horário.'; }
@@ -2941,10 +3124,19 @@ function openApptModal(pre){
           <div style="flex:1;"><label>Data</label><input id="f-date" type="date" value="${preDate}" style="width:100%;"></div>
         </div>
         <div><label>Profissional</label><select id="f-prof" style="width:100%;">${servingProfessionals().map(p=>`<option value="${p.id}" ${preProf===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
-        <div><label>Serviço</label><select id="f-service" style="width:100%;">
-          <option value="">— selecione o serviço —</option>
-          ${state.services.map(s=>`<option value="${s.id}">${esc(s.name)} — ${BRL(s.price)} · ${s.duration}min</option>`).join('')}
-        </select></div>
+        <div>
+          <label>Serviço(s) <span style="color:var(--muted-2);font-weight:400;">— pode marcar mais de um</span></label>
+          <div id="f-services-box" style="display:flex;flex-direction:column;gap:6px;max-height:190px;overflow-y:auto;padding:10px 12px;border:1px solid var(--border);border-radius:10px;">
+            ${state.services.map(s=>`
+              <label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" class="f-service-chk" value="${s.id}" style="width:auto;">
+                <span style="flex:1;">${esc(s.name)}</span>
+                <span class="font-mono" style="color:var(--muted-2);font-size:12px;">${BRL(s.price)} · ${s.duration}min</span>
+              </label>
+            `).join('')}
+          </div>
+          <div id="f-services-total" style="font-size:12px;color:var(--muted-2);margin-top:6px;"></div>
+        </div>
         <div id="deposit-note" style="font-size:12px;color:var(--warn);"></div>
         <div id="availability-note" style="font-size:12px;color:var(--muted-2);"></div>
 
@@ -2970,11 +3162,20 @@ function openApptModal(pre){
       </div>
     </div>
   `, root=>{
+    function servicosMarcados(){
+      return [...root.querySelectorAll('.f-service-chk:checked')].map(el=>serviceById(el.value)).filter(Boolean);
+    }
     function updateNotes(){
-      const service = serviceById(root.querySelector('#f-service').value);
+      const svcs = servicosMarcados();
+      const durTotal = svcs.reduce((t,s)=>t+(Number(s.duration)||30),0);
+      const precoTotal = svcs.reduce((t,s)=>t+Number(s.price),0);
+      const totalEl = root.querySelector('#f-services-total');
+      totalEl.textContent = svcs.length
+        ? `${svcs.length} serviço(s) selecionado(s) — ${durTotal} min · ${BRL(precoTotal)}`
+        : 'Nenhum serviço selecionado ainda.';
       const prof = state.professionals.find(p=>p.id===root.querySelector('#f-prof').value);
       const date = root.querySelector('#f-date').value;
-      const dep = depositAmountFor(service);
+      const dep = svcs.length===1 ? depositAmountFor(svcs[0]) : 0;
       root.querySelector('#deposit-note').textContent = dep>0 ? `Este serviço exige sinal de ${BRL(dep)}.` : '';
       const el = root.querySelector('#availability-note');
       const hora = root.querySelector('#f-time').value;
@@ -2990,11 +3191,11 @@ function openApptModal(pre){
           avisos.push(`${hora} está fora do expediente de ${prof.name} (${ini} às ${fim}). O agendamento será criado como exceção e aparecerá normalmente na agenda.`);
         }
       }
-      // já tem alguém nesse horário?
-      if(prof && date && hora && service){
+      // já tem alguém nesse horário? (usa a duração somada de todos os serviços marcados)
+      if(prof && date && hora && svcs.length){
         const choque = state.appointments.some(x=>x.professionalId===prof.id && x.date===date &&
           x.status!=='cancelado' && x.status!=='faltou' &&
-          timesOverlap(x.time, serviceById(x.serviceId)?.duration||30, hora, service.duration||30));
+          timesOverlap(x.time, appointmentDuration(x), hora, durTotal));
         if(choque) avisos.push('Já existe outro agendamento nesse horário.');
         const bloq = blocksForDay(prof.id, date).some(b=> hora >= b.start && hora < b.end);
         if(bloq) avisos.push('Esse horário está bloqueado (folga ou almoço).');
@@ -3003,7 +3204,7 @@ function openApptModal(pre){
         ? avisos.map(t=>`<div style="color:var(--warn);margin-bottom:3px;">⚠ ${esc(t)}</div>`).join('')
         : '';
     }
-    root.querySelector('#f-service').addEventListener('change', updateNotes);
+    root.querySelectorAll('.f-service-chk').forEach(el=>el.addEventListener('change', updateNotes));
     root.querySelector('#f-prof').addEventListener('change', updateNotes);
     root.querySelector('#f-date').addEventListener('change', updateNotes);
     root.querySelector('#f-time').addEventListener('change', updateNotes);
@@ -3116,11 +3317,12 @@ function openApptModal(pre){
       const time = root.querySelector('#f-time').value;
       const date = root.querySelector('#f-date').value;
       if(!client || !time || !date){ showToast('Preencha cliente, data e horário.'); return; }
-      const serviceId = root.querySelector('#f-service').value;
-      if(!serviceId){ showToast('Escolha o serviço antes de agendar.'); root.querySelector('#f-service').focus(); return; }
-      const service = serviceById(serviceId);
+      const svcs = servicosMarcados();
+      if(svcs.length===0){ showToast('Marque ao menos um serviço antes de agendar.'); return; }
+      const serviceIds = svcs.map(s=>s.id);
+      const durTotal = svcs.reduce((t,s)=>t+(Number(s.duration)||30),0);
       const professionalId = root.querySelector('#f-prof').value;
-      const dep = depositAmountFor(service);
+      const dep = svcs.length===1 ? depositAmountFor(svcs[0]) : 0;
       const recorrente = root.querySelector('#f-recorrente').checked;
       const freqDias = parseInt(root.querySelector('#f-rec-freq').value) || 7;
       const vezes = recorrente ? Math.max(2, Math.min(26, parseInt(root.querySelector('#f-rec-vezes').value)||8)) : 1;
@@ -3139,7 +3341,7 @@ function openApptModal(pre){
       datas.forEach(d=>{
         const choque = state.appointments.some(x=>x.professionalId===professionalId && x.date===d &&
           x.status!=='cancelado' && x.status!=='faltou' &&
-          timesOverlap(x.time, serviceById(x.serviceId)?.duration||30, time, service.duration||30));
+          timesOverlap(x.time, appointmentDuration(x), time, durTotal));
         const bloq = blocksForDay(professionalId, d).some(b=> time >= b.start && time < b.end);
         if(choque || bloq) conflitos.push(d);
       });
@@ -3153,7 +3355,8 @@ function openApptModal(pre){
         datas.forEach(d=>{
           if(conflitos.includes(d)) return;
           s.appointments.push({
-            id:uid(), date:d, time, client, professionalId, serviceId: service.id,
+            id:uid(), date:d, time, client, professionalId,
+            serviceId: serviceIds[0], serviceIds,
             status:'agendado', confirmed:false,
             depositStatus: (dep>0 && d===date) ?'pendente':'nao_aplicavel', depositAmount: d===date?dep:0,
             createdAt:new Date().toISOString(), rating:null,
@@ -3518,12 +3721,13 @@ function congelarValoresAntigos(view){
 
   // calcula antes de gravar, para mostrar o resumo
   const prev = pendentes.map(a=>{
-    const s = serviceById(a.serviceId);
-    const calc = s ? precoParaCobrar(a, s) : null;
-    return { a, s, valor: calc ? calc.basePrice : 0, coberto: calc ? calc.planoAtivo : false };
+    const svcs = appointmentServices(a);
+    const multi = svcs.length ? precoParaCobrarMultiplo(a) : null;
+    return { a, svcs, valor: multi ? multi.total : 0, coberto: multi ? multi.todosCobertos : false };
   });
+  const precoTabelaDe = a => appointmentServices(a).reduce((t,s)=>t+Number(s.price),0);
   const cobertos = prev.filter(x=>x.coberto).length;
-  const comDesconto = prev.filter(x=>!x.coberto && x.s && x.valor < x.s.price && x.valor > 0).length;
+  const comDesconto = prev.filter(x=>!x.coberto && x.svcs.length && x.valor < precoTabelaDe(x.a) && x.valor > 0).length;
   const cheios = prev.length - cobertos - comDesconto;
 
   openModal(`
@@ -3564,10 +3768,13 @@ function congelarValoresAntigos(view){
       update(s=>{
         s.appointments.forEach(ap=>{
           if(ap.status!=='concluido' || ap.valorCobrado!=null) return;
-          const svc = s.services.find(x=>x.id===ap.serviceId);
-          const calc = svc ? precoParaCobrar(ap, svc) : null;
-          ap.valorCobrado = calc ? calc.basePrice : 0;
-          ap.cobertoPeloClube = calc ? calc.planoAtivo : false;
+          const svcs = appointmentServices(ap);
+          const multi = svcs.length ? precoParaCobrarMultiplo(ap) : null;
+          ap.valorCobrado = multi ? multi.total : 0;
+          ap.cobertoPeloClube = multi ? multi.todosCobertos : false;
+          if(multi){
+            ap.valorPorServico = multi.itens.map(i=>({ serviceId:i.service.id, valor:i.calc.basePrice, coberto:i.calc.planoAtivo }));
+          }
           n++;
         });
       });
@@ -6712,7 +6919,7 @@ function ocupacaoMes(ym){
   });
 
   const concluidos = atendimentosMes(ym);
-  const minutosUsados = concluidos.reduce((t,a)=>t+(serviceById(a.serviceId)?.duration||30),0);
+  const minutosUsados = concluidos.reduce((t,a)=>t+appointmentDuration(a),0);
   const faturado = concluidos.reduce((t,a)=>t+valorRealAtendimento(a),0);
   const taxa = minutosPossiveis>0 ? (minutosUsados/minutosPossiveis)*100 : 0;
   const minutosVagos = Math.max(0, minutosPossiveis - minutosUsados);
@@ -7464,12 +7671,12 @@ function renderMensagens(view){
     ${confirmations.length===0 ? emptyState('Nenhum agendamento aguardando confirmação.') : `
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px;">
         ${confirmations.map(a=>{
-          const s = serviceById(a.serviceId); const phone = phoneForClientName(a.client);
-          const text = fillTemplate(T.confirmation, {cliente:a.client, servico:s?s.name:'', data:new Date(a.date+'T00:00').toLocaleDateString('pt-BR'), hora:a.time, profissional:profName(a.professionalId)});
+          const nomeServ = appointmentServiceNames(a); const phone = phoneForClientName(a.client);
+          const text = fillTemplate(T.confirmation, {cliente:a.client, servico:nomeServ, data:new Date(a.date+'T00:00').toLocaleDateString('pt-BR'), hora:a.time, profissional:profName(a.professionalId)});
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
               <div style="font-weight:600;font-size:13.5px;">${esc(a.client)}</div>
-              <div style="font-size:12px;color:var(--muted);">${new Date(a.date+'T00:00').toLocaleDateString('pt-BR')} às ${a.time} · ${s?s.name:''}</div>
+              <div style="font-size:12px;color:var(--muted);">${new Date(a.date+'T00:00').toLocaleDateString('pt-BR')} às ${a.time} · ${esc(nomeServ)}</div>
             </div>
             ${messageChannelRow(phone, text)}
             <button class="btn btn-ghost" style="padding:9px 10px;" data-mark-confirmed="${a.id}" title="Marcar como confirmado">${ICON.check}</button>
@@ -7486,12 +7693,12 @@ function renderMensagens(view){
     ${reminders.length===0 ? emptyState('Nenhum lembrete pendente no momento.', `Aparecem aqui os horários de hoje que começam em até ${MS.reminderHours}h.`) : `
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px;">
         ${reminders.map(a=>{
-          const s = serviceById(a.serviceId); const phone = phoneForClientName(a.client);
-          const text = fillTemplate(T.reminder, {cliente:a.client, servico:s?s.name:'', hora:a.time, profissional:profName(a.professionalId)});
+          const nomeServ = appointmentServiceNames(a); const phone = phoneForClientName(a.client);
+          const text = fillTemplate(T.reminder, {cliente:a.client, servico:nomeServ, hora:a.time, profissional:profName(a.professionalId)});
           return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             <div style="flex:1;min-width:180px;">
               <div style="font-weight:600;font-size:13.5px;">${esc(a.client)}</div>
-              <div style="font-size:12px;color:var(--muted);">Hoje às ${a.time} · ${s?s.name:''}</div>
+              <div style="font-size:12px;color:var(--muted);">Hoje às ${a.time} · ${esc(nomeServ)}</div>
             </div>
             ${messageChannelRow(phone, text)}
             <button class="btn btn-ghost" style="padding:9px 10px;" data-mark-reminded="${a.id}" title="Marcar como enviado">${ICON.check}</button>
@@ -7706,6 +7913,135 @@ function waitlistModal(){
 }
 
 /* ============ #10 NOTAS FISCAIS (view) ============ */
+/* ============ CENTRAL DE AJUDA ============
+   Conteúdo do produto — igual para todas as barbearias que usam o
+   sistema, por isso fica fixo no código (não é dado de cada loja).
+   Cada guia é preenchido aos poucos; os que ainda não têm passos
+   escritos aparecem como "em breve" em vez de sumir do menu. */
+const GUIAS_AJUDA = [
+  // { id, titulo, rotas: ['dono','recepcionista','profissional'], passos: [{titulo, texto, imagem}] }
+  { id:'agenda', titulo:'Agenda', papeis:['dono','recepcionista','profissional'], passos:[] },
+  { id:'caixa', titulo:'Caixa', papeis:['dono','recepcionista'], passos:[] },
+  { id:'comissoes', titulo:'Comissões', papeis:['dono','profissional'], passos:[] },
+  { id:'clube', titulo:'Clube de Assinatura', papeis:['dono'], passos:[] },
+  { id:'clientes', titulo:'Clientes', papeis:['dono','recepcionista'], passos:[] },
+  { id:'profissionais', titulo:'Profissionais', papeis:['dono'], passos:[] },
+  { id:'servicos', titulo:'Serviços', papeis:['dono','recepcionista'], passos:[] },
+  { id:'agendamento-online', titulo:'Agendamento Online', papeis:['dono'], passos:[] },
+  { id:'central', titulo:'Central de Inteligência', papeis:['dono'], passos:[] },
+  { id:'relatorios', titulo:'Relatórios', papeis:['dono'], passos:[] },
+];
+const FAQ_AJUDA = [
+  // { pergunta, resposta, papeis:[...] }
+];
+
+let ajudaAba = 'guias'; // 'guias' | 'faq'
+let ajudaGuiaAberto = null;
+
+function meuPapelAjuda(){
+  if(isOwnerLevel()) return 'dono';
+  if(userSession.role==='recepcionista') return 'recepcionista';
+  return 'profissional';
+}
+
+function renderAjuda(view){
+  const papel = meuPapelAjuda();
+  const guias = GUIAS_AJUDA.filter(g=>g.papeis.includes(papel));
+  const faqs = FAQ_AJUDA.filter(f=>f.papeis.includes(papel));
+
+  view.innerHTML = `
+    ${pageHeader('Central de Ajuda', 'Passo a passo de cada tela e respostas para as dúvidas mais comuns')}
+
+    <div style="display:inline-flex;background:var(--panel-2);border-radius:10px;padding:3px;margin-bottom:20px;">
+      <button class="ajuda-tab" data-tab="guias" style="padding:8px 16px;font-size:13px;border:none;border-radius:8px;cursor:pointer;background:${ajudaAba==='guias'?'var(--gold)':'transparent'};color:${ajudaAba==='guias'?'#1a1610':'var(--muted)'};">${ICON.book||''} Guia por tela</button>
+      <button class="ajuda-tab" data-tab="faq" style="padding:8px 16px;font-size:13px;border:none;border-radius:8px;cursor:pointer;background:${ajudaAba==='faq'?'var(--gold)':'transparent'};color:${ajudaAba==='faq'?'#1a1610':'var(--muted)'};">${ICON.help} Perguntas Frequentes</button>
+    </div>
+
+    ${ajudaAba==='guias' ? renderGuiasAjuda(guias) : renderFaqAjuda(faqs)}
+  `;
+
+  view.querySelectorAll('.ajuda-tab').forEach(b=>b.addEventListener('click', ()=>{
+    ajudaAba = b.dataset.tab; ajudaGuiaAberto = null; renderAjuda(view);
+  }));
+  view.querySelectorAll('.ajuda-guia-header').forEach(el=>el.addEventListener('click', ()=>{
+    const id = el.dataset.guia;
+    ajudaGuiaAberto = (ajudaGuiaAberto===id) ? null : id;
+    renderAjuda(view);
+  }));
+  view.querySelectorAll('.ajuda-faq-header').forEach(el=>el.addEventListener('click', ()=>{
+    el.nextElementSibling.style.display = el.nextElementSibling.style.display==='none' ? 'block' : 'none';
+    const seta = el.querySelector('.ajuda-faq-seta');
+    if(seta) seta.style.transform = el.nextElementSibling.style.display==='none' ? 'rotate(0deg)' : 'rotate(180deg)';
+  }));
+}
+
+function renderGuiasAjuda(guias){
+  if(guias.length===0){
+    return emptyState('Nenhum guia disponível para o seu perfil ainda.');
+  }
+  return `
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:760px;">
+      ${guias.map(g=>{
+        const aberto = ajudaGuiaAberto===g.id;
+        const pronto = g.passos.length>0;
+        return `
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div class="ajuda-guia-header" data-guia="${g.id}" style="padding:15px 18px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:14.5px;font-weight:600;">${esc(g.titulo)}</span>
+              ${!pronto?`<span class="pill pill-muted" style="font-size:10px;">em breve</span>`:''}
+            </div>
+            <span style="transform:rotate(${aberto?180:0}deg);transition:transform .15s;color:var(--muted-2);">${ICON.chevronDown||'▾'}</span>
+          </div>
+          ${aberto ? `
+            <div style="padding:0 18px 18px;border-top:1px solid var(--border);">
+              ${pronto ? `
+                <div style="display:flex;flex-direction:column;gap:16px;margin-top:16px;">
+                  ${g.passos.map((p,i)=>`
+                    <div style="display:flex;gap:12px;">
+                      <div style="width:26px;height:26px;border-radius:50%;background:var(--panel-2);border:1px solid var(--gold);color:var(--gold-bright);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${i+1}</div>
+                      <div style="flex:1;min-width:0;">
+                        <div style="font-size:13.5px;font-weight:600;margin-bottom:3px;">${esc(p.titulo)}</div>
+                        <div style="font-size:12.5px;color:var(--muted);line-height:1.6;">${esc(p.texto)}</div>
+                        ${p.imagem ? `<img src="${esc(p.imagem)}" style="width:100%;max-width:420px;border-radius:9px;border:1px solid var(--border);margin-top:9px;">` : ''}
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : `
+                <div style="padding:16px 0 4px;font-size:12.5px;color:var(--muted-2);line-height:1.6;">
+                  Esse guia ainda está sendo escrito. Se estiver com dúvida agora sobre <b>${esc(g.titulo)}</b>, pode chamar no suporte.
+                </div>
+              `}
+            </div>
+          ` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderFaqAjuda(faqs){
+  if(faqs.length===0){
+    return emptyState('Nenhuma pergunta cadastrada ainda para o seu perfil.', 'Assim que as dúvidas mais comuns forem adicionadas, elas aparecem aqui.');
+  }
+  return `
+    <div style="display:flex;flex-direction:column;gap:8px;max-width:760px;">
+      ${faqs.map((f,i)=>`
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div class="ajuda-faq-header" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:10px;">
+            <span style="font-size:13.5px;font-weight:600;">${esc(f.pergunta)}</span>
+            <span class="ajuda-faq-seta" style="color:var(--muted-2);flex-shrink:0;transition:transform .15s;">▾</span>
+          </div>
+          <div style="display:none;padding:0 18px 16px;font-size:12.5px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:12px;">
+            ${esc(f.resposta)}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderNotaFiscal(view){
   const n = state.nfe;
   const emittable = state.cashSessions.flatMap(cs=>cs.entries.filter(e=>e.type==='entrada'));
