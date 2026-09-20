@@ -353,7 +353,17 @@ const PLAN_LIMITS = {
   basic: { maxProfessionals: 4, club: false, label: 'Basic' },
   pro:   { maxProfessionals: Infinity, club: true, label: 'Pro' },
 };
-function planOf(shop){ return PLAN_LIMITS[shop?.plan] ? shop.plan : 'basic'; }
+function planOf(shop){
+  // Durante o período de teste grátis, libera tudo (nível Pro) — a pessoa
+  // testando decide o plano de verdade só quando o teste acabar. Depois
+  // que vencer, a tela de assinatura (renderPaywallScreen) já tranca o
+  // acesso inteiro até escolher um plano, então essa liberação nunca
+  // "vaza" pra depois do prazo.
+  if(shop?.subscription_status==='trialing' && shop?.trial_ends_at && new Date(shop.trial_ends_at).getTime() > Date.now()){
+    return 'pro';
+  }
+  return PLAN_LIMITS[shop?.plan] ? shop.plan : 'basic';
+}
 function planLimits(shop){ return PLAN_LIMITS[planOf(shop)]; }
 
 const supa = (SUPABASE_URL.startsWith('http'))
@@ -8479,7 +8489,7 @@ function renderPublicBookingScreen(step1Only){
             <div style="font-size:13px;font-weight:600;">4. Seus dados</div>
             <div><label>Seu nome</label><input id="pb-name" style="width:100%;"></div>
             <div><label>Telefone (WhatsApp)</label><input id="pb-phone" style="width:100%;" placeholder="(11) 90000-0000"></div>
-            <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— opcional, para receber a confirmação</span></label><input id="pb-email" type="email" style="width:100%;" placeholder="opcional"></div>
+            <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— para você receber a confirmação do horário</span></label><input id="pb-email" type="email" style="width:100%;" placeholder="seu@email.com"></div>
             <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
           </div>
           <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
@@ -8559,6 +8569,13 @@ async function submitPublicBooking(){
   const email = document.getElementById('pb-email')?.value.trim() || '';
   if(!name || !phone || !pubBooking.serviceId || !pubBooking.professionalId || !pubBooking.time){
     alert('Preencha todos os campos e escolha um horário.'); return;
+  }
+  // E-mail agora é obrigatório: é a única forma confiável do cliente saber
+  // com certeza se o agendamento foi confirmado ou não.
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    alert('Informe um e-mail válido para receber a confirmação do agendamento.');
+    document.getElementById('pb-email').focus();
+    return;
   }
   const service = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
   const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
