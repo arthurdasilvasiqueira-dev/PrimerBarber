@@ -4431,6 +4431,7 @@ function profModal(existing){
         </div>
         <div><label>Nome</label><input id="f-name" value="${esc(existing?.name)}" placeholder="Nome completo" style="width:100%;"></div>
         <div><label>Telefone</label><input id="f-phone" value="${esc(existing?.phone)}" placeholder="(00) 00000-0000" style="width:100%;"></div>
+        <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— opcional, para receber aviso quando um cliente agendar com ele</span></label><input id="f-email" type="email" value="${esc(existing?.email)}" placeholder="opcional" style="width:100%;"></div>
         <div>
           <label>Nível de acesso ao sistema</label>
           <select id="f-access-role" style="width:100%;">
@@ -4537,7 +4538,8 @@ function profModal(existing){
       });
       if(!name){ showToast('Informe o nome.'); return; }
       const servesClients = root.querySelector('#f-serves').checked;
-      const data = {name, phone, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
+      const email = root.querySelector('#f-email').value.trim();
+      const data = {name, phone, email, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
         if(isEdit){ const alvo = s.professionals.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
         else{ s.professionals.push({id:uid(), ...data}); }
@@ -7360,11 +7362,28 @@ async function acceptBookingRequest(req){
     }
   }
   update(s=>{
-    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||''});
+    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||'', clientEmail:req.client_email||''});
   });
   await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
   showToast('Agendamento aceito e adicionado à agenda.');
   await refreshNotifItems();
+
+  // Só agora que virou de verdade um agendamento — dispara os e-mails
+  const shopNameEmail = state.shopProfile?.name || '';
+  if(req.client_email){
+    enviarEmailAgendamento({
+      tipo:'confirmacao_cliente', to: req.client_email, shopName: shopNameEmail,
+      clientName: req.client_name, serviceName: req.service_name, profName: req.professional_name,
+      date: req.date, time: req.time,
+    });
+  }
+  if(prof?.email){
+    enviarEmailAgendamento({
+      tipo:'aviso_profissional', to: prof.email, shopName: shopNameEmail,
+      clientName: req.client_name, serviceName: req.service_name, profName: prof.name,
+      date: req.date, time: req.time,
+    });
+  }
 }
 async function declineBookingRequest(id){
   await supa.from('booking_requests').update({status:'recusado'}).eq('id', id);
@@ -7538,6 +7557,15 @@ async function enviarPushParaLoja(shopId, title, message, url){
   try{
     await supa.functions.invoke('push-notify', { body: { shopId, title, message, url } });
   }catch(e){ /* notificação é extra, nunca deve travar o fluxo principal */ }
+}
+
+// Dispara e-mail de confirmação (cliente) ou aviso (profissional) na
+// hora do agendamento. "Fire and forget": se falhar, não trava o
+// agendamento — o cliente já está marcado de qualquer forma.
+async function enviarEmailAgendamento(payload){
+  try{
+    await supa.functions.invoke('appointment-email', { body: payload });
+  }catch(e){ /* e-mail é extra, nunca deve travar o fluxo principal */ }
 }
 
 function subscribeBookingNotifications(){
@@ -8451,6 +8479,7 @@ function renderPublicBookingScreen(step1Only){
             <div style="font-size:13px;font-weight:600;">4. Seus dados</div>
             <div><label>Seu nome</label><input id="pb-name" style="width:100%;"></div>
             <div><label>Telefone (WhatsApp)</label><input id="pb-phone" style="width:100%;" placeholder="(11) 90000-0000"></div>
+            <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— opcional, para receber a confirmação</span></label><input id="pb-email" type="email" style="width:100%;" placeholder="opcional"></div>
             <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
           </div>
           <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
@@ -8527,6 +8556,7 @@ document.addEventListener('click', function pbConfirmDelegate(e){
 async function submitPublicBooking(){
   const name = document.getElementById('pb-name').value.trim();
   const phone = document.getElementById('pb-phone').value.trim();
+  const email = document.getElementById('pb-email')?.value.trim() || '';
   if(!name || !phone || !pubBooking.serviceId || !pubBooking.professionalId || !pubBooking.time){
     alert('Preencha todos os campos e escolha um horário.'); return;
   }
@@ -8542,6 +8572,7 @@ async function submitPublicBooking(){
     p_time: pubBooking.time,
     p_client_name: name,
     p_client_phone: phone,
+    p_client_email: email || null,
   });
   if(!erroAuto && auto?.error){ alert(auto.error); return; }
   if(erroAuto){
@@ -8557,7 +8588,7 @@ async function submitPublicBooking(){
     shop_id: pubBooking.shopId,
     professional_id: prof.id, professional_name: prof.name,
     service_id: service.id, service_name: service.name,
-    client_name: name, client_phone: phone,
+    client_name: name, client_phone: phone, client_email: email || null,
     date: pubBooking.date, time: pubBooking.time,
     status: aceitoNaHora ? 'aceito' : 'pendente',
   });
@@ -8572,6 +8603,29 @@ async function submitPublicBooking(){
     `${name} — ${service.name} com ${prof.name}, ${new Date(pubBooking.date+'T'+pubBooking.time).toLocaleDateString('pt-BR')} às ${pubBooking.time}`,
     aceitoNaHora ? '?agenda' : '?route=agendamento-online'
   );
+
+  // E-mails de confirmação/aviso — só quando o horário já entrou direto na
+  // agenda (aceite automático). No caminho manual, o e-mail sai quando a
+  // barbearia aceitar o pedido (função acceptBookingRequest).
+  if(aceitoNaHora){
+    const shopNameEmail = pubBooking.info?.name || '';
+    if(email){
+      enviarEmailAgendamento({
+        tipo:'confirmacao_cliente', to: email, shopName: shopNameEmail,
+        clientName: name, serviceName: auto.serviceName || service.name,
+        profName: auto.professionalName || prof.name,
+        date: pubBooking.date, time: pubBooking.time,
+      });
+    }
+    if(auto.professionalEmail){
+      enviarEmailAgendamento({
+        tipo:'aviso_profissional', to: auto.professionalEmail, shopName: shopNameEmail,
+        clientName: name, serviceName: auto.serviceName || service.name,
+        profName: auto.professionalName || prof.name,
+        date: pubBooking.date, time: pubBooking.time,
+      });
+    }
+  }
 
   document.getElementById('pb-form').style.display = 'none';
   const done = document.getElementById('pb-done');
