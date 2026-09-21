@@ -9,21 +9,24 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0a0a0a;
-    --panel:#141414;
-    --panel-2:#1c1c1c;
-    --border:#333333;
-    --gold:#c9a24b;
-    --gold-bright:#e8c573;
-    --ink:#ffffff;
-    --muted:#b3b3b3;
-    --muted-2:#7a7a7a;
-    --ok:#7fa87f;
-    --ok-bg:#1c231c;
-    --bad:#c17b6a;
-    --bad-bg:#241a17;
-    --warn:#d0a94f;
-    --warn-bg:#26210f;
+    /* ===== Paleta — mesmo tema claro do sistema real (dourado, branco e preto) ===== */
+    --bg:#f4f4f2;
+    --bg-warm:#faf8f4;
+    --panel:#ffffff;
+    --panel-2:#f0efea;
+    --border:#e3ddd0;
+    --ink:#14161a;
+    --muted:#5c5a52;
+    --muted-2:#8b8779;
+    --gold:#b8912f;
+    --gold-bright:#8f6f19;
+    --gold-soft:#c9a24b;
+    --ok:#2f7a3f;
+    --ok-bg:#e8f2ea;
+    --bad:#b03328;
+    --bad-bg:#fbe9e7;
+    --warn:#8a6a10;
+    --warn-bg:#f6efd9;
     --radius:14px;
     --container:1120px;
   }
@@ -36,57 +39,61 @@
   a{color:inherit;}
   img{max-width:100%;display:block;}
   .font-mono{font-family:'IBM Plex Mono',monospace;}
-  ::selection{background:var(--gold);color:#0a0a0a;}
-  a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--gold-bright);outline-offset:3px;border-radius:4px;}
+  ::selection{background:var(--gold-soft);color:#fff;}
+  a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px;}
 
   .wrap{max-width:var(--container);margin:0 auto;padding:0 24px;}
-  section{padding:88px 0;}
+  .section-line{border-top:1px solid var(--ink);}
+  section{padding:92px 0;}
   @media (max-width:720px){ section{padding:58px 0;} }
 
-  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-bright);font-weight:600;margin-bottom:14px;}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-bright);font-weight:600;margin-bottom:14px;display:flex;align-items:center;gap:9px;}
+  .eyebrow::before{content:'';width:22px;height:1px;background:var(--gold-soft);display:inline-block;}
   .section-head{max-width:660px;margin-bottom:48px;}
   .section-head.center{margin-left:auto;margin-right:auto;text-align:center;}
-  .section-head h2{font-size:clamp(1.7rem,3.2vw,2.4rem);line-height:1.2;margin-bottom:14px;}
+  .section-head.center .eyebrow{justify-content:center;}
+  .section-head h2{font-size:clamp(1.7rem,3.2vw,2.4rem);line-height:1.2;margin-bottom:14px;color:var(--ink);}
   .section-head p{color:var(--muted);font-size:16px;}
 
-  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:9px;padding:13px 24px;font-weight:600;font-size:15px;border:1px solid transparent;text-decoration:none;transition:all .15s;cursor:pointer;}
-  .btn-gold{background:var(--gold);color:#0a0a0a;}
-  .btn-gold:hover{background:var(--gold-bright);}
-  .btn-ghost{background:transparent;border-color:var(--border);color:var(--ink);}
-  .btn-ghost:hover{border-color:var(--gold);color:var(--gold-bright);}
-  .btn-sm{padding:9px 16px;font-size:13.5px;}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:9px;padding:13px 25px;font-weight:600;font-size:15px;border:1px solid transparent;text-decoration:none;transition:all .18s;cursor:pointer;}
+  .btn-gold{background:var(--ink);color:var(--gold-soft);border-color:var(--ink);}
+  .btn-gold:hover{background:var(--gold);color:#fff;border-color:var(--gold);}
+  .btn-ghost{background:transparent;border-color:var(--ink);border-width:1.5px;color:var(--ink);}
+  .btn-ghost:hover{border-color:var(--gold);color:var(--gold-bright);background:var(--bg-warm);}
+  .btn-sm{padding:9px 17px;font-size:13.5px;}
 
-  /* Logomark — mesma linguagem da listra de barbeiro, em miniatura */
-  .logo-mark{width:26px;height:26px;object-fit:contain;flex-shrink:0;display:block;}
-  .logo{display:inline-flex;align-items:center;gap:9px;font-family:'Fraunces',serif;font-weight:700;font-size:19px;color:var(--gold-bright);letter-spacing:-.01em;text-decoration:none;}
+  .logo-mark{width:27px;height:27px;object-fit:contain;flex-shrink:0;display:block;}
+  .logo{display:inline-flex;align-items:center;gap:9px;font-family:'Fraunces',serif;font-weight:700;font-size:19px;color:var(--ink);letter-spacing:-.01em;text-decoration:none;}
 
   .stripe{
-    height:6px;width:100%;
+    height:3px;width:100%;
     background:repeating-linear-gradient(52deg,
-      var(--gold) 0px, var(--gold) 9px,
-      var(--gold-bright) 9px, var(--gold-bright) 18px,
-      var(--bg) 18px, var(--bg) 22px,
-      var(--gold-bright) 22px, var(--gold-bright) 31px);
-    background-size:44px 100%;
+      var(--gold) 0px, var(--gold) 7px,
+      var(--gold-bright) 7px, var(--gold-bright) 11px,
+      transparent 11px, transparent 15px);
+    background-size:28px 100%;
   }
 
-  header{position:sticky;top:0;z-index:20;background:rgba(10,10,10,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--border);}
+  header{position:sticky;top:0;z-index:20;background:var(--ink);}
+  header .logo{color:#fdfaf3;}
+  header .btn-gold{background:var(--gold-soft);color:var(--ink);border-color:var(--gold-soft);}
+  header .btn-gold:hover{background:#fdfaf3;color:var(--ink);border-color:#fdfaf3;}
   .nav{display:flex;align-items:center;justify-content:space-between;padding:16px 0;}
-  .nav-links{display:flex;gap:26px;font-size:14.5px;color:var(--muted);}
+  .nav-links{display:flex;gap:28px;font-size:14.5px;color:#c9c4b6;}
   .nav-links a{text-decoration:none;transition:color .15s;}
-  .nav-links a:hover{color:var(--ink);}
+  .nav-links a:hover{color:var(--gold-soft);}
   @media (max-width:780px){ .nav-links{display:none;} }
 
   /* Hero */
-  .hero{padding:72px 0 96px;position:relative;overflow:hidden;}
+  .hero{padding:76px 0 100px;position:relative;overflow:hidden;background:var(--bg-warm);}
   .hero::before{
     content:'';position:absolute;inset:0;z-index:-1;
-    background:radial-gradient(900px 480px at 85% -10%, rgba(201,162,75,.14), transparent 60%);
+    background:radial-gradient(900px 480px at 88% -10%, rgba(184,145,47,.10), transparent 60%);
   }
   .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
   @media (max-width:900px){ .hero-grid{grid-template-columns:1fr;} }
-  .hero h1{font-size:clamp(2.1rem,4.6vw,3.25rem);line-height:1.12;margin-bottom:20px;}
-  .hero-sub{font-size:17.5px;color:var(--muted);max-width:480px;margin-bottom:30px;}
+  .hero h1{font-size:clamp(2.15rem,4.6vw,3.35rem);line-height:1.12;margin-bottom:20px;color:var(--ink);}
+  .hero-sub{font-size:17.5px;color:var(--muted);max-width:490px;margin-bottom:30px;}
   .hero-ctas{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px;}
   .hero-micro{font-size:13px;color:var(--muted-2);font-family:'IBM Plex Mono',monospace;margin-bottom:18px;}
   .hero-tags{display:flex;flex-wrap:wrap;gap:8px;}
@@ -99,27 +106,27 @@
     .reveal{opacity:0;transform:translateY(16px);transition:opacity .55s ease, transform .55s ease;}
     .reveal.in-view{opacity:1;transform:translateY(0);}
   }
-  .mock-card{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 60px -20px rgba(0,0,0,.55);}
+  .mock-card{background:var(--panel);border:1.5px solid var(--ink);border-radius:16px;box-shadow:0 22px 50px -18px rgba(20,22,26,.16);}
   .mock-notif{padding:20px 22px;position:absolute;top:0;right:0;left:20px;}
   .mock-notif-top{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--gold-bright);margin-bottom:12px;}
-  .mock-bell{width:8px;height:8px;border-radius:50%;background:var(--gold-bright);box-shadow:0 0 0 4px rgba(227,192,120,.18);}
-  .mock-notif-body{font-size:15.5px;line-height:1.5;}
+  .mock-bell{width:8px;height:8px;border-radius:50%;background:var(--gold-soft);box-shadow:0 0 0 4px rgba(201,162,75,.20);}
+  .mock-notif-body{font-size:15.5px;line-height:1.5;color:var(--ink);}
   .mock-notif-body b{color:var(--gold-bright);}
   .mock-notif-meta{margin-top:12px;font-size:13px;color:var(--muted);}
-  .mock-caixa{padding:18px 20px;position:absolute;bottom:0;left:0;right:60px;background:var(--panel-2);}
+  .mock-caixa{padding:18px 20px;position:absolute;bottom:0;left:0;right:60px;background:var(--panel);}
   .mock-caixa-title{font-size:12px;color:var(--muted-2);margin-bottom:10px;font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;text-transform:uppercase;}
   .mock-caixa-row{display:flex;justify-content:space-between;font-size:14px;padding:6px 0;border-top:1px dashed var(--border);}
   .mock-caixa-row:first-of-type{border-top:none;}
-  .mock-caixa-row span:last-child{font-family:'IBM Plex Mono',monospace;color:var(--ink);}
+  .mock-caixa-row span:last-child{font-family:'IBM Plex Mono',monospace;color:var(--ink);font-weight:600;}
 
-  /* Componentes nativos do sistema real */
+  /* Componentes nativos do sistema real (tema claro) */
   .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;}
   .pill{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;letter-spacing:.02em;display:inline-block;}
   .pill-ok{background:var(--ok-bg);color:var(--ok);}
   .pill-bad{background:var(--bad-bg);color:var(--bad);}
   .pill-warn{background:var(--warn-bg);color:var(--warn);}
   .pill-muted{background:var(--panel-2);color:var(--muted);}
-  .pill-gold{background:var(--gold);color:#0a0a0a;}
+  .pill-gold{background:var(--ink);color:var(--gold-soft);}
 
   /* Recriações de tela em moldura de navegador */
   .feature-row{display:grid;grid-template-columns:.95fr 1.05fr;gap:44px;align-items:center;margin-bottom:0;}
@@ -128,13 +135,13 @@
     .feature-row{grid-template-columns:1fr;gap:26px;}
     .feature-row.reverse .feature-visual{order:0;}
   }
-  .browser-frame{border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 30px 60px -22px rgba(0,0,0,.55);}
+  .browser-frame{border-radius:14px;overflow:hidden;border:1.5px solid var(--ink);box-shadow:0 24px 54px -20px rgba(20,22,26,.18);}
   .browser-bar{display:flex;align-items:center;gap:7px;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border);}
   .browser-dot{width:8px;height:8px;border-radius:50%;background:var(--border);}
   .browser-url{flex:1;margin-left:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted-2);}
-  .browser-body{background:var(--bg);padding:18px;font-size:13px;}
+  .browser-body{background:var(--bg-warm);padding:18px;font-size:13px;}
   .mock-head{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
-  .mock-head h4{font-size:18px;}
+  .mock-head h4{font-size:18px;color:var(--ink);}
   .mock-head span{color:var(--muted);font-size:12px;}
   .mock-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:9px;margin-bottom:14px;}
   .mock-stat{padding:11px 12px;}
@@ -145,15 +152,15 @@
   .mock-row .mono{font-family:'IBM Plex Mono',monospace;}
   .mock-caption{font-size:12.5px;color:var(--muted-2);margin-top:12px;text-align:center;}
   .mock-days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:14px;}
-  .mock-day{text-align:center;padding:7px 2px;border-radius:8px;border:1px solid var(--border);font-size:9.5px;color:var(--muted);}
-  .mock-day.sel{background:var(--gold);color:#0a0a0a;border-color:var(--gold);font-weight:600;}
+  .mock-day{text-align:center;padding:7px 2px;border-radius:8px;border:1px solid var(--border);font-size:9.5px;color:var(--muted);background:var(--panel);}
+  .mock-day.sel{background:var(--ink);color:var(--gold-soft);border-color:var(--ink);font-weight:600;}
   .mock-day b{display:block;font-size:13px;margin:2px 0;}
 
   /* Ticket (cartão estilo recibo) */
-  .ticket{position:relative;background:var(--panel-2);border:1px solid var(--border);border-radius:14px 14px 0 0;padding:28px 26px 20px;filter:drop-shadow(0 16px 22px rgba(0,0,0,.32));}
+  .ticket{position:relative;background:var(--panel);border:1.5px solid var(--ink);border-radius:14px 14px 0 0;padding:28px 26px 20px;box-shadow:0 14px 30px -18px rgba(20,22,26,.14);}
   .ticket::after{
     content:'';display:block;position:absolute;left:0;right:0;bottom:-11px;height:12px;
-    background-image:linear-gradient(135deg, var(--panel-2) 50%, transparent 50%),linear-gradient(-135deg, var(--panel-2) 50%, transparent 50%);
+    background-image:linear-gradient(135deg, var(--panel) 50%, transparent 50%),linear-gradient(-135deg, var(--panel) 50%, transparent 50%);
     background-size:16px 16px;background-position:left bottom;background-repeat:repeat-x;
   }
   .ticket-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px dashed var(--border);padding-bottom:14px;margin-bottom:16px;}
@@ -168,26 +175,26 @@
   .overview-grid,.dores-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
   @media (max-width:920px){ .overview-grid,.dores-grid{grid-template-columns:repeat(2,1fr);} }
   @media (max-width:560px){ .overview-grid,.dores-grid{grid-template-columns:1fr;} }
-  .overview-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:24px 22px;transition:border-color .15s;}
-  .overview-card:hover{border-color:var(--gold);}
-  .overview-card h3{font-size:16.5px;margin-bottom:8px;}
+  .overview-card{background:var(--panel);border:1.5px solid var(--ink);border-radius:var(--radius);padding:24px 22px;transition:border-color .15s, box-shadow .15s;}
+  .overview-card:hover{border-color:var(--gold-soft);box-shadow:0 14px 30px -18px rgba(20,22,26,.14);}
+  .overview-card h3{font-size:16.5px;margin-bottom:8px;color:var(--ink);}
   .overview-card p{font-size:13.5px;color:var(--muted);margin-bottom:14px;}
   .overview-card a{font-size:12.5px;color:var(--gold-bright);text-decoration:none;font-weight:600;}
   .overview-card a:hover{text-decoration:underline;}
 
   /* Telefone (mock de página pública) */
   .agendamento-visual{position:relative;max-width:320px;margin:0 auto;}
-  .phone-frame{border-radius:34px;border:9px solid #000;background:var(--bg);box-shadow:0 40px 90px -28px rgba(0,0,0,.65);overflow:hidden;position:relative;}
-  .phone-notch{width:64px;height:16px;background:#000;border-radius:0 0 10px 10px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;}
+  .phone-frame{border-radius:34px;border:9px solid var(--ink);background:var(--panel);box-shadow:0 34px 70px -24px rgba(20,22,26,.28);overflow:hidden;position:relative;}
+  .phone-notch{width:64px;height:16px;background:var(--ink);border-radius:0 0 10px 10px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;}
   .phone-screen{padding:24px 14px 18px;}
   .settings-peek{position:absolute;top:-16px;right:-38px;width:186px;transform:rotate(4deg);z-index:5;padding:14px 16px;}
   @media (max-width:560px){ .settings-peek{display:none;} }
-  .banner-block{width:100%;height:84px;border-radius:10px 10px 0 0;overflow:hidden;position:relative;background:var(--panel-2);}
+  .banner-block{width:100%;height:84px;border-radius:10px 10px 0 0;overflow:hidden;position:relative;background:var(--ink);}
   .banner-block svg{width:100%;height:100%;display:block;}
-  .avatar-circle{width:54px;height:54px;border-radius:50%;background:var(--panel-2);border:2px solid var(--bg);display:flex;align-items:center;justify-content:center;margin-top:-30px;box-shadow:0 3px 10px rgba(0,0,0,.5);flex-shrink:0;overflow:hidden;}
+  .avatar-circle{width:54px;height:54px;border-radius:50%;background:var(--panel);border:3px solid var(--panel);display:flex;align-items:center;justify-content:center;margin-top:-30px;box-shadow:0 3px 10px rgba(20,22,26,.18);flex-shrink:0;overflow:hidden;}
   .avatar-circle svg{width:100%;height:100%;display:block;}
   .booking-option{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--border);border-radius:9px;font-size:12px;margin-bottom:6px;}
-  .booking-option.sel{background:var(--panel-2);border-color:var(--gold);}
+  .booking-option.sel{background:var(--bg-warm);border-color:var(--gold-soft);}
   .radio-dot{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--muted-2);flex-shrink:0;position:relative;}
   .radio-dot.on{border-color:var(--gold);}
   .radio-dot.on::after{content:'';position:absolute;inset:2.5px;border-radius:50%;background:var(--gold);}
@@ -195,20 +202,20 @@
   /* Clube de Assinatura — seção principal */
   .clube-section{
     position:relative;
-    background:radial-gradient(1100px 560px at 15% 0%, rgba(201,162,75,.14), transparent 62%), var(--panel);
+    background:radial-gradient(1100px 560px at 15% 0%, rgba(184,145,47,.09), transparent 62%), var(--bg-warm);
     border-top:1px solid var(--border);border-bottom:1px solid var(--border);
   }
   .clube-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:50px;align-items:center;}
   @media (max-width:900px){ .clube-grid{grid-template-columns:1fr;gap:30px;} }
-  .plan-edit-card{border:1px dashed var(--gold);background:var(--panel-2);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+  .plan-edit-card{border:1px dashed var(--gold);background:var(--bg-warm);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
   .plan-edit-row{margin-bottom:10px;}
   .plan-edit-row label{display:block;font-size:10px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
-  .plan-edit-value{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font-size:12.5px;color:var(--ink);}
+  .plan-edit-value{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font-size:12.5px;color:var(--ink);}
 
   /* Diferenciais */
   .dif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
   @media (max-width:820px){ .dif-grid{grid-template-columns:1fr;} }
-  .dif-card{border:1px solid var(--border);border-radius:var(--radius);padding:26px 24px;background:var(--panel);}
+  .dif-card{border:1.5px solid var(--ink);border-radius:var(--radius);padding:26px 24px;background:var(--panel);}
   .dif-card h3{font-size:17px;color:var(--gold-bright);margin-bottom:10px;}
   .dif-card p{font-size:14.5px;color:var(--muted);}
 
@@ -219,47 +226,56 @@
   .passo{position:relative;padding-top:8px;}
   .passo::before{
     counter-increment:passo;content:counter(passo);
-    font-family:'Fraunces',serif;font-weight:600;font-size:34px;color:var(--gold);
+    font-family:'Fraunces',serif;font-weight:600;font-size:34px;color:var(--gold-soft);
     display:block;margin-bottom:10px;
   }
-  .passo h3{font-size:16px;margin-bottom:6px;}
+  .passo h3{font-size:16px;margin-bottom:6px;color:var(--ink);}
   .passo p{font-size:14px;color:var(--muted);}
 
   /* Planos */
   .planos-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;max-width:820px;margin:0 auto;}
   @media (max-width:700px){ .planos-grid{grid-template-columns:1fr;} }
-  .plano{position:relative;background:var(--panel-2);border:1px solid var(--border);border-radius:14px 14px 0 0;padding:30px 28px 22px;filter:drop-shadow(0 16px 22px rgba(0,0,0,.32));}
+  .plano{position:relative;background:var(--panel);border:1.5px solid var(--ink);border-radius:14px 14px 0 0;padding:30px 28px 22px;box-shadow:0 14px 30px -18px rgba(20,22,26,.14);}
   .plano::after{
     content:'';display:block;position:absolute;left:0;right:0;bottom:-11px;height:12px;
-    background-image:linear-gradient(135deg, var(--panel-2) 50%, transparent 50%),linear-gradient(-135deg, var(--panel-2) 50%, transparent 50%);
+    background-image:linear-gradient(135deg, var(--panel) 50%, transparent 50%),linear-gradient(-135deg, var(--panel) 50%, transparent 50%);
     background-size:16px 16px;background-position:left bottom;background-repeat:repeat-x;
   }
-  .plano.pro{border-color:var(--gold);}
+  .plano.pro{border-width:2px;padding-top:38px;}
+  .plano.pro::before{content:'RECOMENDADO';position:absolute;top:0;left:-2px;right:-2px;background:var(--gold-soft);color:var(--ink);font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-align:center;padding:7px 0;border-radius:12px 12px 0 0;}
   .plano-tag{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2);margin-bottom:6px;}
-  .plano h3{font-size:22px;margin-bottom:4px;}
+  .plano h3{font-size:22px;margin-bottom:4px;color:var(--ink);}
   .plano-preco{font-family:'IBM Plex Mono',monospace;font-size:30px;color:var(--gold-bright);margin:14px 0 18px;}
   .plano-preco span{font-size:14px;color:var(--muted);font-family:'Inter',sans-serif;}
   .plano ul{list-style:none;margin:0 0 22px;padding:0;border-top:1px dashed var(--border);}
-  .plano li{font-size:14.5px;padding:9px 0;border-bottom:1px dashed var(--border);display:flex;gap:9px;}
+  .plano li{font-size:14.5px;padding:9px 0;border-bottom:1px dashed var(--border);display:flex;gap:9px;color:var(--ink);}
   .plano li::before{content:'✓';color:var(--gold);font-weight:700;}
   .plano-footnote{text-align:center;color:var(--muted-2);font-size:13px;margin-top:22px;}
 
   /* FAQ */
+  .faq-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px;}
+  .faq-tab{padding:9px 16px;border-radius:999px;border:1.5px solid var(--ink);background:var(--panel);color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;}
+  .faq-tab:hover{border-color:var(--gold-soft);color:var(--ink);}
+  .faq-tab.active{background:var(--ink);border-color:var(--ink);color:var(--gold-soft);}
   .faq-list{max-width:760px;}
   details{border-bottom:1px solid var(--border);padding:18px 0;}
-  summary{cursor:pointer;font-size:16px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px;}
+  summary{cursor:pointer;font-size:16px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px;color:var(--ink);}
   summary::-webkit-details-marker{display:none;}
   summary::after{content:'+';font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:20px;flex-shrink:0;}
   details[open] summary::after{content:'–';}
   details p{margin-top:12px;color:var(--muted);font-size:14.5px;max-width:640px;}
 
-  /* CTA final */
-  .cta-final{text-align:center;padding:76px 0;}
-  .cta-final h2{font-size:clamp(1.7rem,3.4vw,2.3rem);margin-bottom:14px;max-width:600px;margin-left:auto;margin-right:auto;}
-  .cta-final p{color:var(--muted);margin-bottom:30px;font-size:16px;}
+  /* CTA final — único bloco escuro da página, como um fecho de campanha */
+  .cta-final{text-align:center;padding:86px 0;background:var(--ink);position:relative;overflow:hidden;}
+  .cta-final::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 380px at 50% 0%, rgba(201,162,75,.14), transparent 65%);}
+  .cta-final .wrap{position:relative;}
+  .cta-final h2{font-size:clamp(1.7rem,3.4vw,2.3rem);margin-bottom:14px;max-width:600px;margin-left:auto;margin-right:auto;color:#fdfaf3;}
+  .cta-final p{color:#c9c4b6;margin-bottom:30px;font-size:16px;}
+  .cta-final .btn-gold{background:var(--gold-soft);color:var(--ink);border-color:var(--gold-soft);}
+  .cta-final .btn-gold:hover{background:#fdfaf3;border-color:#fdfaf3;}
 
   /* Footer */
-  footer{border-top:1px solid var(--border);padding:52px 0 96px;}
+  footer{border-top:1px solid var(--border);padding:52px 0 96px;background:var(--panel);}
   .footer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:32px;margin-bottom:36px;}
   @media (max-width:700px){ .footer-grid{grid-template-columns:1fr;} }
   .footer-grid h4{font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted-2);margin-bottom:14px;font-family:'IBM Plex Mono',monospace;}
@@ -269,7 +285,7 @@
   .footer-bottom{border-top:1px solid var(--border);padding-top:22px;font-size:13px;color:var(--muted-2);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;}
 
   /* CTA fixo ao rolar a página */
-  .sticky-cta{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(10,10,10,.96);backdrop-filter:blur(8px);border-top:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:18px;transform:translateY(120%);transition:transform .3s ease;}
+  .sticky-cta{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(250,248,244,.97);backdrop-filter:blur(8px);border-top:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:center;gap:18px;transform:translateY(120%);transition:transform .3s ease;box-shadow:0 -10px 30px -20px rgba(20,22,26,.2);}
   .sticky-cta.show{transform:translateY(0);}
   .sticky-cta span{font-size:13.5px;color:var(--muted);}
   @media (max-width:560px){ .sticky-cta span{display:none;} }
@@ -287,7 +303,7 @@
       <a href="#clube">Clube de Assinatura</a>
       <a href="#planos">Planos</a>
     </nav>
-    <a href="https://primerbarber.com.br" class="btn btn-gold btn-sm">Testar grátis</a>
+    <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold btn-sm">Testar grátis</a>
   </div>
 </header>
 <div class="stripe"></div>
@@ -298,12 +314,12 @@
     <div>
       <p class="eyebrow">Sistema de gestão para barbearias</p>
       <h1>Agenda cheia, caixa batendo e comissão calculada sozinha.</h1>
-      <p class="hero-sub">O Primer Barber organiza o agendamento online, o controle financeiro, a comissão da equipe e o Clube de Assinatura da sua barbearia — tudo pelo celular, sem precisar instalar nada.</p>
+      <p class="hero-sub">O Primer Barber organiza o agendamento online, o controle financeiro, a comissão da equipe e o Clube de Assinatura da sua barbearia. Você não instala nada, e o seu cliente também não — ele agenda direto pelo link, sem baixar aplicativo.</p>
       <div class="hero-ctas">
-        <a href="https://primerbarber.com.br" class="btn btn-gold">Testar grátis por 14 dias</a>
+        <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold">Criar minha conta grátis</a>
         <a href="#clube" class="btn btn-ghost">Ver o Clube de Assinatura</a>
       </div>
-      <p class="hero-micro">Sem cartão de crédito · Cancele quando quiser</p>
+      <p class="hero-micro">Sem cartão de crédito · Leva menos de 2 minutos · Cancele quando quiser</p>
       <div class="hero-tags">
         <span class="pill pill-muted">Agendamento online</span>
         <span class="pill pill-muted">Controle financeiro</span>
@@ -335,7 +351,7 @@
       <p class="eyebrow">Se isso te soa familiar</p>
       <h2>Você reconhece essas cenas na sua barbearia?</h2>
     </div>
-    <div class="dores-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;">
+    <div class="dores-grid">
       <div class="overview-card"><h3>O cliente sumiu</h3><p style="margin-bottom:0;">Demorou pra responder o WhatsApp e ele já marcou em outro lugar.</p></div>
       <div class="overview-card"><h3>Ninguém sabe quanto entrou</h3><p style="margin-bottom:0;">No fim do dia, dinheiro, PIX e cartão viram uma bagunça só de contar.</p></div>
       <div class="overview-card"><h3>Comissão vira discussão</h3><p style="margin-bottom:0;">Cálculo manual de comissão sempre dá dor de cabeça com a equipe.</p></div>
@@ -345,7 +361,7 @@
 </section>
 
 <div class="stripe"></div>
-<div style="padding:56px 0;text-align:center;">
+<div style="padding:56px 0;text-align:center;background:var(--bg-warm);">
   <p style="font-family:'Fraunces',serif;font-size:clamp(1.3rem,2.6vw,1.7rem);color:var(--gold-bright);">O Primer Barber resolve isso do jeito certo.</p>
 </div>
 
@@ -383,7 +399,7 @@
 </section>
 
 <!-- ===== AGENDAMENTO ONLINE ===== -->
-<section id="agendamento" style="background:var(--panel);">
+<section id="agendamento" class="section-line" style="background:var(--bg-warm);">
   <div class="wrap">
     <div class="feature-row">
       <div>
@@ -412,20 +428,20 @@
                   <svg viewBox="0 0 600 140" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Banner ilustrativo da barbearia">
                     <defs>
                       <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#1c1c1c"/>
-                        <stop offset="100%" stop-color="#0a0a0a"/>
+                        <stop offset="0%" stop-color="#14161a"/>
+                        <stop offset="100%" stop-color="#221c14"/>
                       </linearGradient>
                       <pattern id="diagStripes" width="14" height="14" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
                         <rect width="14" height="14" fill="none"/>
-                        <line x1="0" y1="0" x2="0" y2="14" stroke="#c9a24b" stroke-width="5" stroke-opacity="0.06"/>
+                        <line x1="0" y1="0" x2="0" y2="14" stroke="#c9a24b" stroke-width="5" stroke-opacity="0.10"/>
                       </pattern>
                     </defs>
                     <rect width="600" height="140" fill="url(#bgGrad)"/>
                     <rect width="600" height="140" fill="url(#diagStripes)"/>
-                    <text x="26" y="88" font-family="Fraunces, serif" font-style="italic" font-weight="600" font-size="40" fill="#e8c573" fill-opacity="0.4">Barbearia Vintage</text>
-                    <text x="28" y="108" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="3" fill="#c9a24b" fill-opacity="0.55">CORTES CLÁSSICOS · DESDE SEMPRE</text>
-                    <g transform="translate(506,20)" opacity="0.9">
-                      <rect x="0" y="0" width="26" height="100" rx="13" fill="#f3eee4"/>
+                    <text x="26" y="88" font-family="Fraunces, serif" font-style="italic" font-weight="600" font-size="40" fill="#e3c078">Barbearia Vintage</text>
+                    <text x="28" y="108" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="3" fill="#c9a24b">CORTES CLÁSSICOS · DESDE SEMPRE</text>
+                    <g transform="translate(506,20)">
+                      <rect x="0" y="0" width="26" height="100" rx="13" fill="#fdfaf3"/>
                       <clipPath id="poleClip"><rect x="0" y="0" width="26" height="100" rx="13"/></clipPath>
                       <g clip-path="url(#poleClip)">
                         <g fill="#c9a24b">
@@ -436,10 +452,10 @@
                           <rect x="50" y="-10" width="10" height="140" transform="rotate(35 13 50)"/>
                         </g>
                       </g>
-                      <rect x="-3" y="-6" width="32" height="12" rx="4" fill="#0a0a0a"/>
-                      <rect x="-3" y="94" width="32" height="12" rx="4" fill="#0a0a0a"/>
+                      <rect x="-3" y="-6" width="32" height="12" rx="4" fill="#e3c078"/>
+                      <rect x="-3" y="94" width="32" height="12" rx="4" fill="#e3c078"/>
                     </g>
-                    <g stroke="#e8c573" stroke-opacity="0.5" stroke-width="1.6" fill="none">
+                    <g stroke="#c9a24b" stroke-opacity="0.7" stroke-width="1.6" fill="none">
                       <g transform="translate(430,30)"><circle cx="4" cy="4" r="4"/><circle cx="4" cy="18" r="4"/><line x1="7" y1="6" x2="24" y2="20"/><line x1="7" y1="16" x2="24" y2="2"/></g>
                       <g transform="translate(370,80) rotate(-18)"><circle cx="4" cy="4" r="3.2"/><circle cx="4" cy="14.5" r="3.2"/><line x1="6.5" y1="5.5" x2="19" y2="16.5"/><line x1="6.5" y1="13" x2="19" y2="2"/></g>
                     </g>
@@ -451,16 +467,16 @@
                       <defs>
                         <path id="arcTop" d="M 16,66 A 50,50 0 1,1 104,66" fill="none"/>
                       </defs>
-                      <circle cx="60" cy="60" r="57" fill="#111"/>
+                      <circle cx="60" cy="60" r="57" fill="#14161a"/>
                       <circle cx="60" cy="60" r="53" fill="none" stroke="#c9a24b" stroke-width="2.5"/>
                       <circle cx="60" cy="60" r="46" fill="none" stroke="#c9a24b" stroke-width="1"/>
-                      <text font-family="IBM Plex Mono, monospace" font-size="8.5" letter-spacing="2" fill="#e8c573">
+                      <text font-family="IBM Plex Mono, monospace" font-size="8.5" letter-spacing="2" fill="#e3c078">
                         <textPath href="#arcTop" startOffset="50%" text-anchor="middle">BARBEARIA VINTAGE</textPath>
                       </text>
-                      <g transform="translate(60,66)" fill="none" stroke="#e8c573" stroke-width="2.4" stroke-linecap="round">
+                      <g transform="translate(60,66)" fill="none" stroke="#e3c078" stroke-width="2.4" stroke-linecap="round">
                         <path d="M -20,-6 C -14,-16 -6,-16 0,-8 C 6,-16 14,-16 20,-6 C 12,-4 6,2 0,2 C -6,2 -12,-4 -20,-6 Z"/>
                       </g>
-                      <g transform="translate(60,86)" stroke="#e8c573" stroke-width="2" fill="none">
+                      <g transform="translate(60,86)" stroke="#e3c078" stroke-width="2" fill="none">
                         <circle cx="-14" cy="0" r="5"/>
                         <circle cx="-14" cy="12" r="5"/>
                         <line x1="-10" y1="3" x2="16" y2="18"/>
@@ -468,7 +484,7 @@
                       </g>
                     </svg>
                   </div>
-                  <div style="font-weight:600;font-size:14px;margin-top:6px;">Barbearia Vintage</div>
+                  <div style="font-weight:600;font-size:14px;margin-top:6px;color:var(--ink);">Barbearia Vintage</div>
                   <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Cortes clássicos e modernos no centro da cidade.</div>
                   <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
                     <span class="pill pill-muted" style="font-size:9.5px;">WhatsApp</span>
@@ -476,10 +492,10 @@
                   </div>
                 </div>
               </div>
-              <div style="font-size:11px;font-weight:600;margin:14px 0 8px;">1. Escolha o serviço</div>
-              <div class="booking-option sel"><span class="radio-dot on"></span><div style="flex:1;">Corte + Barba <span style="color:var(--muted-2);">· R$ 65 · 50min</span></div></div>
-              <div class="booking-option"><span class="radio-dot"></span><div style="flex:1;">Corte <span style="color:var(--muted-2);">· R$ 40 · 30min</span></div></div>
-              <div style="font-size:11px;font-weight:600;margin:12px 0 8px;">2. Escolha o profissional</div>
+              <div style="font-size:11px;font-weight:600;margin:14px 0 8px;color:var(--ink);">1. Escolha o serviço</div>
+              <div class="booking-option sel"><span class="radio-dot on"></span><div style="flex:1;color:var(--ink);">Corte + Barba <span style="color:var(--muted-2);">· R$ 65 · 50min</span></div></div>
+              <div class="booking-option"><span class="radio-dot"></span><div style="flex:1;color:var(--ink);">Corte <span style="color:var(--muted-2);">· R$ 40 · 30min</span></div></div>
+              <div style="font-size:11px;font-weight:600;margin:12px 0 8px;color:var(--ink);">2. Escolha o profissional</div>
               <div style="display:flex;gap:6px;margin-bottom:12px;">
                 <span class="pill pill-gold" style="font-size:10px;">Kaique</span>
                 <span class="pill pill-muted" style="font-size:10px;">Diego</span>
@@ -502,7 +518,7 @@
 </section>
 
 <!-- ===== CONTROLE FINANCEIRO ===== -->
-<section id="financeiro">
+<section id="financeiro" class="section-line">
   <div class="wrap">
     <div class="feature-row reverse">
       <div>
@@ -535,13 +551,13 @@
               <div style="font-size:11px;color:var(--muted-2);margin-bottom:10px;">Entradas por forma de pagamento</div>
               <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
                 <div><div style="font-size:10px;color:var(--muted-2);">Dinheiro <span style="color:var(--gold-bright);font-size:9px;">na gaveta</span></div><div class="mono" style="color:var(--gold-bright);font-size:14px;">R$ 140</div></div>
-                <div><div style="font-size:10px;color:var(--muted-2);">PIX</div><div class="mono" style="font-size:14px;">R$ 320</div></div>
-                <div><div style="font-size:10px;color:var(--muted-2);">Débito</div><div class="mono" style="font-size:14px;">R$ 180</div></div>
-                <div><div style="font-size:10px;color:var(--muted-2);">Crédito</div><div class="mono" style="font-size:14px;">R$ 140</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">PIX</div><div class="mono" style="font-size:14px;color:var(--ink);">R$ 320</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">Débito</div><div class="mono" style="font-size:14px;color:var(--ink);">R$ 180</div></div>
+                <div><div style="font-size:10px;color:var(--muted-2);">Crédito</div><div class="mono" style="font-size:14px;color:var(--ink);">R$ 140</div></div>
               </div>
             </div>
             <div class="card mock-row" style="margin-bottom:0;">
-              <div style="flex:1;font-size:11.5px;"><b>Diego Santos</b> pediu saque de <span class="mono" style="color:var(--gold-bright);">R$ 180,00</span></div>
+              <div style="flex:1;font-size:11.5px;color:var(--ink);"><b>Diego Santos</b> pediu saque de <span class="mono" style="color:var(--gold-bright);">R$ 180,00</span></div>
               <span class="pill pill-warn" style="flex-shrink:0;">Pendente</span>
             </div>
           </div>
@@ -594,8 +610,8 @@
               <div class="card mock-stat"><div class="l">Receita recorrente (MRR)</div><div class="v">R$ 1.240</div><div class="s" style="color:var(--ok);">assinaturas ativas</div></div>
               <div class="card mock-stat"><div class="l">Recebido este mês</div><div class="v">R$ 980</div><div class="s" style="color:var(--ok);">Asaas + dinheiro</div></div>
             </div>
-            <div class="card mock-row"><span style="color:var(--gold-bright);">★</span><div style="flex:1;"><div style="font-weight:600;">Bruno Lima</div><div style="font-size:11px;color:var(--muted);">Clube Premium · vence dia 10</div></div><span class="pill pill-ok">Em dia</span></div>
-            <div class="card mock-row" style="margin-bottom:0;"><span style="color:var(--bad);">★</span><div style="flex:1;"><div style="font-weight:600;">Yuri Prado</div><div style="font-size:11px;color:var(--muted);">Clube Premium · venceu dia 02</div></div><span class="pill pill-bad">Atrasado</span></div>
+            <div class="card mock-row"><span style="color:var(--gold-bright);">★</span><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Bruno Lima</div><div style="font-size:11px;color:var(--muted);">Clube Premium · vence dia 10</div></div><span class="pill pill-ok">Em dia</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><span style="color:var(--bad);">★</span><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Yuri Prado</div><div style="font-size:11px;color:var(--muted);">Clube Premium · venceu dia 02</div></div><span class="pill pill-bad">Atrasado</span></div>
           </div>
         </div>
       </div>
@@ -641,8 +657,8 @@
               <div class="card mock-stat"><div class="l">Concluídos</div><div class="v">5</div><div class="s" style="color:var(--warn);">de 8</div></div>
               <div class="card mock-stat"><div class="l">Faturamento</div><div class="v">R$ 410</div><div class="s" style="color:var(--ok);">até agora</div></div>
             </div>
-            <div class="card mock-row"><span class="mono" style="color:var(--gold-bright);min-width:38px;">14:00</span><div style="flex:1;"><div style="font-weight:600;">Lucas Andrade</div><div style="font-size:11px;color:var(--muted);">Corte + Barba · Kaique</div></div><span class="pill pill-ok">Concluído</span></div>
-            <div class="card mock-row" style="margin-bottom:0;"><span class="mono" style="color:var(--gold-bright);min-width:38px;">15:00</span><div style="flex:1;"><div style="font-weight:600;">Rafael Souza</div><div style="font-size:11px;color:var(--muted);">Corte · Diego</div></div><span class="pill pill-warn">Agendado</span></div>
+            <div class="card mock-row"><span class="mono" style="color:var(--gold-bright);min-width:38px;">14:00</span><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Lucas Andrade</div><div style="font-size:11px;color:var(--muted);">Corte + Barba · Kaique</div></div><span class="pill pill-ok">Concluído</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><span class="mono" style="color:var(--gold-bright);min-width:38px;">15:00</span><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Rafael Souza</div><div style="font-size:11px;color:var(--muted);">Corte · Diego</div></div><span class="pill pill-warn">Agendado</span></div>
           </div>
         </div>
       </div>
@@ -651,7 +667,7 @@
 </section>
 
 <!-- ===== EQUIPE ===== -->
-<section id="equipe" style="background:var(--panel);">
+<section id="equipe" class="section-line" style="background:var(--bg-warm);">
   <div class="wrap">
     <div class="feature-row reverse">
       <div>
@@ -672,9 +688,9 @@
           <div class="browser-bar"><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-dot"></span><span class="browser-url">app.primerbarber.com.br/equipe</span></div>
           <div class="browser-body">
             <div class="mock-head"><h4>Equipe</h4><span>Acesso por PIN</span></div>
-            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">KA</div><div style="flex:1;"><div style="font-weight:600;">Kaique Alves</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
-            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">DS</div><div style="flex:1;"><div style="font-weight:600;">Diego Santos</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
-            <div class="card mock-row" style="margin-bottom:0;"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">MR</div><div style="flex:1;"><div style="font-weight:600;">Mariana Reis</div><div style="font-size:11px;color:var(--muted);">Recepcionista</div></div><span class="pill pill-muted">PIN ••••</span></div>
+            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">KA</div><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Kaique Alves</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
+            <div class="card mock-row"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">DS</div><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Diego Santos</div><div style="font-size:11px;color:var(--muted);">Profissional</div></div><span class="pill pill-muted">PIN ••••</span></div>
+            <div class="card mock-row" style="margin-bottom:0;"><div style="width:30px;height:30px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold-bright);border:1px solid var(--border);">MR</div><div style="flex:1;color:var(--ink);"><div style="font-weight:600;">Mariana Reis</div><div style="font-size:11px;color:var(--muted);">Recepcionista</div></div><span class="pill pill-muted">PIN ••••</span></div>
           </div>
         </div>
       </div>
@@ -683,7 +699,7 @@
 </section>
 
 <!-- ===== DIFERENCIAIS ===== -->
-<section id="diferenciais">
+<section id="diferenciais" class="section-line">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Por que o Primer Barber</p>
@@ -707,7 +723,7 @@
 </section>
 
 <!-- ===== COMO FUNCIONA ===== -->
-<section id="como-funciona" style="background:var(--panel);">
+<section id="como-funciona" class="section-line" style="background:var(--bg-warm);">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Começar leva poucos minutos</p>
@@ -731,11 +747,15 @@
         <p>Agenda, caixa, comissão e Clube de Assinatura, tudo em um só lugar.</p>
       </div>
     </div>
+    <div style="text-align:center;margin-top:44px;">
+      <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold">Criar minha conta agora</a>
+      <div style="font-size:12px;color:var(--muted-2);margin-top:10px;">Só pede nome, e-mail e o nome da sua barbearia — sem cartão.</div>
+    </div>
   </div>
 </section>
 
 <!-- ===== PLANOS ===== -->
-<section id="planos">
+<section id="planos" class="section-line">
   <div class="wrap">
     <div class="section-head center">
       <p class="eyebrow">Planos</p>
@@ -754,7 +774,7 @@
           <li>Página de agendamento online</li>
           <li>Clube de Assinatura não incluso</li>
         </ul>
-        <a href="https://primerbarber.com.br" class="btn btn-ghost" style="width:100%;justify-content:center;">Começar teste grátis</a>
+        <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-ghost" style="width:100%;justify-content:center;">Começar teste grátis</a>
       </div>
 
       <div class="plano pro">
@@ -767,7 +787,7 @@
           <li>Página de agendamento online</li>
           <li>Clube de Assinatura incluído</li>
         </ul>
-        <a href="https://primerbarber.com.br" class="btn btn-gold" style="width:100%;justify-content:center;">Começar teste grátis</a>
+        <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold" style="width:100%;justify-content:center;">Começar teste grátis</a>
       </div>
     </div>
     <p class="plano-footnote">Cobrança mensal recorrente, processada pelo Stripe. Cancele quando quiser.</p>
@@ -775,34 +795,44 @@
 </section>
 
 <!-- ===== FAQ ===== -->
-<section id="faq" style="background:var(--panel);">
+<section id="faq" class="section-line" style="background:var(--bg-warm);">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Dúvidas</p>
       <h2>Perguntas frequentes</h2>
     </div>
-    <div class="faq-list">
-      <details>
+    <div class="faq-tabs" id="faq-tabs">
+      <button class="faq-tab active" data-cat="todas">Todas</button>
+      <button class="faq-tab" data-cat="comecar">Começar</button>
+      <button class="faq-tab" data-cat="uso">Uso diário</button>
+      <button class="faq-tab" data-cat="clube">Clube & Página</button>
+    </div>
+    <div class="faq-list" id="faq-list">
+      <details data-cat="comecar">
         <summary>Preciso de cartão de crédito para testar?</summary>
         <p>Não. Você tem 14 dias grátis em qualquer plano, sem precisar cadastrar cartão.</p>
       </details>
-      <details>
+      <details data-cat="comecar">
+        <summary>Quanto tempo leva para criar minha conta?</summary>
+        <p>Menos de 2 minutos. Você informa nome, e-mail e o nome da sua barbearia — e já cai direto no painel para cadastrar equipe e serviços.</p>
+      </details>
+      <details data-cat="comecar">
         <summary>Posso cancelar quando quiser?</summary>
         <p>Sim. A assinatura é mensal e o cancelamento pode ser feito a qualquer momento.</p>
       </details>
-      <details>
+      <details data-cat="uso">
         <summary>Preciso instalar algum aplicativo?</summary>
-        <p>Não. O Primer Barber funciona direto no navegador, tanto no celular quanto no computador — não é um app de loja.</p>
+        <p>Não — nem você, nem o seu cliente. O Primer Barber funciona direto no navegador, tanto no celular quanto no computador, e o cliente agenda pelo link sem baixar nada.</p>
       </details>
-      <details>
+      <details data-cat="uso">
         <summary>O sistema calcula a comissão sozinho?</summary>
         <p>Sim. Você define o percentual por profissional e por serviço, e o cálculo é feito automaticamente.</p>
       </details>
-      <details>
+      <details data-cat="clube">
         <summary>Posso personalizar minha página de agendamento?</summary>
         <p>Sim. Logo, banner, bio, endereço e redes sociais ficam nas configurações da página, e você decide se permite cancelamento e remarcação online.</p>
       </details>
-      <details>
+      <details data-cat="clube">
         <summary>O que é o Clube de Assinatura?</summary>
         <p>É a sua barbearia vendendo planos mensais para os próprios clientes. Cada serviço vale fichas, e o valor arrecadado no mês é dividido entre os profissionais proporcionalmente às fichas. Os planos são criados e editados por você.</p>
       </details>
@@ -811,12 +841,11 @@
 </section>
 
 <!-- ===== CTA FINAL ===== -->
-<div class="stripe"></div>
 <section class="cta-final">
   <div class="wrap">
     <h2>Chega de caderno, planilha e WhatsApp bagunçado.</h2>
-    <p>Organize sua barbearia com o Primer Barber. 14 dias grátis, sem cartão.</p>
-    <a href="https://primerbarber.com.br" class="btn btn-gold">Começar agora</a>
+    <p>Crie sua conta e organize a rotina da sua barbearia hoje mesmo. 14 dias grátis, sem cartão.</p>
+    <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold">Criar minha conta grátis</a>
   </div>
 </section>
 
@@ -852,7 +881,7 @@
 <!-- ===== CTA fixo ao rolar ===== -->
 <div class="sticky-cta" id="stickyCta">
   <span>14 dias grátis, sem cartão de crédito.</span>
-  <a href="https://primerbarber.com.br" class="btn btn-gold btn-sm">Testar grátis</a>
+  <a href="https://primerbarber.com.br/?cadastro=1" class="btn btn-gold btn-sm">Testar grátis</a>
   <button class="sticky-cta-close" id="stickyCtaClose" aria-label="Fechar">×</button>
 </div>
 
@@ -880,6 +909,18 @@
         });
       }
     }
+    var faqTabs = document.querySelectorAll('.faq-tab');
+    var faqItems = document.querySelectorAll('#faq-list details');
+    faqTabs.forEach(function(tab){
+      tab.addEventListener('click', function(){
+        faqTabs.forEach(function(t){ t.classList.remove('active'); });
+        tab.classList.add('active');
+        var cat = tab.dataset.cat;
+        faqItems.forEach(function(item){
+          item.style.display = (cat==='todas' || item.dataset.cat===cat) ? '' : 'none';
+        });
+      });
+    });
     if('IntersectionObserver' in window){
       var reveals = document.querySelectorAll('.reveal');
       var robs = new IntersectionObserver(function(entries){
