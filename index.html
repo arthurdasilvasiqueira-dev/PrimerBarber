@@ -1136,55 +1136,64 @@ function suggestServicesFor(clientName){
 function phoneForClientName(name){
   return state.clients.find(c=>c.name.trim().toLowerCase()===name.trim().toLowerCase())?.phone || '';
 }
-function currentPeriod(){ return todayISO().slice(0,7); }
-function commissionOwed(profId){
+// Período selecionado na tela de comissões; null significa mês corrente.
+let selectedCommissionPeriod = null;
+
+function currentPeriod(){
+  return selectedCommissionPeriod || todayISO().slice(0,7);
+}
+
+function changeCommissionPeriod(delta){
+  const [yearStr, monthStr] = currentPeriod().split('-');
+  const date = new Date(Number(yearStr), Number(monthStr)-1+Number(delta), 1);
+  selectedCommissionPeriod = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+  if(typeof renderView === 'function') renderView('comissoes');
+  else if(typeof renderComissoes === 'function'){
+    const view = document.querySelector('main') || document.querySelector('#app');
+    if(view) renderComissoes(view);
+  }
+}
+
+function periodLabelBR(period){
+  const value = period || currentPeriod();
+  const [year, month] = value.split('-');
+  const name = new Date(Number(year), Number(month)-1, 1)
+    .toLocaleDateString('pt-BR', {month:'long'});
+  return `${name.charAt(0).toUpperCase()+name.slice(1)} de ${year}`;
+}
+
+function commissionOwed(profId, customPeriod = null){
   const prof = state.professionals.find(p=>p.id===profId);
-  const period = currentPeriod();
+  const period = customPeriod || currentPeriod();
   const paidService = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='servico').reduce((a,c)=>a+Number(c.amount),0);
   const paidPote = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='pote' && c.period===period).reduce((a,c)=>a+Number(c.amount),0);
   const paidSaque = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='saque').reduce((a,c)=>a+Number(c.amount),0);
-  // vales (adiantamentos) também descontam do que o profissional tem a receber
   const paidVale = state.commissionPayments.filter(c=>c.professionalId===profId && c.source==='vale').reduce((a,c)=>a+Number(c.amount),0);
-  const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  const concludedAppts = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido')
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   let serviceEarned = 0;
-  concludedAppts.forEach(ap=>{
-    // Comissão sobre o que REALMENTE foi cobrado. Atendimento coberto pelo
-    // clube não gera comissão de serviço — o profissional é pago por ele
-    // através das fichas do pote. Sem isso, ele receberia duas vezes.
-    // comissaoDoAtendimento já lida com atendimentos de 1 ou vários
-    // serviços, cada um com seu próprio percentual quando configurado.
-    serviceEarned += comissaoDoAtendimento(ap, prof);
-  });
-  const potEarned = potCommissionForProf(profId);
-  // O vale e o saque são adiantamentos: saem do que o profissional tem a
-  // receber. Se o vale for MAIOR que o que ele já ganhou, o saldo fica
-  // negativo de propósito — ele "deve" à barbearia, e isso é abatido
-  // sozinho conforme novas comissões entram (basta o cálculo não
-  // travar em zero: totalEarned sobe a cada atendimento novo).
+  concludedAppts.forEach(ap=>{ serviceEarned += comissaoDoAtendimento(ap, prof); });
+  const potEarned = potCommissionForProf(profId, period);
   const serviceOwed = serviceEarned - paidService - paidSaque - paidVale;
   const potOwed = Math.max(0, potEarned - paidPote);
   const totalEarned = serviceEarned + potEarned;
   const totalPaid = paidService + paidPote + paidSaque + paidVale;
   return {
-    earned: totalEarned, serviceEarned, potEarned,
-    paid: totalPaid, paidService, paidPote, paidSaque, paidVale,
-    owed: totalEarned - totalPaid, serviceOwed, potOwed,
-    devendo: (totalEarned - totalPaid) < 0,
+    earned:totalEarned, serviceEarned, potEarned, paid:totalPaid,
+    paidService, paidPote, paidSaque, paidVale, owed:totalEarned-totalPaid,
+    serviceOwed, potOwed, devendo:(totalEarned-totalPaid)<0
   };
 }
-function monthlyEarnedForProf(profId){
+
+function monthlyEarnedForProf(profId, customPeriod = null){
   const prof = state.professionals.find(p=>p.id===profId);
   if(!prof) return 0;
-  const period = currentPeriod();
-  const concludedThisMonth = state.appointments.filter(a=>a.professionalId===profId && a.status==='concluido' && a.date.startsWith(period));
+  const period = customPeriod || currentPeriod();
+  const concludedThisMonth = state.appointments.filter(a=>
+    a.professionalId===profId && a.status==='concluido' && a.date.startsWith(period));
   let total = 0;
-  concludedThisMonth.forEach(ap=>{
-    // usa o valor REALMENTE cobrado (com desconto e clube aplicados),
-    // não o preço de tabela — comissaoDoAtendimento já soma certo
-    // quando o atendimento tem mais de um serviço
-    total += comissaoDoAtendimento(ap, prof);
-  });
-  return total + potCommissionForProf(profId);
+  concludedThisMonth.forEach(ap=>{ total += comissaoDoAtendimento(ap, prof); });
+  return total + potCommissionForProf(profId, period);
 }
 function effectiveCommissionPercent(prof, serviceId){
   return (prof.serviceOverrides && prof.serviceOverrides[serviceId]!=null) ? prof.serviceOverrides[serviceId] : prof.commission;
@@ -1311,8 +1320,8 @@ function clubMonthlyPot(ym){
     return total + (plan ? plan.price : 0);
   }, 0);
 }
-function clubFichaEntries(){
-  const monthPrefix = todayISO().slice(0,7);
+function clubFichaEntries(customPeriod = null){
+  const monthPrefix = customPeriod || currentPeriod();
   // A ficha é do trabalho feito: se o profissional atendeu um assinante,
   // ela conta mesmo que a mensalidade ainda não tenha entrado. O que
   // depende do pagamento é o VALOR do pote, não a contagem de fichas.
@@ -1330,10 +1339,11 @@ function clubFichaEntries(){
     });
   return entries;
 }
-function clubFichasBreakdown(){
-  const entries = clubFichaEntries();
+function clubFichasBreakdown(customPeriod = null){
+  const period = customPeriod || currentPeriod();
+  const entries = clubFichaEntries(period);
   const totalFichas = entries.reduce((a,e)=>a+e.fichas,0);
-  const potTotal = clubMonthlyPot();
+  const potTotal = clubMonthlyPot(period);
   const staffPercent = state.commissionSettings.clubStaffPercent ?? 60;
   const potStaff = potTotal * (staffPercent/100);
   const potBarbearia = potTotal - potStaff;
@@ -1382,8 +1392,9 @@ function diagnosticoFichasAgrupado(){
   });
   return { total: problemas.length, grupos: Object.values(grupos) };
 }
-function potCommissionForProf(profId){
-  const row = clubFichasBreakdown().rows.find(r=>r.prof.id===profId);
+function potCommissionForProf(profId, customPeriod = null){
+  const period = customPeriod || currentPeriod();
+  const row = clubFichasBreakdown(period).rows.find(r=>r.prof.id===profId);
   return row ? row.value : 0;
 }
 function asaasSummary(){
@@ -3796,10 +3807,21 @@ function congelarValoresAntigos(view){
 }
 
 function renderComissoes(view){
-  const fichasBreakdown = clubFichasBreakdown();
   const period = currentPeriod();
+  const fichasBreakdown = clubFichasBreakdown(period);
   const closed = monthAlreadyClosed(period);
-  const potRows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
+  const activePeriod = period;
+  const isCurrentMonth = activePeriod === todayISO().slice(0,7);
+  const periodSelectorHTML = `
+    <div class="card" style="padding:12px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border-left:4px solid var(--gold);">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-ghost" id="btn-period-prev" style="padding:7px 12px;font-size:13px;">&larr; Mês Anterior</button>
+        <div style="font-weight:700;font-size:15px;color:var(--ink);min-width:180px;text-align:center;">${periodLabelBR(activePeriod)}</div>
+        <button type="button" class="btn btn-ghost" id="btn-period-next" style="padding:7px 12px;font-size:13px;">Próximo Mês &rarr;</button>
+      </div>
+      <div>${!isCurrentMonth ? '<button type="button" class="btn btn-gold" id="btn-period-current" style="padding:7px 14px;font-size:13px;">Voltar ao Mês Atual</button>' : '<span class="pill pill-ok">Mês Vigente</span>'}</div>
+    </div>`;
+  const potRows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id, period).potOwed})).filter(r=>r.owed>0);
   const totalPotOwed = potRows.reduce((a,r)=>a+r.owed,0);
   const visibleProfs = userSession.role==='profissional' ? state.professionals.filter(p=>p.id===userSession.professionalId) : servingProfessionals();
   const myProf = userSession.role==='profissional' ? state.professionals.find(p=>p.id===userSession.professionalId) : null;
@@ -3808,6 +3830,7 @@ function renderComissoes(view){
 
   view.innerHTML = `
     ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
+    ${periodSelectorHTML}
 
     ${(()=>{
       if(!isOwnerLevel()) return '';
@@ -3911,7 +3934,7 @@ function renderComissoes(view){
               ${isOwnerLevel() ? `<button class="btn btn-gold" style="padding:8px 12px;" ${c.serviceOwed<=0?'disabled':''} data-pay-service="${p.id}">Pagar</button>` : ''}
             </div>
             <div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;">
-              <div style="font-size:11.5px;color:var(--muted-2);">Pote do clube · ${periodLabel(period)}</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">Pote do clube · ${periodLabelBR(period)}</div>
               <div class="font-mono" style="font-size:15px;color:${c.potOwed>0?'var(--gold-bright)':'var(--muted)'};">
                 ${BRL(c.potOwed)}
                 ${(()=>{ const f = (fichasBreakdown.rows.find(r=>r.prof.id===p.id)||{}).fichas || 0;
@@ -4113,6 +4136,17 @@ function renderComissoes(view){
     if(!g || g.apps.length===0){ showToast('Nada para corrigir — já foi resolvido.'); renderComissoes(view); return; }
     trocarServicoGrupoModal(g, view);
   }));
+
+  const btnPrev = view.querySelector('#btn-period-prev');
+  const btnNext = view.querySelector('#btn-period-next');
+  const btnCurrent = view.querySelector('#btn-period-current');
+  if(btnPrev) btnPrev.addEventListener('click', ()=>changeCommissionPeriod(-1));
+  if(btnNext) btnNext.addEventListener('click', ()=>changeCommissionPeriod(1));
+  if(btnCurrent) btnCurrent.addEventListener('click', ()=>{
+    selectedCommissionPeriod = null;
+    if(typeof renderView === 'function') renderView('comissoes');
+    else renderComissoes(view);
+  });
 }
 /* Corrige em lote atendimentos que ficaram com o serviço errado (ex: o
    profissional esqueceu de escolher e o sistema pegou o primeiro da
@@ -4280,7 +4314,7 @@ function payServiceCommission(profId){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const amount = parseFloat(root.querySelector('#f-amount').value);
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
-      update(s=>{ s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico'}); });
+      update(s=>{ s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:currentPeriod()}); });
       closeModal();
       showToast('Comissão de serviços paga.');
     });
@@ -4288,14 +4322,14 @@ function payServiceCommission(profId){
 }
 function closeClubMonthModal(){
   const period = currentPeriod();
-  if(monthAlreadyClosed(period)){ showToast('O pote deste mês já foi fechado.'); return; }
-  const rows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id).potOwed})).filter(r=>r.owed>0);
-  if(rows.length===0){ showToast('Não há pote a fechar neste mês.'); return; }
+  if(monthAlreadyClosed(period)){ showToast(`O pote de ${periodLabelBR(period)} já foi fechado anteriormente.`); return; }
+  const rows = servingProfessionals().map(p=>({prof:p, owed: commissionOwed(p.id, period).potOwed})).filter(r=>r.owed>0);
+  if(rows.length===0){ showToast(`Não há valores pendentes no pote para ${periodLabelBR(period)}.`); return; }
   const total = rows.reduce((a,r)=>a+r.owed,0);
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <div class="font-display" style="font-size:19px;font-weight:600;">Fechar pote de ${periodLabel(period)}</div>
+        <div class="font-display" style="font-size:19px;font-weight:600;">Fechar pote de ${periodLabelBR(period)}</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Confirmar paga a comissão do pote do clube a todos os profissionais abaixo, de uma vez.</div>
@@ -4318,7 +4352,7 @@ function closeClubMonthModal(){
         });
       });
       closeModal();
-      showToast(`Fechamento de ${periodLabel(period)} concluído.`);
+      showToast(`Fechamento de ${periodLabelBR(period)} concluído com sucesso!`);
     });
   });
 }
