@@ -603,6 +603,10 @@ function migrateState(){
     if(s.clubFichas==null) s.clubFichas = 0;
     if(s.hideOnline==null) s.hideOnline = false;
   });
+  (state.subscriptionMembers||[]).forEach(m=>{
+    if(!Array.isArray(m.paymentHistory)) m.paymentHistory = [];
+    if(m.lastPaymentDate) registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
+  });
   (state.appointments||[]).forEach(a=>{
     if(!a.depositStatus) a.depositStatus = 'nao_aplicavel';
     if(a.depositAmount==null) a.depositAmount = 0;
@@ -1139,14 +1143,23 @@ function phoneForClientName(name){
 // Período selecionado na tela de comissões; null significa mês corrente.
 let selectedCommissionPeriod = null;
 
+// Mês real de hoje — usado onde NÃO pode depender do mês escolhido na tela
+// (painel, vale, saque, pagamento).
+function mesReal(){ return todayISO().slice(0,7); }
+
+// Mês que a tela de Comissões está mostrando. Só vale DENTRO dela: fora da
+// tela de Comissões (painel, etc.) é sempre o mês real. Sem isso, escolher
+// "agosto" lá fazia o painel inteiro mostrar valores de agosto.
 function currentPeriod(){
-  return selectedCommissionPeriod || todayISO().slice(0,7);
+  return (route==='comissoes' && selectedCommissionPeriod) || mesReal();
 }
 
 function changeCommissionPeriod(delta){
   const [yearStr, monthStr] = currentPeriod().split('-');
   const date = new Date(Number(yearStr), Number(monthStr)-1+Number(delta), 1);
-  selectedCommissionPeriod = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+  const novoPeriodo = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+  if(novoPeriodo > mesReal()) return; // não existe "mês que vem" pra fechar
+  selectedCommissionPeriod = (novoPeriodo === mesReal()) ? null : novoPeriodo;
   if(typeof renderView === 'function') renderView('comissoes');
   else if(typeof renderComissoes === 'function'){
     const view = document.querySelector('main') || document.querySelector('#app');
@@ -1309,8 +1322,21 @@ function maybeAwardReferral(client){
 // um profissional atende um cliente assinante pago, ganha as fichas daquele serviço.
 // Pagou DENTRO do mês? É isso que faz o pote virar quando o mês muda.
 // Antes olhávamos só o status "pago", que ficava marcado do mês anterior.
+// lastPaymentDate guarda só o ÚLTIMO pagamento e é sobrescrito todo mês —
+// então, sozinho, ele "apaga" o mês anterior. Para o pote de meses passados
+// sair certo, guardamos também cada mês pago em paymentHistory.
+function registrarPagamentoNoHistorico(m, dateISO, amount){
+  if(!m || !dateISO) return;
+  const dia = String(dateISO).slice(0,10);
+  if(dia.length < 10) return;
+  if(!Array.isArray(m.paymentHistory)) m.paymentHistory = [];
+  if(m.paymentHistory.some(h=>h.date===dia)) return;
+  m.paymentHistory.push({date:dia, amount:Number(amount)||0});
+}
 function pagouNoMes(m, ym){
-  if(!m || !m.lastPaymentDate) return false;
+  if(!m) return false;
+  if(Array.isArray(m.paymentHistory) && m.paymentHistory.some(h=>String(h.date).slice(0,7)===ym)) return true;
+  if(!m.lastPaymentDate) return false;
   return String(m.lastPaymentDate).slice(0,7) === ym;
 }
 function clubMonthlyPot(ym){
@@ -1362,7 +1388,7 @@ function clubFichasBreakdown(customPeriod = null){
 
 // Diagnóstico: por que um atendimento de assinante não gerou ficha?
 function diagnosticoFichas(){
-  const monthPrefix = todayISO().slice(0,7);
+  const monthPrefix = currentPeriod();
   const problemas = [];
   state.appointments
     .filter(a=>a.status==='concluido' && a.date.startsWith(monthPrefix))
@@ -1476,6 +1502,7 @@ function navAllowedForSession(){
 
 /* ============ ROOT RENDER ============ */
 function render(){
+  if(route!=='comissoes') selectedCommissionPeriod = null;
   const app = document.getElementById('app');
   const cashOpen = openSession();
   if(!navAllowedForSession().includes(route)) route = 'dashboard';
@@ -3817,7 +3844,7 @@ function renderComissoes(view){
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button type="button" class="btn btn-ghost" id="btn-period-prev" style="padding:7px 12px;font-size:13px;">&larr; Mês Anterior</button>
         <div style="font-weight:700;font-size:15px;color:var(--ink);min-width:180px;text-align:center;">${periodLabelBR(activePeriod)}</div>
-        <button type="button" class="btn btn-ghost" id="btn-period-next" style="padding:7px 12px;font-size:13px;">Próximo Mês &rarr;</button>
+        <button type="button" class="btn btn-ghost" id="btn-period-next" style="padding:7px 12px;font-size:13px;${isCurrentMonth?'opacity:.4;cursor:not-allowed;':''}" ${isCurrentMonth?'disabled':''}>Próximo Mês &rarr;</button>
       </div>
       <div>${!isCurrentMonth ? '<button type="button" class="btn btn-gold" id="btn-period-current" style="padding:7px 14px;font-size:13px;">Voltar ao Mês Atual</button>' : '<span class="pill pill-ok">Mês Vigente</span>'}</div>
     </div>`;
@@ -3831,6 +3858,12 @@ function renderComissoes(view){
   view.innerHTML = `
     ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
     ${periodSelectorHTML}
+    ${(!isCurrentMonth && !closed && isOwnerLevel()) ? `
+    <div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:var(--warn);font-size:12px;color:var(--muted);line-height:1.6;">
+      <b style="color:var(--warn);">Mês anterior ainda não fechado.</b>
+      O valor do pote vem do histórico de pagamentos dos assinantes. Antes de fechar, confira se ninguém está faltando:
+      em <b>Clube de Assinatura</b>, clique em <b>Consultar Asaas</b> — isso reconstrói os pagamentos dos últimos meses.
+    </div>` : ''}
 
     ${(()=>{
       if(!isOwnerLevel()) return '';
@@ -3854,8 +3887,8 @@ function renderComissoes(view){
 
     ${myProf ? `
     ${(()=>{
-      const cm = commissionOwed(myProf.id);
-      const ganho = monthlyEarnedForProf(myProf.id);
+      const cm = commissionOwed(myProf.id, mesReal()); // "a receber agora" nunca muda com o mês navegado
+      const ganho = monthlyEarnedForProf(myProf.id);   // este sim acompanha o mês escolhido
       return `<div class="card" style="padding:18px 20px;margin-bottom:20px;border-color:${cm.owed<0?'var(--bad)':'var(--gold)'};">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
           <div style="min-width:200px;">
@@ -4190,7 +4223,7 @@ function trocarServicoGrupoModal(g, view){
   });
 }
 function withdrawalRequestModal(prof){
-  const owed = commissionOwed(prof.id).owed;
+  const owed = commissionOwed(prof.id, mesReal()).owed;
   if(owed<=0){ showToast(owed<0 ? 'Sem saldo — há vale a descontar ainda.' : 'Sem saldo disponível para saque no momento.'); return; }
   openModal(`
     <div style="padding:22px;">
@@ -4225,7 +4258,7 @@ function valeModal(profId, view){
   if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode dar vale.'); return; }
   const prof = state.professionals.find(p=>p.id===profId);
   if(!prof) return;
-  const c = commissionOwed(profId);
+  const c = commissionOwed(profId, mesReal());
   const caixaAberto = openSession();
   openModal(`
     <div style="padding:22px;">
@@ -4314,7 +4347,7 @@ function payServiceCommission(profId){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const amount = parseFloat(root.querySelector('#f-amount').value);
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
-      update(s=>{ s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:currentPeriod()}); });
+      update(s=>{ s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal()}); });
       closeModal();
       showToast('Comissão de serviços paga.');
     });
@@ -5170,6 +5203,7 @@ function renderClube(view){
           m.status = 'pago';
           m.lastPaymentDate = todayISO();
           m.lastPaymentAmount = p ? Number(p.price) : 0;
+          registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
         });
         showToast('Pagamento registrado.');
         closeModal();
@@ -5232,6 +5266,7 @@ function renderClube(view){
           const p = s.subscriptionPlans.find(x=>x.id===m.planId);
           m.lastPaymentDate = todayISO();
           m.lastPaymentAmount = p ? Number(p.price) : 0;
+          registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
         }
       });
     });
@@ -5285,6 +5320,7 @@ function renderClube(view){
       const m = s.subscriptionMembers.find(mm=>mm.id===b.dataset.markCash);
       const plan = s.subscriptionPlans.find(p=>p.id===m.planId);
       m.status = 'pago'; m.lastPaymentDate = todayISO(); m.lastPaymentAmount = plan?plan.price:0;
+      registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
     });
     showToast('Pagamento em dinheiro registrado.');
   }));
@@ -5347,6 +5383,8 @@ async function syncAsaas(){
     (result.results||[]).forEach(r=>{
       const m = s.subscriptionMembers.find(x=>x.id===r.memberId);
       if(!m) return;
+      // histórico de pagamentos confirmados no Asaas (reconstrói meses anteriores)
+      (r.historico||[]).forEach(h=>registrarPagamentoNoHistorico(m, h.date, h.amount));
       const antes = m.lastPaymentDate;
       // Se você já registrou o pagamento deste mês na mão (dinheiro, por
       // exemplo), a sincronização não desfaz isso.
@@ -5357,6 +5395,7 @@ async function syncAsaas(){
       m.status = r.status;
       if(r.lastPaymentDate) m.lastPaymentDate = r.lastPaymentDate;
       if(r.lastPaymentAmount) m.lastPaymentAmount = r.lastPaymentAmount;
+      if(r.lastPaymentDate) registrarPagamentoNoHistorico(m, r.lastPaymentDate, r.lastPaymentAmount);
       if(r.invoiceUrl) m.invoiceUrl = r.invoiceUrl;
       // Atualiza o vencimento com o que o Asaas tem de mais recente — sem
       // isso, uma data antiga ficava guardada e o sistema achava "venceu"
@@ -5574,6 +5613,7 @@ function memberModal(existing, prefill){
       // Marcar como "pago" na mão precisa registrar a DATA do pagamento —
       // é ela que faz o valor entrar no "recebido no mês" e no pote.
       const mesAtual = todayISO().slice(0,7);
+      let desfezPagamentoDoMes = false;
       if(novoStatus === 'pago'){
         const jaContabilizado = existing?.lastPaymentDate &&
           String(existing.lastPaymentDate).slice(0,7) === mesAtual;
@@ -5586,6 +5626,7 @@ function memberModal(existing, prefill){
         // tirou de "pago" ainda no mesmo mês: desfaz o recebimento
         data.lastPaymentDate = null;
         data.lastPaymentAmount = 0;
+        desfezPagamentoDoMes = true;
       }
       // Trocou de plano num assinante que já paga pelo Asaas?
       // Atualiza o valor lá também, senão continuaria cobrando o preço antigo.
@@ -5639,8 +5680,23 @@ function memberModal(existing, prefill){
         return;
       }
       update(s=>{
-        if(isEdit){ const alvo = s.subscriptionMembers.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
-        else{ s.subscriptionMembers.push({id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data}); }
+        if(isEdit){
+          const alvo = s.subscriptionMembers.find(x=>x.id===existing.id);
+          if(alvo){
+            Object.assign(alvo, data);
+            if(desfezPagamentoDoMes){
+              // desfez o recebimento do mês: tira também do histórico
+              alvo.paymentHistory = (alvo.paymentHistory||[]).filter(h=>String(h.date).slice(0,7)!==mesAtual);
+            } else if(data.lastPaymentDate){
+              registrarPagamentoNoHistorico(alvo, data.lastPaymentDate, data.lastPaymentAmount);
+            }
+          }
+        }
+        else{
+          const novoMembro = {id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data};
+          if(novoMembro.lastPaymentDate) registrarPagamentoNoHistorico(novoMembro, novoMembro.lastPaymentDate, novoMembro.lastPaymentAmount);
+          s.subscriptionMembers.push(novoMembro);
+        }
         // garante que o assinante também exista na lista de Clientes
         const nn = name.trim().toLowerCase();
         const jaCl = s.clients.find(x=>x.name.trim().toLowerCase()===nn);
