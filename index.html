@@ -9,23 +9,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<!-- Meta Pixel Code -->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '1606280897548168');
-fbq('track', 'PageView');
-</script>
-<noscript><img height="1" width="1" style="display:none"
-src="https://www.facebook.com/tr?id=1606280897548168&ev=PageView&noscript=1"
-/></noscript>
-<!-- End Meta Pixel Code -->
 <!-- Deixa o site instalável na tela de início do celular -->
 <meta name="theme-color" content="#0a0b0d">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -6605,6 +6588,11 @@ function renderMinhaAssinatura(view){
         <div><label>Email cadastrado</label><input value="${esc(shop.email)}" disabled style="width:100%;opacity:.7;"></div>
         <button class="btn btn-ghost" id="btn-save-owner-name" style="width:fit-content;">Salvar nome</button>
       </div>
+      ${podeUsarLgpd() ? `
+      <div class="divider-blade" style="margin:18px 0;"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Seus dados</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:10px;">Baixe uma cópia completa de tudo o que a sua barbearia tem no Primer Barber (agenda, clientes, financeiro, clube, estoque), num arquivo que você pode guardar ou levar para outro sistema.</div>
+      <button class="btn btn-ghost" id="btn-exportar-tudo" style="width:fit-content;">${ICON.arrowDown} Baixar cópia completa</button>` : ''}
       ${isOwnerLevel() ? `
       <div class="divider-blade" style="margin:18px 0;"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:6px;">📧 Avisos por e-mail aos assinantes do clube</div>
@@ -6697,6 +6685,7 @@ function renderMinhaAssinatura(view){
     </div>
   `;
   view.querySelector('#btn-change-plan').addEventListener('click', ()=>renderPaywallUpgrade('minha-assinatura'));
+  view.querySelector('#btn-exportar-tudo')?.addEventListener('click', exportarTudoDaBarbearia);
   ['sound','vibrate','push'].forEach(k=>{
     const el = view.querySelector('#f-alert-'+k);
     el?.addEventListener('change', ()=>{
@@ -7310,10 +7299,20 @@ function clientModal(existing){
         </select></div>
         <div><label>Observações</label><input id="f-notes" value="${esc(existing?.notes)}" placeholder="Preferências do cliente" style="width:100%;"></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
+        ${isEdit && podeUsarLgpd() ? `
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+          <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:8px;">Pedido do cliente (LGPD)</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-ghost" id="f-lgpd-baixar" style="padding:6px 12px;font-size:12px;">${ICON.arrowDown} Baixar dados do cliente</button>
+            <button class="btn btn-ghost" id="f-lgpd-apagar" style="padding:6px 12px;font-size:12px;color:var(--bad);border-color:var(--bad);">Apagar dados pessoais</button>
+          </div>
+        </div>` : ''}
       </div>
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-lgpd-baixar')?.addEventListener('click', ()=>exportarDadosCliente(existing.id));
+    root.querySelector('#f-lgpd-apagar')?.addEventListener('click', ()=>apagarDadosClienteModal(existing.id));
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
       if(!name){ showToast('Informe o nome.'); return; }
@@ -7343,6 +7342,149 @@ function clientModal(existing){
       closeModal();
     });
   });
+}
+
+/* ============ FASE 9: LGPD — PEDIDOS DO CLIENTE FINAL ============
+   A barbearia é a controladora dos dados dos clientes dela. Quando um
+   cliente pede, o dono consegue: (1) baixar tudo o que existe sobre ele;
+   (2) apagar os dados pessoais (nome, telefone, e-mail, CPF, aniversário,
+   observações). Valores de caixa, comissões e vendas FICAM (obrigação
+   legal/contábil) — só deixam de estar ligados ao nome dele. */
+const telNorm = v => String(v||'').replace(/\D/g,'').replace(/^55(?=\d{10,11}$)/,'');
+function podeUsarLgpd(){ return userSession.role==='dono' && !teamSession && !!currentShop; }
+function registrosDoCliente(s, clientId){
+  const c = (s.clients||[]).find(x=>x.id===clientId);
+  if(!c) return null;
+  const nome = c.name, tel = telNorm(c.phone);
+  const bate = (n, t) => (normNome(n)===normNome(nome) && normNome(nome)!=='') || (tel.length>=8 && telNorm(t)===tel);
+  const atendimentos = (s.appointments||[]).filter(a=>bate(a.client, a.clientPhone));
+  const clube = (s.subscriptionMembers||[]).filter(m=>bate(m.name, m.phone) || (m.linkedClientName && normNome(m.linkedClientName)===normNome(nome)));
+  const espera = (s.waitlist||[]).filter(w=>bate(w.clientName, w.phone));
+  const emails = [...new Set([...atendimentos.map(a=>a.clientEmail), ...clube.map(m=>m.email)].filter(e=>e && /@/.test(e)))];
+  return { c, nome, tel, atendimentos, clube, espera, emails };
+}
+// clube pago pelo Asaas ainda ativo: precisa cancelar antes (senão a cobrança continua)
+function clubeAtivoNoAsaas(m){ return m.status!=='cancelado' && m.paymentMethod==='asaas' && !!m.asaasSubscriptionId; }
+function novoNomeAnonimo(clientId){ return 'Cliente removido ' + String(clientId).replace(/[^a-z0-9]/gi,'').slice(-4).toUpperCase(); }
+
+// muda SÓ o estado recebido (é reaplicada pelo salvamento seguro, se outro aparelho gravou no meio)
+function anonimizarClienteNoEstado(s, clientId, novo, quando){
+  const r = registrosDoCliente(s, clientId);
+  if(!r) return false;
+  const { c, nome } = r;
+  renomearClienteEmTudo(s, nome, novo);
+  r.atendimentos.forEach(a=>{ a.client = novo; delete a.clientPhone; delete a.clientEmail; delete a.clientCpf; });
+  r.clube.forEach(m=>{
+    m.name = novo; m.phone = ''; m.email = ''; if('cpf' in m) m.cpf = '';
+    if(m.linkedClientName) m.linkedClientName = novo;
+  });
+  r.espera.forEach(w=>{ w.clientName = novo; w.phone = ''; w.note = ''; });
+  if(nome && nome.trim().length>=3){
+    const n = nome.trim();
+    // só TEXTOS (descrição/observação): valores, forma e status do dinheiro nunca mudam —
+    // e pagamentos de comissão e movimentações de estoque o servidor não deixa tocar
+    const trocar = (obj, pular)=>{ if(obj && typeof obj==='object') Object.keys(obj).forEach(k=>{
+      if(!pular.includes(k) && typeof obj[k]==='string' && obj[k].includes(n)) obj[k] = obj[k].split(n).join(novo); }); };
+    (s.auditLog||[]).forEach(x=>trocar(x, ['id','at','by','acao']));
+    (s.cashSessions||[]).forEach(cx=>(cx.entries||[]).forEach(e=>trocar(e, ['id','type','method','chave'])));
+    (s.expenses||[]).forEach(e=>trocar(e, ['id','status','paidDate','chave']));
+    (s.sales||[]).forEach(v=>trocar(v, ['id','method','status']));
+  }
+  c.name = novo; c.phone = ''; c.birthday = ''; c.notes = ''; delete c.email; delete c.referredBy;
+  c.arquivado = true; c.arquivadoEm = c.arquivadoEm || quando; c.lgpdApagadoEm = quando;
+  registrarAuditoria(s, 'LGPD: apagou dados pessoais de cliente', novo);
+  return true;
+}
+
+function baixarArquivo(nome, conteudo, tipo){
+  const blob = new Blob([conteudo], {type: tipo || 'application/json;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportarDadosCliente(clientId){
+  const r = registrosDoCliente(state, clientId);
+  if(!r) return;
+  const nomeServ = id => (state.services||[]).find(x=>x.id===id)?.name || '';
+  const { data: srv, error } = await supa.rpc('lgpd_dados_cliente', { p_shop: currentShop.id, p_nome: r.nome, p_tel: r.c.phone || '', p_emails: r.emails });
+  if(error || srv?.error){ showToast('Não deu para buscar os dados do servidor. Tente de novo.'); return; }
+  const pacote = {
+    geradoEm: new Date().toISOString(),
+    barbearia: state.shopProfile?.name || '',
+    aviso: 'Dados pessoais deste cliente guardados pela barbearia no sistema Primer Barber (LGPD, art. 18).',
+    cadastro: { nome: r.c.name, telefone: r.c.phone || '', aniversario: r.c.birthday || '', observacoes: r.c.notes || '', pontosFidelidade: r.c.points || 0, indicadoPor: r.c.referredBy || '' },
+    atendimentos: r.atendimentos.map(a=>({ data:a.date, hora:a.time, servicos:(Array.isArray(a.serviceIds)&&a.serviceIds.length?a.serviceIds:[a.serviceId]).map(nomeServ).filter(Boolean),
+      status:a.status, valor:a.valorCobrado ?? null, telefone:a.clientPhone || '', email:a.clientEmail || '' })),
+    clubeDeAssinatura: r.clube.map(m=>({ nome:m.name, telefone:m.phone||'', email:m.email||'', cpf:m.cpf||'', plano:(state.subscriptionPlans||[]).find(p=>p.id===m.planId)?.name||'',
+      status:m.status, cadastradoEm:m.criadoEm||'', vencimento:m.dueDate||'', pagamentos:(m.paymentHistory||[]).map(h=>({ data:h.date, valor:h.amount, estornado:!!h.estornado })) })),
+    listaDeEspera: r.espera.map(w=>({ nome:w.clientName, telefone:w.phone||'', dataPreferida:w.preferredDate||'', criadoEm:w.createdAt||'' })),
+    servidor: srv,
+  };
+  baixarArquivo(`dados-cliente-${slugify(r.nome)}-${todayISO()}.json`, JSON.stringify(pacote, null, 2));
+  update(s=>registrarAuditoria(s, 'LGPD: baixou dados de cliente', r.nome));
+  showToast('Arquivo gerado. Envie ao cliente por um canal seguro.');
+}
+
+function apagarDadosClienteModal(clientId){
+  const r = registrosDoCliente(state, clientId);
+  if(!r) return;
+  const bloqueio = r.clube.find(clubeAtivoNoAsaas);
+  const novo = novoNomeAnonimo(clientId);
+  openModal(`
+    <div style="padding:22px;">
+      <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:10px;">Apagar dados pessoais de ${esc(r.nome)}</div>
+      ${bloqueio ? `<div class="pill pill-bad" style="display:block;padding:10px 12px;font-size:12.5px;line-height:1.5;">
+          Este cliente tem assinatura do clube ativa no Asaas. Cancele a assinatura no Clube de Assinatura primeiro — senão as cobranças continuam.</div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" id="lg-cancelar">Fechar</button></div>` : `
+      <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+        Use quando o cliente pedir para ser esquecido. <b>Não dá para desfazer.</b><br>
+        • Some: nome, telefone, e-mail, CPF, aniversário e observações — na ficha, em ${r.atendimentos.length} atendimento(s), no clube, na lista de espera, nos pedidos pelo link e na conta de acesso dele.<br>
+        • Fica: os valores no caixa, comissões e relatórios (obrigação contábil), agora como "<b>${esc(novo)}</b>". Pagamentos de comissão e movimentações de estoque já registrados não mudam.
+      </div>
+      <label>Digite APAGAR para confirmar</label><input id="lg-conf" style="width:100%;" autocomplete="off">
+      <div id="lg-erro" style="color:var(--bad);font-size:12.5px;margin-top:8px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button class="btn btn-ghost" id="lg-cancelar">Cancelar</button>
+        <button class="btn btn-ghost" id="lg-ok" style="color:var(--bad);border-color:var(--bad);">Apagar dados</button>
+      </div>`}
+    </div>`, root=>{
+    root.querySelector('#lg-cancelar').addEventListener('click', closeModal);
+    const ok = root.querySelector('#lg-ok');
+    if(!ok) return;
+    // guardado aqui: se a 2ª parte (servidor) falhar, dá para tentar de novo
+    const alvo = { nome: r.nome, tel: r.c.phone || '', emails: r.emails, appts: r.atendimentos.map(a=>a.id) };
+    let fichaApagada = false;
+    ok.addEventListener('click', async ()=>{
+      const erroEl = root.querySelector('#lg-erro');
+      if(!fichaApagada && root.querySelector('#lg-conf').value.trim().toUpperCase()!=='APAGAR'){ erroEl.textContent = 'Digite APAGAR para confirmar.'; return; }
+      ok.disabled = true; ok.textContent = 'Apagando...';
+      if(!fichaApagada){
+        const quando = new Date().toISOString();
+        const res = await update(s=>{ anonimizarClienteNoEstado(s, clientId, novo, quando); });
+        if(res!=='ok'){ erroEl.textContent = 'Não deu para salvar agora. Nada foi apagado. Tente de novo.'; ok.disabled = false; ok.textContent = 'Apagar dados'; return; }
+        fichaApagada = true;
+      }
+      const { data, error } = await supa.rpc('lgpd_anonimizar_cliente', { p_shop: currentShop.id, p_nome: alvo.nome, p_tel: alvo.tel,
+        p_emails: alvo.emails, p_novo: novo, p_appts: alvo.appts });
+      if(error || data?.error){
+        erroEl.textContent = 'A ficha e a agenda já foram limpas, mas os pedidos/históricos do servidor não. Clique em "Tentar de novo".';
+        ok.disabled = false; ok.textContent = 'Tentar de novo'; return;
+      }
+      closeModal(); showToast('Dados pessoais apagados.');
+    });
+  });
+}
+
+async function exportarTudoDaBarbearia(){
+  if(!podeUsarLgpd()) return;
+  const pacote = { geradoEm: new Date().toISOString(), sistema: 'Primer Barber', barbearia: state.shopProfile?.name || '',
+    aviso: 'Cópia completa dos dados da sua barbearia (portabilidade — LGPD art. 18).', dados: state };
+  baixarArquivo(`primer-barber-${slugify(state.shopProfile?.name||'barbearia')}-${todayISO()}.json`, JSON.stringify(pacote, null, 2));
+  update(s=>registrarAuditoria(s, 'Baixou cópia completa dos dados', ''));
+  showToast('Cópia gerada. Guarde em local seguro: tem dados dos seus clientes.');
 }
 
 /* ============ ESTOQUE (Fase 6: movimentações, vendas e estorno) ============
@@ -10190,6 +10332,7 @@ function renderPublicBookingScreen(step1Only){
             <div><label>Telefone (WhatsApp)</label><input id="pb-phone" style="width:100%;" placeholder="(11) 90000-0000"></div>
             <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— para você receber a confirmação do horário</span></label><input id="pb-email" type="email" style="width:100%;" placeholder="seu@email.com"></div>
             <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
+            ${avisoPrivacidadeCliente()}
             <div id="pb-msg" role="alert" style="display:none;font-size:12.5px;line-height:1.5;color:var(--bad);"></div>
           </div>
           <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
@@ -10531,6 +10674,7 @@ function renderClientSignup(slug, errorMsg){
       <div class="auth-field"><label>E-mail</label><input id="cs-email" type="email" placeholder="voce@email.com"></div>
       <div class="auth-field"><label>Crie uma senha</label><input id="cs-pass" type="password" placeholder="Mínimo 6 caracteres"></div>
       <button class="btn btn-gold auth-submit" id="cs-submit">Criar conta</button>
+      ${avisoPrivacidadeCliente()}
       <button class="btn btn-ghost auth-switch" id="cs-back">Já tenho conta? Entrar</button>
       <div style="text-align:center;font-size:11px;color:var(--muted-2);line-height:1.6;">
         Se você já é assinante, use o mesmo telefone cadastrado na barbearia para seu plano aparecer automaticamente.
@@ -10869,6 +11013,7 @@ function publicSubscribeModal(plan){
         </div>
         <button class="btn btn-gold" id="ps-submit" style="justify-content:center;margin-top:4px;">Enviar pedido de assinatura</button>
         <div style="font-size:11px;color:var(--muted-2);text-align:center;line-height:1.5;">A barbearia vai receber seu pedido e entrar em contato com o link de pagamento.</div>
+        ${avisoPrivacidadeCliente(' (inclusive o CPF, exigido para emitir a cobrança)')}
       </div>
       <div id="ps-done" style="display:none;text-align:center;padding:24px 0;">
         <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
@@ -11021,8 +11166,54 @@ function renderConfigMissing(){
   `);
 }
 
+/* ============ FASE 9: PIXEL DA META SÓ NA TELA DE ENTRADA, COM CONSENTIMENTO ============
+   Como a maioria dos sistemas desse tipo: o Pixel mede os anúncios só na tela
+   de entrar/criar conta da BARBEARIA, e só se a pessoa aceitar. Nunca carrega
+   no painel, no link de agendamento, na área do cliente nem na equipe (esses
+   endereços têm códigos que não podem ir para terceiros). */
+const META_PIXEL_ID = '1606280897548168';
+function consentimentoCookies(){ try { return localStorage.getItem('pb_cookies'); } catch(e){ return null; } }
+function gravarConsentimento(v){ try { localStorage.setItem('pb_cookies', v); } catch(e){} }
+function paginaPodeTerPixel(){ return !window.location.search && !(currentShop || teamSession || clientSession); }
+function carregarPixelMeta(){
+  if(!META_PIXEL_ID || window.fbq || consentimentoCookies()!=='sim' || !paginaPodeTerPixel()) return false;
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+  if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+  n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];
+  s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  window.fbq('init', META_PIXEL_ID);
+  window.fbq('track', 'PageView');
+  return true;
+}
+function fecharAvisoCookies(){ document.getElementById('pb-cookies')?.remove(); }
+function mostrarAvisoCookies(){
+  if(!paginaPodeTerPixel()) return;
+  if(consentimentoCookies()){ carregarPixelMeta(); return; }
+  if(document.getElementById('pb-cookies')) return;
+  const el = document.createElement('div');
+  el.id = 'pb-cookies';
+  el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:200;max-width:560px;margin:0 auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:12.5px;line-height:1.55;color:var(--ink);';
+  el.innerHTML = `Usamos cookies de medição (Meta/Facebook) nesta página para saber quais anúncios trazem novas barbearias. O painel e as páginas dos seus clientes não usam. <a href="${window.location.pathname}?pagina=privacidade" target="_blank" style="color:var(--gold-bright);">Saiba mais</a>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+      <button class="btn btn-ghost" id="pb-cookies-nao" style="padding:6px 14px;font-size:12px;">Recusar</button>
+      <button class="btn btn-gold" id="pb-cookies-sim" style="padding:6px 14px;font-size:12px;">Aceitar</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector('#pb-cookies-nao').addEventListener('click', ()=>{ gravarConsentimento('nao'); fecharAvisoCookies(); });
+  el.querySelector('#pb-cookies-sim').addEventListener('click', ()=>{ gravarConsentimento('sim'); fecharAvisoCookies(); carregarPixelMeta(); });
+}
+
+function avisoPrivacidadeCliente(extra){
+  return `<div style="font-size:11px;color:var(--muted-2);line-height:1.55;text-align:center;">
+    Seus dados${extra||''} são usados pela barbearia só para o seu atendimento e avisos do seu horário/plano, no sistema Primer Barber.
+    <a href="${window.location.pathname}?pagina=privacidade" target="_blank" style="color:var(--gold-bright);">Política de privacidade</a></div>`;
+}
+
 function renderAuthScreen(mode, errorMsg){
   const isLogin = mode!=='signup';
+  mostrarAvisoCookies();
   authShell(`
     <div class="auth-title font-display" style="font-weight:600;">${isLogin?'Bem-vindo de volta':'Crie sua barbearia'}</div>
     <div class="auth-subtitle">${isLogin?'Entre para acessar o painel da sua barbearia.':'Monte sua agenda, equipe e clube de assinatura em minutos.'}</div>
@@ -11075,6 +11266,7 @@ async function ensureShop(defaultName){
     trial_ends_at: trialEnds,
   }).select().single();
   if(error){ console.error('Erro ao criar barbearia', error); return null; }
+  if(typeof window.fbq === 'function' && consentimentoCookies()==='sim') window.fbq('track', 'CompleteRegistration');
   // Avisa o dono do sistema por e-mail. Se falhar, não atrapalha o cadastro.
   supa.functions.invoke('notify-signup', {
     body: { event:'signup', shopName: seeded.shopProfile.name, email: user.email }
@@ -11217,7 +11409,7 @@ function renderLegalPage(type){
     </ul>
 
     <h2 class="font-display">9. Cancelamento e encerramento</h2>
-    <p>Você pode cancelar sua assinatura a qualquer momento. Podemos suspender ou encerrar contas que violem estes Termos, mediante aviso, exceto em casos de uso ilegal ou risco à segurança da Plataforma, quando a suspensão pode ser imediata.</p>
+    <p>Você pode cancelar sua assinatura a qualquer momento. Depois do cancelamento, seus dados continuam guardados para você poder voltar com tudo salvo; se preferir que sejam excluídos, peça pelo e-mail de contato. Podemos suspender ou encerrar contas que violem estes Termos, mediante aviso, exceto em casos de uso ilegal ou risco à segurança da Plataforma, quando a suspensão pode ser imediata.</p>
 
     <h2 class="font-display">10. Alterações destes termos</h2>
     <p>Podemos atualizar estes Termos periodicamente. Mudanças relevantes serão comunicadas com antecedência razoável. O uso continuado da Plataforma após as alterações implica concordância com os novos termos.</p>
@@ -11229,7 +11421,7 @@ function renderLegalPage(type){
     <p>Dúvidas sobre estes Termos podem ser enviadas para: <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--gold-bright);">primerbarbersuporte@gmail.com</a></p>
   ` : `
     <h1 class="font-display" style="font-size:26px;font-weight:600;margin-bottom:6px;">Política de Privacidade</h1>
-    <p style="color:var(--muted-2);font-size:12.5px;margin-bottom:28px;">Última atualização: 24/08/2026</p>
+    <p style="color:var(--muted-2);font-size:12.5px;margin-bottom:28px;">Última atualização: 08/10/2026</p>
 
     <h2 class="font-display">1. Quem somos</h2>
     <p>O Primer Barber é um sistema de gestão para barbearias. Esta política explica como coletamos, usamos e protegemos dados pessoais ao operar a Plataforma.</p>
@@ -11241,11 +11433,12 @@ function renderLegalPage(type){
       <li>Dados de pagamento (processados diretamente pelo Stripe — não armazenamos números de cartão)</li>
       <li>Nome da barbearia, endereço, telefone e redes sociais (se preenchidos)</li>
     </ul>
-    <p><b>Dos clientes finais da barbearia (inseridos pelo dono/gerente):</b></p>
+    <p><b>Da equipe da barbearia:</b> nome, telefone, e-mail (se preenchido), PIN de acesso e dados de comissão.</p>
+    <p><b>Dos clientes finais da barbearia</b> (inseridos pela barbearia ou pelo próprio cliente no link de agendamento, na página de planos ou na área do cliente):</p>
     <ul>
-      <li>Nome e telefone</li>
-      <li>Histórico de agendamentos e atendimentos</li>
-      <li>Dados de assinatura do clube (se aplicável)</li>
+      <li>Nome, telefone e e-mail; aniversário e observações, se a barbearia preencher</li>
+      <li>CPF, apenas para quem assina o clube (exigido para emitir a cobrança)</li>
+      <li>Histórico de agendamentos, atendimentos, pontos de fidelidade e pagamentos do clube</li>
     </ul>
 
     <h2 class="font-display">3. Base legal e finalidade do tratamento</h2>
@@ -11258,6 +11451,9 @@ function renderLegalPage(type){
       <li><b>Stripe</b> — processamento de pagamentos das assinaturas do sistema</li>
       <li><b>Supabase</b> — armazenamento seguro do banco de dados</li>
       <li><b>Asaas</b> (quando o dono da barbearia ativa essa integração) — processamento de cobranças recorrentes aos clientes finais da própria barbearia</li>
+      <li><b>Resend</b> — envio dos e-mails de confirmação, lembrete e avisos</li>
+      <li><b>Serviço de notificações do navegador</b> (Google, Apple ou Mozilla, conforme o aparelho) — entrega dos avisos de novo agendamento, quando a barbearia ativa</li>
+      <li><b>Meta (Facebook)</b> — somente na tela de entrar/criar conta da barbearia e somente se a pessoa aceitar os cookies de medição (veja o item 9)</li>
     </ul>
     <p>Não vendemos dados pessoais a terceiros.</p>
 
@@ -11265,17 +11461,23 @@ function renderLegalPage(type){
     <p>Os dados são armazenados em servidores do Supabase, com controles de acesso restritos por conta — cada barbearia só acessa os próprios dados.</p>
 
     <h2 class="font-display">6. Por quanto tempo guardamos os dados</h2>
-    <p>Mantemos os dados enquanto sua conta estiver ativa. Após o cancelamento, os dados podem ser mantidos por um período adicional para cumprimento de obrigações legais ou resolução de disputas, sendo excluídos ou anonimizados depois disso.</p>
+    <p>Mantemos os dados enquanto sua conta estiver ativa. Se a barbearia cancelar a assinatura, os dados continuam guardados para que ela possa voltar com tudo salvo — e são excluídos a qualquer momento se o titular da conta pedir pelo e-mail do item 11.</p>
+    <p>Registros financeiros (caixa, comissões, vendas e pagamentos) são mantidos pelo prazo exigido pela legislação contábil e fiscal; quando um cliente final pede a exclusão, eles deixam de estar ligados ao nome dele.</p>
+    <p>Fazemos cópias de segurança diárias do banco de dados, guardadas por 30 dias.</p>
 
     <h2 class="font-display">7. Seus direitos (LGPD)</h2>
     <p>Você (ou, no caso dos clientes finais, a barbearia responsável por eles) pode solicitar a qualquer momento: confirmação de que tratamos seus dados; acesso aos dados armazenados; correção de dados incompletos ou desatualizados; exclusão dos dados, quando aplicável; portabilidade dos dados a outro fornecedor; informações sobre com quem compartilhamos os dados.</p>
+    <p><b>Clientes finais:</b> a barbearia é a responsável (controladora) pelos seus dados. Peça diretamente a ela — o sistema permite que a barbearia baixe tudo o que existe sobre você e apague seus dados pessoais. Se não conseguir resposta, escreva para o e-mail abaixo.</p>
+    <p><b>Barbearias:</b> o titular da conta pode baixar uma cópia completa dos dados em Configurações da Conta.</p>
     <p>Solicitações podem ser feitas para: <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--gold-bright);">primerbarbersuporte@gmail.com</a></p>
 
     <h2 class="font-display">8. Segurança</h2>
-    <p>Adotamos medidas técnicas razoáveis para proteger os dados, incluindo controle de acesso por login, criptografia em trânsito (HTTPS) e isolamento de dados entre contas. Nenhum sistema é 100% livre de riscos, e nos comprometemos a agir rapidamente em caso de incidente de segurança.</p>
+    <p>Adotamos medidas técnicas razoáveis para proteger os dados, incluindo controle de acesso por login, criptografia em trânsito (HTTPS) e isolamento de dados entre contas. Nenhum sistema é 100% livre de riscos, e nos comprometemos a agir rapidamente em caso de incidente de segurança, avisando as barbearias afetadas e a ANPD quando a lei exigir.</p>
+    <p>A equipe do Primer Barber só acessa dados de uma barbearia para suporte, cobrança da assinatura ou segurança; as ações administrativas (como suspensão ou mudança de plano) ficam registradas.</p>
 
     <h2 class="font-display">9. Cookies e dados de navegação</h2>
-    <p>A Plataforma pode utilizar armazenamento local do navegador para manter sua sessão de login ativa. Não utilizamos cookies de rastreamento publicitário.</p>
+    <p>A Plataforma usa o armazenamento local do navegador para manter sua sessão de login ativa e lembrar suas preferências (como o tema).</p>
+    <p>Na tela de entrar/criar conta da barbearia, e somente se você clicar em "Aceitar", carregamos o Pixel da Meta (Facebook) para medir quais anúncios trazem novas barbearias. Se você recusar, ele não é carregado. O painel da barbearia, o link de agendamento, a página de planos, a área do cliente e o acesso da equipe <b>nunca</b> carregam o Pixel. Para mudar sua escolha, limpe os dados do site no navegador.</p>
 
     <h2 class="font-display">10. Alterações desta política</h2>
     <p>Esta política pode ser atualizada periodicamente. Mudanças relevantes serão comunicadas com antecedência razoável.</p>
@@ -11320,6 +11522,7 @@ async function boot(){
   }
   if(!shop){ renderAuthScreen('login', 'Não encontramos sua barbearia. Fale com o suporte.'); return; }
   currentShop = shop;
+  fecharAvisoCookies();
   try { const r = await supa.rpc('is_platform_admin'); souAdminPlataforma = r.data === true; } catch(e){ souAdminPlataforma = false; }
   if(!shopIsActive(shop)){ renderPaywallScreen(shop); return; }
   await loadState();
