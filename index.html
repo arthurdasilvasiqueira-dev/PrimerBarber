@@ -1089,7 +1089,7 @@ function clientStats(name){
    Por isso, mesclar não é só apagar — é trocar o nome em cada lugar que
    aponta pro registro removido, para o histórico não se perder. */
 function encontrarClientesDuplicados(){
-  const clientes = state.clients||[];
+  const clientes = (state.clients||[]).filter(c=>!c.arquivado);   // arquivados não entram
   const porTelefone = {};
   const porNome = {};
   clientes.forEach(c=>{
@@ -2116,6 +2116,7 @@ function renderAgenda(view){
   const isToday = viewDate === todayISO();
   let appts = state.appointments.filter(a=>a.date===viewDate).sort((a,b)=>a.time.localeCompare(b.time));
   if(isProfView) appts = appts.filter(a=>a.professionalId===myId);
+  const apptsLista = filtrarAgenda(appts);   // FASE 3: filtros (os números do topo seguem o dia todo)
 
   // Dias da semana em que a data selecionada está
   const sel = new Date(viewDate+'T12:00');
@@ -2193,9 +2194,32 @@ function renderAgenda(view){
       ? agendaGridView(viewDate, isProfView ? state.professionals.filter(p=>p.id===myId) : servingProfessionals())
       : ''}
 
-    ${agendaMode==='lista' ? (appts.length===0 ? emptyState(isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.', isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.') : `
+    ${agendaMode==='lista' ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <input id="ag-busca" placeholder="Buscar cliente (nome ou telefone)" value="${esc(agendaFiltro.texto)}" style="flex:2;min-width:180px;">
+        <select id="ag-status" style="flex:1;min-width:130px;">
+          ${[['todos','Todos'],['ativos','Agendados/confirmados'],['concluidos','Concluídos'],['cancelados','Cancelados'],['faltas','Faltas']]
+            .map(([v,l])=>`<option value="${v}" ${agendaFiltro.status===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+        ${!isProfView ? `<select id="ag-prof" style="flex:1;min-width:130px;"><option value="">Todos os profissionais</option>
+          ${servingProfessionals().map(p=>`<option value="${p.id}" ${agendaFiltro.prof===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>` : ''}
+      </div>
+      ${(()=>{ // a busca por cliente também mostra os outros dias (próximos e passados)
+        if(normBusca(agendaFiltro.texto).length < 2) return '';
+        const outros = filtrarAgenda(state.appointments.filter(a=>a.date!==viewDate && (!isProfView || a.professionalId===myId)))
+          .sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time)).slice(0,30);
+        return outros.length ? `<div class="card" style="padding:12px 14px;margin-bottom:12px;">
+          <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">Em outros dias (${outros.length}${outros.length===30?'+':''})</div>
+          ${outros.map(a=>`<div data-ir-dia="${a.date}" style="font-size:12.5px;padding:4px 0;cursor:pointer;display:flex;gap:8px;flex-wrap:wrap;">
+            <span class="font-mono" style="color:var(--muted-2);">${new Date(a.date+'T12:00').toLocaleDateString('pt-BR')} ${a.time}</span>
+            <b>${esc(a.client)}</b> <span style="color:var(--muted);">${esc(profName(a.professionalId))} · ${esc(a.status)}</span></div>`).join('')}
+        </div>` : '';
+      })()}
+    ` : ''}
+
+    ${agendaMode==='lista' ? (apptsLista.length===0 ? emptyState(appts.length ? 'Nenhum horário com esses filtros neste dia.' : (isToday?'Nenhum horário para hoje.':'Nenhum horário neste dia.'), appts.length ? 'Mude os filtros acima.' : (isToday?'Toque em "Novo agendamento" para começar.':'Selecione outro dia no calendário acima.')) : `
       <div style="display:flex;flex-direction:column;gap:10px;">
-        ${appts.map(a=>{
+        ${apptsLista.map(a=>{
           const svcsList = appointmentServices(a);
           const nomeServ = appointmentServiceNames(a);
           const durTotal = appointmentDuration(a);
@@ -2242,6 +2266,16 @@ function renderAgenda(view){
     renderAgenda(view);
   }));
   view.querySelectorAll('.agenda-mode').forEach(b=>b.addEventListener('click', ()=>{ agendaMode = b.dataset.mode; renderAgenda(view); }));
+  // FASE 3: filtros — redesenha mantendo o cursor na busca
+  let tBusca = null;
+  view.querySelector('#ag-busca')?.addEventListener('input', e=>{
+    clearTimeout(tBusca);
+    tBusca = setTimeout(()=>{ agendaFiltro.texto = e.target.value; renderAgenda(view);
+      const el = view.querySelector('#ag-busca'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 250);
+  });
+  view.querySelector('#ag-status')?.addEventListener('change', e=>{ agendaFiltro.status = e.target.value; renderAgenda(view); });
+  view.querySelector('#ag-prof')?.addEventListener('change', e=>{ agendaFiltro.prof = e.target.value; renderAgenda(view); });
+  view.querySelectorAll('[data-ir-dia]').forEach(el=>el.addEventListener('click', ()=>{ agendaDate = el.dataset.irDia; renderAgenda(view); }));
   view.querySelectorAll('.appt-block').forEach(el=>el.addEventListener('click', (e)=>{
     e.stopPropagation();
     apptActionsModal(el.dataset.appt, view);
@@ -2896,6 +2930,61 @@ function servingProfissionaisOk(){
   return true;
 }
 /* Menu que abre ao clicar num agendamento da grade */
+// FASE 3: chave secreta do link "cancelar ou remarcar" de cada agendamento
+function novaChaveGerenciar(){
+  try{ return crypto.randomUUID().replace(/-/g,''); }
+  catch(e){ return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join(''); }
+}
+function linkGerenciarAgendamento(a){
+  return `${location.origin}${location.pathname}?gerenciar=${encodeURIComponent(state.onlineBooking.slug)}&t=${a.manageToken}`;
+}
+// faltas do cliente nos últimos 90 dias (pelo nome ou pelo telefone)
+function faltasDoCliente(nome, telefone){
+  const tel = x => { const d = String(x||'').replace(/\D/g,''); return (d.length>=12 && d.startsWith('55')) ? d.slice(2) : d; };
+  const desde = new Date(Date.now() - 90*86400000).toISOString().slice(0,10);
+  const n = String(nome||'').trim().toLowerCase(), t = tel(telefone);
+  const telsDoCliente = new Set((state.clients||[]).filter(c=>c.name.trim().toLowerCase()===n).map(c=>tel(c.phone)).filter(Boolean));
+  if(t) telsDoCliente.add(t);
+  return (state.appointments||[]).filter(x=>x.status==='faltou' && x.date>=desde &&
+    (String(x.client||'').trim().toLowerCase()===n || (tel(x.clientPhone) && telsDoCliente.has(tel(x.clientPhone))))).length;
+}
+
+// Histórico de um agendamento (Fase 3): registrado pelo SERVIDOR a cada
+// mudança — quem criou, reagendou, confirmou, concluiu... e quando.
+const TIPOS_EVENTO_AGENDA = { criado:'Criado', reagendado:'Reagendado', status:'Status', servicos:'Serviços',
+  cliente:'Cliente', editado:'Alterado', excluido:'Excluído' };
+const STATUS_TEXTO = { agendado:'agendado', confirmado:'confirmado', concluido:'concluído', cancelado:'cancelado', faltou:'faltou' };
+function descreverEventoAgenda(e){
+  const d = e.depois || {}, o = e.antes || {};
+  const quando = x => x && x.date ? `${new Date(x.date+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} ${x.time||''}` : '';
+  const servs = x => (x.serviceIds||[]).map(id=>serviceById(id)?.name||'?').join(' + ');
+  if(e.tipo==='criado') return `${quando(d)} · ${profName(d.professionalId)} · ${servs(d)}`;
+  if(e.tipo==='reagendado') return `${quando(o)} (${profName(o.professionalId)}) → ${quando(d)} (${profName(d.professionalId)})`;
+  if(e.tipo==='status') return `${STATUS_TEXTO[o.status]||o.status||'?'} → ${STATUS_TEXTO[d.status]||d.status||'?'}` +
+    (d.status==='concluido' && d.valorCobrado!=null ? ` · ${BRL(d.valorCobrado)}` : '') + (d.atrasoMin ? ` · atraso ${d.atrasoMin} min` : '');
+  if(e.tipo==='servicos') return `${servs(o)} → ${servs(d)}`;
+  if(e.tipo==='cliente') return `${o.client||'?'} → ${d.client||'?'}`;
+  if(e.tipo==='excluido') return `estava em ${quando(o)}`;
+  return d.atrasoMin!=null && d.atrasoMin!==o.atrasoMin ? `atraso registrado: ${d.atrasoMin} min` : 'detalhes alterados';
+}
+async function carregarHistoricoAgendamento(apptId, el){
+  if(!el || !supa || !currentShop) return;
+  el.innerHTML = `<div style="font-size:12px;color:var(--muted-2);">Carregando histórico...</div>`;
+  try{
+    const { data, error } = await supa.from('appointment_events').select('at, actor, tipo, antes, depois')
+      .eq('shop_id', currentShop.id).eq('appointment_id', apptId).order('at', { ascending:true }).limit(100);
+    if(error) throw error;
+    el.innerHTML = `<div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">🔒 Histórico deste agendamento</div>` +
+      (data.length ? data.map(e=>`
+        <div style="font-size:11.5px;line-height:1.5;padding:3px 0;color:var(--muted);">
+          <span class="font-mono" style="color:var(--muted-2);">${new Date(e.at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+          · <b style="color:var(--ink);">${esc(TIPOS_EVENTO_AGENDA[e.tipo]||e.tipo)}</b> ${esc(descreverEventoAgenda(e))}
+          <span style="color:var(--gold-bright);">— ${esc(e.actor)}</span>
+        </div>`).join('')
+      : `<div style="font-size:11.5px;color:var(--muted-2);">Sem registros (agendamento anterior à Fase 3).</div>`);
+  }catch(e){ el.innerHTML = ''; }
+}
+
 function apptActionsModal(apptId, view){
   const a = state.appointments.find(x=>x.id===apptId);
   if(!a) return;
@@ -2957,6 +3046,7 @@ function apptActionsModal(apptId, view){
               ${!a.confirmed?`<button class="btn btn-ghost" id="ac-confirmar" style="flex:1;justify-content:center;min-width:130px;">${ICON.check} Confirmar</button>`:''}
             </div>
             <div style="display:flex;gap:9px;flex-wrap:wrap;">
+              <button class="btn btn-ghost" id="ac-atraso" style="flex:1;justify-content:center;min-width:130px;">${ICON.clock} ${a.atrasoMin ? `Atraso: ${a.atrasoMin} min` : 'Registrar atraso'}</button>
               <button class="btn btn-ghost" id="ac-faltou" style="flex:1;justify-content:center;min-width:130px;">Marcar falta</button>
               <button class="btn btn-ghost" id="ac-cancelar" style="flex:1;justify-content:center;min-width:130px;color:var(--bad);border-color:var(--bad);">Cancelar</button>
             </div>
@@ -2988,10 +3078,27 @@ function apptActionsModal(apptId, view){
           <button class="btn btn-ghost" id="ac-excluir" style="justify-content:center;font-size:12.5px;color:var(--muted);margin-top:4px;">Excluir da agenda</button>
         </div>
       `}
+      ${(()=>{ const f = faltasDoCliente(a.client, a.clientPhone); return f ? `<div class="pill pill-warn" style="display:block;margin-top:12px;padding:8px 12px;font-size:12px;">⚠ ${esc(a.client)} faltou ${f} vez(es) nos últimos 90 dias.</div>` : ''; })()}
+      ${a.manageToken && state.onlineBooking?.slug && ['agendado','confirmado'].includes(a.status) ? `
+        <button class="btn btn-ghost" id="ac-copiar-link" style="width:100%;justify-content:center;margin-top:10px;font-size:12.5px;">${ICON.link} Copiar link para o cliente cancelar/remarcar</button>` : ''}
+      ${isOwnerLevel() && !teamSession ? `<div id="ac-historico" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;"></div>` : ''}
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
     const recarrega = ()=>{ closeModal(); if(view) renderAgenda(view); };
+    carregarHistoricoAgendamento(a.id, root.querySelector('#ac-historico'));
+    root.querySelector('#ac-atraso')?.addEventListener('click', ()=>{
+      const resp = prompt(`Quantos minutos ${a.client} chegou atrasado? (0 para apagar)`, a.atrasoMin || '');
+      if(resp===null) return;
+      const min = Math.max(0, Math.min(600, parseInt(resp, 10) || 0));
+      update(s=>{ const y = s.appointments.find(y=>y.id===a.id); if(min) y.atrasoMin = min; else delete y.atrasoMin; });
+      showToast(min ? `Atraso de ${min} min registrado.` : 'Atraso apagado.'); recarrega();
+    });
+    root.querySelector('#ac-copiar-link')?.addEventListener('click', ()=>{
+      const link = linkGerenciarAgendamento(a);
+      navigator.clipboard?.writeText(link);
+      showToast('Link copiado. Envie para o cliente (ex.: WhatsApp).');
+    });
 
     root.querySelector('#ac-concluir')?.addEventListener('click', ()=>{ closeModal(); concludeAppt(a.id); });
     root.querySelector('#ac-editar-servico')?.addEventListener('click', ()=>{ closeModal(); editarServicoModal(a.id, view); });
@@ -3434,7 +3541,7 @@ function openApptModal(pre){
       // Junta a lista de Clientes com a de assinantes do clube — muitos
       // assinantes vieram da importação do Asaas e não estão em Clientes.
       const mapa = {};
-      (state.clients||[]).forEach(cl=>{
+      (state.clients||[]).filter(cl=>!cl.arquivado).forEach(cl=>{
         if(!cl.name) return;
         mapa[norm(cl.name)] = { name: cl.name, phone: cl.phone || '' };
       });
@@ -3544,7 +3651,7 @@ function openApptModal(pre){
           s.appointments.push({
             id:uid(), date:d, time, client, professionalId,
             serviceId: serviceIds[0], serviceIds,
-            status:'agendado', confirmed:false,
+            status:'agendado', confirmed:false, manageToken: novaChaveGerenciar(),
             depositStatus: (dep>0 && d===date) ?'pendente':'nao_aplicavel', depositAmount: d===date?dep:0,
             createdAt:new Date().toISOString(), rating:null,
             seriesId, seriesFreqDias: seriesId?freqDias:undefined,
@@ -6696,14 +6803,27 @@ function importServicesFromRows(rows){
   });
   showToast(`Importação concluída: ${added} novo(s), ${updated} atualizado(s).`);
 }
+let verArquivados = false;
+// FASE 3: renomear um cliente leva junto os atendimentos, o vínculo com o
+// clube e as indicações (antes o histórico ficava preso ao nome antigo)
+function renomearClienteEmTudo(s, nomeAntigo, nomeNovo){
+  const era = v => normNome(v)===normNome(nomeAntigo);
+  (s.appointments||[]).forEach(a=>{ if(era(a.client)) a.client = nomeNovo; });
+  (s.subscriptionMembers||[]).forEach(m=>{ if(m.linkedClientName && era(m.linkedClientName)) m.linkedClientName = nomeNovo; });
+  (s.clients||[]).forEach(c=>{ if(c.referredBy && era(c.referredBy)) c.referredBy = nomeNovo; });
+}
 function renderClientes(view){
   const duplicados = encontrarClientesDuplicados();
+  // FASE 3: arquivados ficam fora da lista (e dá para ver/restaurar)
+  const arquivados = state.clients.filter(c=>c.arquivado);
+  const lista = state.clients.filter(c=>verArquivados ? c.arquivado : !c.arquivado);
   view.innerHTML = `
-    ${pageHeader('Clientes', state.clients.length+' cadastrado(s)', `
+    ${pageHeader('Clientes', (state.clients.length-arquivados.length)+' cadastrado(s)'+(arquivados.length?` · ${arquivados.length} arquivado(s)`:''), `
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <input type="file" id="f-import-file" accept=".csv,.xlsx,.xls,.xlsm" style="display:none;">
         <button class="btn btn-ghost" id="btn-import-client">${ICON.arrowUp} Importar planilha</button>
         <button class="btn btn-ghost" id="btn-export-client">${ICON.arrowDown} Exportar CSV</button>
+        ${arquivados.length ? `<button class="btn btn-ghost" id="btn-ver-arquivados">${verArquivados ? 'Voltar aos ativos' : 'Ver arquivados ('+arquivados.length+')'}</button>` : ''}
         <button class="btn btn-gold" id="btn-new-client">${ICON.plus} Novo cliente</button>
       </div>
     `)}
@@ -6719,11 +6839,11 @@ function renderClientes(view){
       </div>
     ` : ''}
     <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Aceita Excel (.xlsx) ou CSV. Colunas esperadas, nesta ordem: Nome, Telefone, Aniversario(DD/MM), Pontos, Observacoes.</div>
-    ${state.clients.length===0 ? emptyState('Nenhum cliente cadastrado ainda.') : `
+    ${lista.length===0 ? emptyState(verArquivados ? 'Nenhum cliente arquivado.' : 'Nenhum cliente cadastrado ainda.') : `
       <table>
         <thead><tr><th>Cliente</th><th>Contato</th><th>Indicações</th><th>Visitas</th><th>Total gasto</th><th>Última visita</th><th></th></tr></thead>
         <tbody>
-        ${state.clients.map(c=>{
+        ${lista.map(c=>{
           const st = clientStats(c.name);
           const referrals = state.clients.filter(x=>x.referredBy && x.referredBy.trim().toLowerCase()===c.name.trim().toLowerCase()).length;
           return `<tr>
@@ -6735,7 +6855,9 @@ function renderClientes(view){
             <td class="font-mono" style="color:var(--muted);">${st.lastVisit?new Date(st.lastVisit+'T00:00').toLocaleDateString('pt-BR'):'—'}</td>
             <td style="text-align:right;white-space:nowrap;">
               <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-client="${c.id}">${ICON.edit}</button>
-              <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-client="${c.id}">${ICON.trash}</button>
+              ${c.arquivado
+                ? `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-restaurar-client="${c.id}">Restaurar</button>`
+                : `<button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" title="Arquivar" data-del-client="${c.id}">${ICON.trash}</button>`}
             </td>
           </tr>`;
         }).join('')}
@@ -6744,6 +6866,11 @@ function renderClientes(view){
     `}
   `;
   view.querySelector('#btn-new-client').addEventListener('click', ()=>clientModal());
+  view.querySelector('#btn-ver-arquivados')?.addEventListener('click', ()=>{ verArquivados = !verArquivados; renderClientes(view); });
+  view.querySelectorAll('[data-restaurar-client]').forEach(b=>b.addEventListener('click', ()=>{
+    update(s=>{ const x = s.clients.find(x=>x.id===b.dataset.restaurarClient); if(x){ delete x.arquivado; delete x.arquivadoEm; registrarAuditoria(s, 'Restaurou cliente', x.name); } });
+    showToast('Cliente restaurado.'); renderClientes(view);
+  }));
   view.querySelector('#btn-export-client').addEventListener('click', downloadCSV);
   view.querySelector('#btn-import-client').addEventListener('click', ()=>view.querySelector('#f-import-file').click());
   view.querySelector('#f-import-file').addEventListener('change', (e)=>{
@@ -6757,10 +6884,13 @@ function renderClientes(view){
     const cl = state.clients.find(x=>x.id===b.dataset.delClient);
     if(!cl) return;
     const atend = state.appointments.filter(a=>String(a.client).trim().toLowerCase()===cl.name.trim().toLowerCase()).length;
-    if(!confirm(`Excluir o cliente "${cl.name}"?${atend?`\n\nOs ${atend} atendimento(s) dele continuam no histórico e nos relatórios.`:''}\n\nEsta ação não pode ser desfeita.`)) return;
+    if(!confirm(`Arquivar o cliente "${cl.name}"?\n\nEle sai da lista, mas nada se perde: ${atend?`os ${atend} atendimento(s), `:''}caixa e relatórios continuam iguais. Dá para restaurar depois em "Ver arquivados".`)) return;
+    // FASE 3: arquivar em vez de apagar — o histórico financeiro e de
+    // atendimentos nunca depende de o cadastro existir
     update(s=>{
-      s.clients = s.clients.filter(x=>x.id!==cl.id);
-      registrarAuditoria(s, 'Excluiu cliente', cl.name);
+      const x = s.clients.find(x=>x.id===cl.id);
+      if(x){ x.arquivado = true; x.arquivadoEm = new Date().toISOString(); }
+      registrarAuditoria(s, 'Arquivou cliente', cl.name);
     });
   }));
   view.querySelector('#btn-ver-duplicados')?.addEventListener('click', ()=>duplicadosModal(view));
@@ -6855,8 +6985,22 @@ function clientModal(existing){
       const m = bdayRaw.match(/^(\d{1,2})\/(\d{1,2})$/);
       if(m) birthday = m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
       const data = {name, phone: root.querySelector('#f-phone').value.trim(), birthday, notes: root.querySelector('#f-notes').value.trim(), referredBy: root.querySelector('#f-referred').value};
+      // FASE 3: telefone já cadastrado em outro cliente? (evita duplicado)
+      const telNovo = String(data.phone||'').replace(/\D/g,'').replace(/^55(?=\d{10,11}$)/,'');
+      const mesmoTel = telNovo.length>=10 && state.clients.find(c=>c.id!==existing?.id && !c.arquivado &&
+        String(c.phone||'').replace(/\D/g,'').replace(/^55(?=\d{10,11}$)/,'')===telNovo);
+      if(mesmoTel && !confirm(`Já existe "${mesmoTel.name}" com este telefone.\n\nCadastrar/salvar mesmo assim? (Se for a mesma pessoa, cancele e use o cadastro existente.)`)) return;
+      const nomeAntigo = existing?.name;
       update(s=>{
-        if(isEdit){ const alvo = s.clients.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
+        if(isEdit){
+          const alvo = s.clients.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data);
+          // FASE 3: renomear leva junto os atendimentos, o clube e as indicações
+          // (antes o histórico ficava preso ao nome antigo)
+          if(nomeAntigo && normNome(nomeAntigo)!==normNome(data.name)){
+            renomearClienteEmTudo(s, nomeAntigo, data.name);
+            registrarAuditoria(s, 'Renomeou cliente', `${nomeAntigo} → ${data.name}`);
+          }
+        }
         else{ s.clients.push({id:uid(), points:0, referralBonusGiven:false, ...data}); }
       });
       closeModal();
@@ -7724,6 +7868,18 @@ function renderOnlineBooking(view){
         </label>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-cancel" ${ob.allowCancel?'checked':''} style="width:auto;padding:0;"> Cliente pode cancelar online</label>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-resched" ${ob.allowReschedule?'checked':''} style="width:auto;padding:0;"> Cliente pode remarcar online</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:150px;"><label>Antecedência mínima para o cliente mudar (horas)</label>
+            <input id="f-min-horas" type="number" min="0" max="72" value="${ob.minHoursChange ?? 2}" style="width:100%;"></div>
+          <div style="flex:1;min-width:150px;"><label>Máximo de remarcações pelo cliente</label>
+            <input id="f-max-reag" type="number" min="0" max="10" value="${ob.maxReschedules ?? 2}" style="width:100%;"></div>
+          <div style="flex:1;min-width:150px;"><label>Bloquear agendamento online após quantas faltas? (90 dias · 0 = nunca)</label>
+            <input id="f-noshow" type="number" min="0" max="10" value="${ob.noShowLimit ?? 0}" style="width:100%;"></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted-2);line-height:1.6;">
+          O cliente recebe no e-mail de confirmação um botão "Cancelar ou remarcar". As regras acima valem no servidor:
+          ninguém consegue cancelar/remarcar fora delas. Quem atingir o limite de faltas só agenda falando com você.
+        </div>
         <button class="btn btn-gold" id="f-save-ob" style="justify-content:center;">Salvar configurações</button>
       </div>
     </div>
@@ -7743,6 +7899,10 @@ function renderOnlineBooking(view){
       s.onlineBooking.autoSubscribe = view.querySelector('#f-auto-subscribe').checked;
       s.onlineBooking.allowCancel = view.querySelector('#f-cancel').checked;
       s.onlineBooking.allowReschedule = view.querySelector('#f-resched').checked;
+      const num = (sel, min, max, padrao)=>{ const n = parseInt(view.querySelector(sel).value, 10); return isNaN(n) ? padrao : Math.min(max, Math.max(min, n)); };
+      s.onlineBooking.minHoursChange = num('#f-min-horas', 0, 72, 2);
+      s.onlineBooking.maxReschedules = num('#f-max-reag', 0, 10, 2);
+      s.onlineBooking.noShowLimit = num('#f-noshow', 0, 10, 0);
     });
     showToast('Configurações salvas.');
     renderOnlineBooking(view);
@@ -7777,7 +7937,7 @@ async function acceptBookingRequest(req){
   }
   const novoId = uid();
   const gravou = await update(s=>{
-    s.appointments.push({id:novoId, date:String(req.date).slice(0,10), time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||'', clientEmail:req.client_email||'', encaixe: encaixeConfirmado || undefined});
+    s.appointments.push({id:novoId, date:String(req.date).slice(0,10), time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||'', clientEmail:req.client_email||'', encaixe: encaixeConfirmado || undefined, manageToken: novaChaveGerenciar()});
   });
   // não gravou (horário ocupado no meio, sem internet...): o pedido continua
   // pendente e o cliente NÃO recebe e-mail de confirmação
@@ -9356,6 +9516,102 @@ async function submitPublicBooking(){
 }
 
 
+/* ============ CLIENTE CANCELA OU REMARCA (link ?gerenciar, Fase 3) ============
+   Aberto pelo botão do e-mail de confirmação. Todas as regras (antecedência,
+   máximo de remarcações, horário livre) são conferidas no servidor. */
+let gerenciar = { slug:null, token:null, info:null, data:null, time:null };
+function gerenciarShell(inner){
+  document.getElementById('app').innerHTML = `
+    <div style="min-height:100vh;padding:20px;display:flex;justify-content:center;">
+      <div style="width:100%;max-width:460px;"><div class="card" style="padding:22px;">${inner}</div></div>
+    </div>`;
+}
+async function renderGerenciarAgendamento(slug, token){
+  gerenciar = { slug, token, info:null, data:null, time:null };
+  gerenciarShell(`<div style="text-align:center;color:var(--muted);">Carregando seu horário...</div>`);
+  const { data: info, error } = await supa.rpc('get_appointment_by_token', { p_slug: slug, p_token: token });
+  if(error || !info || info.error){
+    gerenciarShell(`<div style="text-align:center;color:var(--muted);line-height:1.7;">${esc(info?.error || 'Não foi possível abrir este link.')}</div>`);
+    return;
+  }
+  gerenciar.info = info;
+  desenharGerenciar();
+}
+function desenharGerenciar(msg, tom){
+  const i = gerenciar.info;
+  const statusTxt = {agendado:'Agendado', confirmado:'Confirmado', cancelado:'Cancelado', concluido:'Concluído', faltou:'Não compareceu'}[i.status] || i.status;
+  const quando = `${new Date(i.date+'T12:00').toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'2-digit'})} às ${i.time}`;
+  gerenciarShell(`
+    <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:4px;">${esc(i.shopName||'Barbearia')}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Olá, ${esc(i.client||'')}! Este é o seu horário:</div>
+    <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:13.5px;line-height:1.9;margin-bottom:16px;">
+      📅 <b>${esc(quando)}</b><br>✂️ ${esc((i.services||[]).join(' + '))}<br>💈 ${esc(i.professional?.name||'')}<br>
+      <span class="pill ${['cancelado','faltou'].includes(i.status)?'pill-bad':'pill-ok'}">${esc(statusTxt)}</span>
+    </div>
+    <div id="ger-msg" role="alert" style="${msg?'':'display:none;'}font-size:13px;line-height:1.6;margin-bottom:12px;color:${tom==='ok'?'var(--ok)':'var(--bad)'};">${esc(msg||'')}</div>
+    ${i.motivo && !i.podeCancelar && !i.podeReagendar ? `<div style="font-size:12.5px;color:var(--muted);line-height:1.6;">${esc(i.motivo)}</div>` : ''}
+    ${i.podeReagendar ? `
+      <div style="font-size:13px;font-weight:600;margin:6px 0 8px;">Remarcar para outro dia/horário</div>
+      <input id="ger-data" type="date" min="${todayISO()}" value="${gerenciar.data||''}" style="width:100%;margin-bottom:10px;">
+      <div id="ger-slots" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+      <button class="btn btn-gold" id="ger-reagendar" style="width:100%;justify-content:center;margin-bottom:10px;" ${gerenciar.time?'':'disabled'}>Confirmar novo horário</button>
+      <div style="font-size:11px;color:var(--muted-2);margin-bottom:12px;">Você ainda pode remarcar ${i.maxReagendamentos - i.reagendamentosUsados} vez(es), até ${i.minHoras}h antes do horário.</div>` : ''}
+    ${i.podeCancelar ? `<button class="btn btn-ghost" id="ger-cancelar" style="width:100%;justify-content:center;color:var(--bad);border-color:var(--bad);">Cancelar este horário</button>` : ''}
+    ${i.phone ? `<a href="https://wa.me/55${String(i.phone).replace(/\D/g,'')}" target="_blank" class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:10px;text-decoration:none;">${ICON.chat} Falar com a barbearia</a>` : ''}
+  `);
+  document.getElementById('ger-data')?.addEventListener('change', e=>{ gerenciar.data = e.target.value; gerenciar.time = null; carregarHorariosGerenciar(); });
+  if(gerenciar.data) carregarHorariosGerenciar();
+  document.getElementById('ger-reagendar')?.addEventListener('click', async (e)=>{
+    e.currentTarget.disabled = true; e.currentTarget.textContent = 'Remarcando...';
+    const { data: r, error } = await supa.rpc('client_reschedule_appointment', { p_slug: gerenciar.slug, p_token: gerenciar.token, p_date: gerenciar.data, p_time: gerenciar.time });
+    if(error || r?.error){ gerenciar.time = null; await renderGerenciarAgendamento(gerenciar.slug, gerenciar.token); desenharGerenciar(r?.error || 'Não foi possível remarcar agora. Tente de novo.'); return; }
+    enviarEmailAgendamento({ tipo:'reagendamento', shopId: r.shopId, appointmentId: r.appointmentId });
+    gerenciar.data = null; gerenciar.time = null;
+    await renderGerenciarAgendamento(gerenciar.slug, gerenciar.token);
+    desenharGerenciar('Pronto! Seu horário foi remarcado. ✅', 'ok');
+  });
+  document.getElementById('ger-cancelar')?.addEventListener('click', async (e)=>{
+    if(!confirm('Cancelar este horário?')) return;
+    e.currentTarget.disabled = true; e.currentTarget.textContent = 'Cancelando...';
+    const { data: r, error } = await supa.rpc('client_cancel_appointment', { p_slug: gerenciar.slug, p_token: gerenciar.token });
+    if(error || r?.error){ desenharGerenciar(r?.error || 'Não foi possível cancelar agora. Tente de novo.'); return; }
+    enviarEmailAgendamento({ tipo:'cancelamento', shopId: r.shopId, appointmentId: r.appointmentId });
+    await renderGerenciarAgendamento(gerenciar.slug, gerenciar.token);
+    desenharGerenciar('Horário cancelado. Obrigado por avisar!', 'ok');
+  });
+}
+async function carregarHorariosGerenciar(){
+  const el = document.getElementById('ger-slots');
+  const i = gerenciar.info, p = i.professional || {};
+  if(!el || !gerenciar.data) return;
+  const dia = new Date(gerenciar.data+'T12:00').getDay();
+  if(!(Array.isArray(p.workDays) ? p.workDays : [1,2,3,4,5,6]).includes(dia)){
+    el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">${esc(p.name||'O profissional')} não atende neste dia.</div>`; return;
+  }
+  el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">Carregando horários...</div>`;
+  const { data: ocupados } = await supa.rpc('get_booked_times', { p_shop_id: i.shopId, p_professional_id: p.id, p_date: gerenciar.data });
+  const bloq = new Set(ocupados||[]);
+  // o próprio horário atual não bloqueia a remarcação (o servidor também ignora)
+  if(gerenciar.data===i.date){ const [h0,m0] = i.time.split(':').map(Number); for(let x=h0*60+m0; x<h0*60+m0+(i.duration||30); x+=15) bloq.delete(String(Math.floor(x/60)).padStart(2,'0')+':'+String(x%60).padStart(2,'0')); }
+  const [hi,mi] = (p.workStart||'09:00').split(':').map(Number), [hf,mf] = (p.workEnd||'18:00').split(':').map(Number);
+  const agora = new Date(), hoje = todayISO()===gerenciar.data, livres = [];
+  for(let t=hi*60+mi; t+(i.duration||30)<=hf*60+mf; t+=30){
+    const hh = String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+    if(hoje && hh <= agora.toTimeString().slice(0,5)) continue;
+    let cabe = true;
+    for(let x=t; cabe && x<t+(i.duration||30); x+=15) if(bloq.has(String(Math.floor(x/60)).padStart(2,'0')+':'+String(x%60).padStart(2,'0'))) cabe = false;
+    if(cabe) livres.push(hh);
+  }
+  el.innerHTML = livres.length ? livres.map(h=>`<button class="btn ${gerenciar.time===h?'btn-gold':'btn-ghost'} ger-slot" data-h="${h}" style="padding:8px 12px;font-size:12.5px;">${h}</button>`).join('')
+    : `<div style="font-size:12.5px;color:var(--muted);">Sem horários livres neste dia.</div>`;
+  el.querySelectorAll('.ger-slot').forEach(b=>b.addEventListener('click', ()=>{
+    gerenciar.time = b.dataset.h;
+    el.querySelectorAll('.ger-slot').forEach(x=>x.classList.toggle('btn-gold', x===b));
+    el.querySelectorAll('.ger-slot').forEach(x=>x.classList.toggle('btn-ghost', x!==b));
+    const bt = document.getElementById('ger-reagendar'); if(bt) bt.disabled = false;
+  }));
+}
+
 /* ============ PORTAL DO CLIENTE FINAL (link ?cliente) ============ */
 let clientSession = null;
 
@@ -9812,6 +10068,15 @@ function publicSubscribeModal(plan){
 let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
 let agendaDate = null; // dia visível na agenda (não é salvo no banco)
 let agendaMode = 'grade'; // 'grade' (quadro de horários) ou 'lista'
+// FASE 3: filtros do modo lista (busca por cliente também procura em outros dias)
+let agendaFiltro = { texto:'', status:'todos', prof:'' };
+const STATUS_FILTRO = { todos:null, ativos:['agendado','confirmado'], concluidos:['concluido'], cancelados:['cancelado'], faltas:['faltou'] };
+function normBusca(t){ return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim(); }
+function filtrarAgenda(lista){
+  const st = STATUS_FILTRO[agendaFiltro.status], txt = normBusca(agendaFiltro.texto);
+  return lista.filter(a=>(!st || st.includes(a.status)) && (!agendaFiltro.prof || a.professionalId===agendaFiltro.prof) &&
+    (!txt || normBusca(a.client).includes(txt) || String(a.clientPhone||'').replace(/\D/g,'').includes(txt.replace(/\D/g,'')||'§')));
+}
 let agendaEstendida = false; // mostra horas antes/depois do expediente
 
 async function renderTeamLogin(slug, errorMsg){
@@ -10157,6 +10422,8 @@ async function boot(){
   const urlParams = new URLSearchParams(window.location.search);
   const legalPage = urlParams.get('pagina');
   if(legalPage==='termos' || legalPage==='privacidade'){ renderLegalPage(legalPage); return; }
+  const gerenciarSlug = urlParams.get('gerenciar');
+  if(gerenciarSlug){ await renderGerenciarAgendamento(gerenciarSlug, urlParams.get('t')||''); return; }
   const bookSlug = urlParams.get('agendar');
   if(bookSlug){ await renderPublicBooking(bookSlug); return; }
   const teamSlug = urlParams.get('equipe');
