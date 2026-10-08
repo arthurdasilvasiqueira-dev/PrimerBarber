@@ -611,6 +611,8 @@ function migrateState(){
   if(!Array.isArray(state.expenses)) state.expenses = [];
   if(!Array.isArray(state.auditLog)) state.auditLog = [];
   state.clubSettings = state.clubSettings || { diasTolerancia: 0 };   // FASE 4
+  if(!Array.isArray(state.sales)) state.sales = [];                   // FASE 6
+  if(!Array.isArray(state.stockMovements)) state.stockMovements = [];
   // FASE 4B: downgrade agendado passa a valer no dia marcado
   (state.subscriptionMembers||[]).forEach(m=>{
     if(m.trocaAgendada && m.trocaAgendada.aPartirDe <= todayISO()){
@@ -2512,6 +2514,7 @@ function reabrirComanda(apptId, view){
         ap.status = 'agendado';
         ap.paymentMethod = null;
         ap.reabertoEm = new Date().toISOString();
+        estornarConsumo(s, ap);   // FASE 6: o que foi consumido volta ao estoque
         registrarAuditoria(s, 'Reabriu comanda', `${ap.client} — ${appointmentServiceNames(ap)} (${ap.date}) — ${BRL(valor)}`);
 
         if(lancamento){
@@ -2734,6 +2737,7 @@ function concludeAppt(id){
       ap.cobertoPeloClube = planoAtivo;
       const itemCoberto = multi.itens.find(i=>i.calc.planoAtivo && i.calc.member && i.calc.plano);
       ap.clubeUso = itemCoberto ? { membroId: itemCoberto.calc.member.id, planoId: itemCoberto.calc.plano.id } : null;
+      darBaixaConsumo(s, ap);   // FASE 6: produtos que os serviços consomem
       const sess = s.cashSessions.find(c=>c.status==='aberto');
       const obs = `${nomesServicos} — ${ap.client}${priceNote}${(Number(desconto)>0)?` (desconto ${BRL(desconto)})`:''}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`;
       // um lançamento por forma de pagamento, para o caixa somar certo
@@ -5121,6 +5125,11 @@ function svcModal(existing){
         </div>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-online" ${existing?.hideOnline?'':'checked'} style="width:auto;padding:0;"> Disponível no agendamento online</label>
         <div style="font-size:11px;color:var(--muted-2);margin-top:-6px;">Desmarque para serviços que só a barbearia marca por dentro (ex: procedimentos especiais). O cliente não verá esta opção no link público, mas você continua agendando normalmente.</div>
+        <div><label>Produtos que este serviço consome (baixa automática ao concluir)</label>
+          <div id="f-consumos" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <button class="btn btn-ghost" id="f-add-consumo" type="button" style="margin-top:6px;padding:6px 10px;font-size:12px;">${ICON.plus} Adicionar produto</button>
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Ex.: Barba consome 1 lâmina. Ao concluir o atendimento, o estoque baixa sozinho (e volta se a comanda for reaberta).</div>
+        </div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
       </div>
     </div>
@@ -5128,6 +5137,20 @@ function svcModal(existing){
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-req-deposit').addEventListener('change', e=>{
       root.querySelector('#deposit-fields').style.display = e.target.checked ? 'flex' : 'none';
+    });
+    // FASE 6: linhas de consumo (produto + quantidade)
+    const prodsAtivos = (state.products||[]).filter(p=>!p.arquivado);
+    const linhaConsumo = (c)=>`<div class="f-consumo-linha" style="display:flex;gap:6px;">
+      <select class="f-consumo-prod" style="flex:2;">${prodsAtivos.map(p=>`<option value="${p.id}" ${c?.productId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+      <input class="f-consumo-qtd" type="number" min="0.01" step="0.01" value="${c?.qtd??1}" style="flex:1;">
+      <button class="btn btn-ghost f-consumo-del" type="button" style="padding:6px 8px;">${ICON.x}</button></div>`;
+    const caixaConsumo = root.querySelector('#f-consumos');
+    caixaConsumo.innerHTML = (existing?.consumos||[]).filter(c=>prodsAtivos.some(p=>p.id===c.productId)).map(linhaConsumo).join('');
+    const ligarDel = ()=>caixaConsumo.querySelectorAll('.f-consumo-del').forEach(b=>b.onclick = ()=>b.closest('.f-consumo-linha').remove());
+    ligarDel();
+    root.querySelector('#f-add-consumo').addEventListener('click', ()=>{
+      if(!prodsAtivos.length){ showToast('Cadastre produtos no Estoque primeiro.'); return; }
+      caixaConsumo.insertAdjacentHTML('beforeend', linhaConsumo(null)); ligarDel();
     });
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
@@ -5139,9 +5162,12 @@ function svcModal(existing){
       const depositValue = parseFloat(root.querySelector('#f-dep-value').value)||0;
       const clubFichas = parseInt(root.querySelector('#f-fichas').value)||0;
       const hideOnline = !root.querySelector('#f-online').checked;
+      const consumos = [...root.querySelectorAll('.f-consumo-linha')].map(l=>({
+        productId: l.querySelector('.f-consumo-prod').value,
+        qtd: Math.max(0, Math.min(50, parseFloat(l.querySelector('.f-consumo-qtd').value)||0)) })).filter(c=>c.productId && c.qtd>0);
       update(s=>{
-        if(isEdit){ const alvo = s.services.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline}); }
-        else{ s.services.push({id:uid(), name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline}); }
+        if(isEdit){ const alvo = s.services.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, consumos}); }
+        else{ s.services.push({id:uid(), name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, consumos}); }
       });
       closeModal();
     });
@@ -7309,20 +7335,65 @@ function clientModal(existing){
   });
 }
 
-/* ============ ESTOQUE ============ */
+/* ============ ESTOQUE (Fase 6: movimentações, vendas e estorno) ============
+   O número em "estoque" muda SEMPRE por uma movimentação registrada em
+   state.stockMovements (entrada, venda, consumo, perda, ajuste, estorno) —
+   o servidor não deixa apagar nem alterar nenhuma delas. Vendas ficam em
+   state.sales; estornar = devolver ao estoque + saída no caixa (nada some). */
+function movimentarEstoque(s, productId, qtd, tipo, extra){
+  const p = (s.products||[]).find(x=>x.id===productId);
+  if(!p || !qtd) return null;
+  if(!Array.isArray(s.stockMovements)) s.stockMovements = [];
+  const antes = Number(p.stock)||0;
+  p.stock = Math.round((antes + qtd)*1000)/1000;
+  const mov = { id:uid(), at:new Date().toISOString(), productId, nome:p.name, tipo, qtd, saldoAntes:antes, saldoDepois:p.stock, por:quemEstaLogado(), ...(extra||{}) };
+  s.stockMovements.push(mov);
+  return mov;
+}
+const TIPOS_MOV = { entrada:'Entrada (compra)', 'entrada inicial':'Estoque inicial', venda:'Venda', consumo:'Consumo em serviço',
+  perda:'Perda / uso interno', ajuste:'Ajuste de inventário', 'estorno venda':'Estorno de venda', 'estorno consumo':'Estorno de consumo' };
+// FASE 6: baixa automática — uma vez por atendimento (marca ap.consumoBaixado)
+function darBaixaConsumo(s, ap){
+  if(!ap || ap.consumoBaixado) return;
+  const ids = Array.isArray(ap.serviceIds) && ap.serviceIds.length ? ap.serviceIds : [ap.serviceId];
+  let houve = false;
+  ids.forEach(sid=>{
+    const svc = (s.services||[]).find(x=>x.id===sid);
+    (svc?.consumos||[]).forEach(c=>{
+      if(movimentarEstoque(s, c.productId, -(Number(c.qtd)||0), 'consumo', { apptId: ap.id, nota: `${svc.name} — ${ap.client}` })) houve = true;
+    });
+  });
+  if(houve) ap.consumoBaixado = true;
+}
+function estornarConsumo(s, ap){
+  if(!ap || !ap.consumoBaixado) return;
+  // movimentações não mudam: o que já foi devolvido é achado pelo estorno (estornoDe)
+  const jaDevolvidos = new Set((s.stockMovements||[]).filter(m=>m.tipo==='estorno consumo' && m.estornoDe).map(m=>m.estornoDe));
+  (s.stockMovements||[]).filter(m=>m.tipo==='consumo' && m.apptId===ap.id && !jaDevolvidos.has(m.id))
+    .forEach(m=>{ movimentarEstoque(s, m.productId, -Number(m.qtd), 'estorno consumo', { apptId: ap.id, estornoDe: m.id }); });
+  ap.consumoBaixado = false;
+}
+function sugestaoCompra(p){ return Math.max(0, (Number(p.minStock)||0)*2 - (Number(p.stock)||0)); }
+
+let estoqueVer = 'produtos';   // 'produtos' | 'vendas' | 'movimentos'
 function renderEstoque(view){
-  const low = state.products.filter(p=>p.stock<=p.minStock);
+  const produtos = (state.products||[]).filter(p=>!p.arquivado);
+  const low = produtos.filter(p=>p.stock<=p.minStock);
+  const vendas = (state.sales||[]).slice().reverse().slice(0,100);
+  const movs = (state.stockMovements||[]).slice().reverse().slice(0,150);
+  const aba = (id, rotulo)=>`<button class="btn ${estoqueVer===id?'btn-gold':'btn-ghost'}" data-aba-estoque="${id}" style="padding:7px 14px;font-size:12.5px;">${rotulo}</button>`;
   view.innerHTML = `
-    ${pageHeader('Estoque', state.products.length+' produto(s) cadastrado(s)', `<button class="btn btn-gold" id="btn-new-product">${ICON.plus} Novo produto</button>`)}
+    ${pageHeader('Estoque', produtos.length+' produto(s) cadastrado(s)', `<button class="btn btn-gold" id="btn-new-product">${ICON.plus} Novo produto</button>`)}
     ${low.length>0 ? `<div class="card" style="padding:14px 18px;margin-bottom:18px;border-color:var(--bad);">
-      <div style="font-size:13.5px;color:var(--bad);font-weight:600;margin-bottom:4px;">Estoque baixo em ${low.length} produto(s)</div>
-      <div style="font-size:12.5px;color:var(--muted);">${low.map(p=>p.name).join(', ')} — considere repor.</div>
+      <div style="font-size:13.5px;color:var(--bad);font-weight:600;margin-bottom:6px;">Estoque baixo em ${low.length} produto(s)</div>
+      ${low.map(p=>`<div style="font-size:12.5px;color:var(--muted);padding:2px 0;">${esc(p.name)}: ${p.stock} (mínimo ${p.minStock})${sugestaoCompra(p)?` — sugestão de compra: <b>${sugestaoCompra(p)}</b>`:''}</div>`).join('')}
     </div>` : ''}
-    ${state.products.length===0 ? emptyState('Nenhum produto cadastrado.') : `
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${aba('produtos','Produtos')}${aba('vendas','Vendas ('+(state.sales||[]).length+')')}${aba('movimentos','Movimentações')}</div>
+    ${estoqueVer==='produtos' ? (produtos.length===0 ? emptyState('Nenhum produto cadastrado.') : `
       <table>
         <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th></th></tr></thead>
         <tbody>
-        ${state.products.map(p=>`<tr>
+        ${produtos.map(p=>`<tr>
           <td style="font-weight:500;">${esc(p.name)}</td>
           <td class="font-mono">${p.stock<=p.minStock?`<span class="pill pill-bad">${p.stock}</span>`:p.stock}</td>
           <td class="font-mono" style="color:var(--muted);">${p.minStock}</td>
@@ -7330,23 +7401,62 @@ function renderEstoque(view){
           <td class="font-mono">${p.price>0?BRL(p.price):'—'}</td>
           <td style="text-align:right;white-space:nowrap;">
             ${p.price>0 && p.stock>0 ? `<button class="btn btn-gold" style="padding:6px 10px;font-size:12px;" data-sell-product="${p.id}">${ICON.cash} Vender</button>` : ''}
+            <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-mov-product="${p.id}">Movimentar</button>
             <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-product="${p.id}">${ICON.edit}</button>
-            <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-product="${p.id}">${ICON.trash}</button>
+            <button class="btn btn-ghost" style="padding:6px 8px;" title="Arquivar (o histórico fica)" data-del-product="${p.id}">${ICON.trash}</button>
           </td>
         </tr>`).join('')}
         </tbody>
-      </table>
-    `}
+      </table>`) : ''}
+    ${estoqueVer==='vendas' ? (vendas.length===0 ? emptyState('Nenhuma venda registrada ainda.') : `
+      <table>
+        <thead><tr><th>Quando</th><th>Itens</th><th>Cliente</th><th>Total</th><th>Pagamento</th><th></th></tr></thead>
+        <tbody>
+        ${vendas.map(v=>`<tr style="${v.status==='estornada'?'opacity:.55;':''}">
+          <td class="font-mono" style="font-size:12px;">${new Date(v.at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+          <td>${(v.itens||[]).map(i=>`${i.qtd}× ${esc(i.nome)}`).join(', ')}</td>
+          <td>${esc(v.cliente||'—')}</td>
+          <td class="font-mono">${BRL(v.total)}</td>
+          <td>${esc(methodLabelPay(v.method))}</td>
+          <td style="text-align:right;">${v.status==='estornada' ? '<span class="pill pill-muted">Estornada</span>'
+            : isOwnerLevel() || userSession.role==='recepcionista' ? `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;color:var(--bad);border-color:var(--bad);" data-estornar-venda="${v.id}">Estornar</button>` : ''}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>`) : ''}
+    ${estoqueVer==='movimentos' ? (movs.length===0 ? emptyState('Nenhuma movimentação ainda.', 'Toda entrada, venda, consumo, perda ou ajuste aparece aqui.') : `
+      <table>
+        <thead><tr><th>Quando</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Saldo</th><th>Quem</th></tr></thead>
+        <tbody>
+        ${movs.map(m=>`<tr>
+          <td class="font-mono" style="font-size:12px;">${new Date(m.at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+          <td>${esc(m.nome)}</td>
+          <td>${esc(TIPOS_MOV[m.tipo]||m.tipo)}${m.nota?`<div style="font-size:11px;color:var(--muted-2);">${esc(m.nota)}</div>`:''}</td>
+          <td class="font-mono" style="color:${m.qtd<0?'var(--bad)':'var(--ok)'};">${m.qtd>0?'+':''}${m.qtd}</td>
+          <td class="font-mono" style="color:var(--muted);">${m.saldoAntes} → ${m.saldoDepois}</td>
+          <td style="font-size:12px;color:var(--muted);">${esc(m.por||'')}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>`) : ''}
   `;
   view.querySelector('#btn-new-product').addEventListener('click', ()=>productModal());
+  view.querySelectorAll('[data-aba-estoque]').forEach(b=>b.addEventListener('click', ()=>{ estoqueVer = b.dataset.abaEstoque; renderEstoque(view); }));
   view.querySelectorAll('[data-sell-product]').forEach(b=>b.addEventListener('click', ()=>sellProductModal(state.products.find(p=>p.id===b.dataset.sellProduct))));
+  view.querySelectorAll('[data-mov-product]').forEach(b=>b.addEventListener('click', ()=>movimentarEstoqueModal(b.dataset.movProduct, view)));
   view.querySelectorAll('[data-edit-product]').forEach(b=>b.addEventListener('click', ()=>productModal(state.products.find(p=>p.id===b.dataset.editProduct))));
-  view.querySelectorAll('[data-del-product]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.products = s.products.filter(p=>p.id!==b.dataset.delProduct); })));
+  view.querySelectorAll('[data-estornar-venda]').forEach(b=>b.addEventListener('click', ()=>estornarVenda(b.dataset.estornarVenda, view)));
+  view.querySelectorAll('[data-del-product]').forEach(b=>b.addEventListener('click', ()=>{
+    const p = state.products.find(x=>x.id===b.dataset.delProduct); if(!p) return;
+    if(!confirm(`Arquivar "${p.name}"?\n\nSai da lista; vendas e movimentações continuam no histórico.`)) return;
+    update(s=>{ const x = s.products.find(x=>x.id===p.id); if(x){ x.arquivado = true; registrarAuditoria(s, 'Arquivou produto', p.name); } });
+    renderEstoque(view);
+  }));
 }
+
 function sellProductModal(prod){
   if(!prod) return;
   if(!openSession()){ showToast('Abra o caixa antes de registrar vendas.'); route='caixa'; render(); return; }
-  const clientes = state.clients.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const vendaId = uid();   // identidade desta venda: dois toques não vendem duas vezes
+  const clientes = state.clients.filter(c=>!c.arquivado).slice().sort((a,b)=>a.name.localeCompare(b.name));
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -7377,18 +7487,19 @@ function sellProductModal(prod){
       const bruto = prod.price * qty;
       let desconto = 0, nota = '';
       const m = nome ? clubMemberForClient(nome) : null;
-      if(m && m.status==='pago'){
+      // FASE 6: mesma regra de "em dia" do resto do sistema (com tolerância)
+      if(m && membroEmDia(m)){
         const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
         if(plan && !planValidOnDate(plan, todayISO())){
           nota = `${planDaysLabel(plan.validDays)} — hoje o desconto não vale.`;
         } else if(plan && plan.discountPercent>0){
-          desconto = bruto * (plan.discountPercent/100);
+          desconto = Math.round(bruto * (plan.discountPercent/100) * 100)/100;
           nota = `Desconto de assinante: ${plan.discountPercent}% (${esc(plan.name)})`;
         }
-      } else if(m && m.status==='atrasado'){
-        nota = 'Assinante em atraso — sem desconto.';
+      } else if(m){
+        nota = m.status==='pausado' ? 'Assinatura pausada — sem desconto.' : 'Assinante em atraso — sem desconto.';
       }
-      const total = bruto - desconto;
+      const total = Math.round((bruto - desconto)*100)/100;
       root.querySelector('#sp-total').innerHTML = `
         <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);"><span>${qty}× ${esc(prod.name)}</span><span class="font-mono">${BRL(bruto)}</span></div>
         ${desconto>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto</span><span class="font-mono">− ${BRL(desconto)}</span></div>`:''}
@@ -7398,29 +7509,121 @@ function sellProductModal(prod){
         </div>
         ${nota?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:8px;">${nota}</div>`:''}
       `;
-      return {qty, total, nome, desconto};
+      return {qty, total, nome, desconto, bruto};
     };
     root.querySelector('#sp-qty').addEventListener('input', calc);
     root.querySelector('#sp-client').addEventListener('change', calc);
     calc();
-    root.querySelectorAll('.sp-pay').forEach(b=>b.addEventListener('click', ()=>{
-      const {qty, total, nome, desconto} = calc();
+    root.querySelectorAll('.sp-pay').forEach(b=>b.addEventListener('click', async ()=>{
+      const {qty, total, nome, desconto, bruto} = calc();
       const method = b.dataset.method;
-      update(s=>{
+      root.querySelectorAll('.sp-pay').forEach(x=>x.disabled = true);
+      let semEstoque = false;
+      const r = await update(s=>{
+        semEstoque = false;
+        if((s.sales||[]).some(v=>v.id===vendaId)) return;           // já registrada
         const p = s.products.find(x=>x.id===prod.id);
-        p.stock = Math.max(0, p.stock - qty);
         const sess = s.cashSessions.find(x=>x.status==='aberto');
+        if(!p || !sess) return;
+        if((Number(p.stock)||0) < qty){ semEstoque = true; return; }  // outro aparelho vendeu antes
+        const entryId = uid();
+        movimentarEstoque(s, p.id, -qty, 'venda', { vendaId });
         sess.entries.push({
-          id:uid(), type:'entrada', method,
+          id:entryId, type:'entrada', method, vendaId,
           desc:`${qty}× ${prod.name}${nome?' — '+nome:''}${desconto>0?' (com desconto do clube)':''}`,
           amount: total, time:new Date().toTimeString().slice(0,5), auto:false,
         });
+        if(!Array.isArray(s.sales)) s.sales = [];
+        s.sales.push({ id:vendaId, at:new Date().toISOString(), itens:[{ productId:p.id, nome:p.name, qtd:qty, precoUnit:Number(p.price)||0, custoUnit:Number(p.cost)||0 }],
+          bruto, desconto, total, method, cliente:nome||'', caixaId:sess.id, caixaEntryId:entryId, status:'ok', por:quemEstaLogado() });
       });
       closeModal();
-      showToast(`Venda registrada — ${BRL(total)} em ${methodLabelPay(method)}.`);
+      if(semEstoque){ showToast('Estoque insuficiente: outro aparelho vendeu antes. Nada foi registrado.'); return; }
+      if(r==='ok') showToast(`Venda registrada — ${BRL(total)} em ${methodLabelPay(method)}.`);
     }));
   });
 }
+
+function estornarVenda(vendaId, view){
+  const v = (state.sales||[]).find(x=>x.id===vendaId); if(!v || v.status!=='ok') return;
+  if(!openSession()){ showToast('Abra o caixa de hoje para lançar o estorno.'); return; }
+  if(!confirm(`Estornar a venda de ${BRL(v.total)}?\n\nOs produtos voltam ao estoque e uma SAÍDA de ${BRL(v.total)} é lançada no caixa de hoje. Nada é apagado.`)) return;
+  update(s=>{
+    const x = (s.sales||[]).find(y=>y.id===vendaId);
+    const hoje = s.cashSessions.find(c=>c.status==='aberto');
+    if(!x || x.status!=='ok' || !hoje) return;                         // já estornada (outro aparelho)
+    x.status = 'estornada'; x.estornadaEm = new Date().toISOString(); x.estornadaPor = quemEstaLogado();
+    (x.itens||[]).forEach(i=>movimentarEstoque(s, i.productId, Number(i.qtd)||0, 'estorno venda', { vendaId }));
+    hoje.entries.push({ id:uid(), type:'saida', method:x.method, estorno:true, vendaId,
+      desc:`Estorno de venda — ${(x.itens||[]).map(i=>`${i.qtd}× ${i.nome}`).join(', ')}`, amount:x.total,
+      time:new Date().toTimeString().slice(0,5), auto:true });
+    registrarAuditoria(s, 'Estornou venda de produto', `${BRL(x.total)} — ${(x.itens||[]).map(i=>i.nome).join(', ')}`);
+  });
+  showToast('Venda estornada.'); if(view) renderEstoque(view);
+}
+
+function movimentarEstoqueModal(productId, view){
+  const p = state.products.find(x=>x.id===productId); if(!p) return;
+  const movId = uid();
+  openModal(`
+    <div style="padding:22px;">
+      <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:4px;">Movimentar estoque</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">${esc(p.name)} · hoje: <b>${p.stock}</b></div>
+      <label>O que aconteceu?</label>
+      <select id="mv-tipo" style="width:100%;margin-bottom:10px;">
+        <option value="entrada">Entrada (comprei / chegou mercadoria)</option>
+        <option value="perda">Perda, quebra ou uso interno</option>
+        <option value="ajuste">Ajuste de inventário (contei o estoque)</option>
+      </select>
+      <div id="mv-campos"></div>
+      <label>Observação</label><input id="mv-nota" maxlength="160" placeholder="ex.: nota fiscal 123, fornecedor X" style="width:100%;margin-bottom:12px;">
+      <div style="font-size:11.5px;color:var(--muted-2);line-height:1.6;margin-bottom:12px;">Compra de produto para revenda entra aqui (não como despesa): o custo vai para o relatório quando o produto é vendido.</div>
+      <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
+      <button class="btn btn-gold" id="mv-ok" style="flex:1;justify-content:center;">Registrar</button></div>
+    </div>`, root=>{
+    const campos = ()=>{
+      const t = root.querySelector('#mv-tipo').value;
+      root.querySelector('#mv-campos').innerHTML =
+        t==='entrada' ? `<div style="display:flex;gap:10px;margin-bottom:10px;"><div style="flex:1;"><label>Quantidade</label><input id="mv-qtd" type="number" min="1" value="1" style="width:100%;"></div>
+                         <div style="flex:1;"><label>Custo unitário (R$)</label><input id="mv-custo" type="number" step="0.01" min="0" value="${Number(p.cost)||0}" style="width:100%;"></div></div>`
+        : t==='perda' ? `<label>Quantidade perdida/usada</label><input id="mv-qtd" type="number" min="1" value="1" style="width:100%;margin-bottom:10px;">`
+        : `<label>Quantos você contou agora?</label><input id="mv-contado" type="number" min="0" value="${p.stock}" style="width:100%;margin-bottom:10px;">`;
+    };
+    root.querySelector('#mv-tipo').addEventListener('change', campos); campos();
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#mv-ok').addEventListener('click', (e)=>{
+      const tipo = root.querySelector('#mv-tipo').value, nota = root.querySelector('#mv-nota').value.trim();
+      let qtd, contadoFixo = null;
+      if(tipo==='ajuste'){
+        const contado = parseInt(root.querySelector('#mv-contado').value, 10);
+        contadoFixo = contado;
+        if(isNaN(contado) || contado<0){ showToast('Informe quantos tem.'); return; }
+        if(!nota){ showToast('No ajuste, escreva o motivo na observação.'); return; }
+        qtd = contado - (Number(p.stock)||0);
+        if(qtd===0){ showToast('O estoque já está com esse número.'); return; }
+      } else {
+        qtd = parseInt(root.querySelector('#mv-qtd').value, 10);
+        if(!qtd || qtd<1){ showToast('Informe a quantidade.'); return; }
+        if(tipo==='perda') qtd = -qtd;
+      }
+      const custo = tipo==='entrada' ? Math.max(0, parseFloat(root.querySelector('#mv-custo').value)||0) : null;
+      e.currentTarget.disabled = true;
+      update(s=>{
+        if((s.stockMovements||[]).some(m=>m.movId===movId)) return;
+        let delta = qtd;
+        if(tipo==='ajuste'){   // contagem: a diferença é sobre o estoque MAIS NOVO
+          const x = s.products.find(y=>y.id===p.id); if(!x) return;
+          delta = contadoFixo - (Number(x.stock)||0); if(!delta) return;
+        }
+        const mov = movimentarEstoque(s, p.id, delta, tipo, { movId, nota, custoUnit: custo });
+        if(mov && tipo==='entrada' && custo!=null){ const x = s.products.find(y=>y.id===p.id); if(x) x.cost = custo; }
+        registrarAuditoria(s, 'Movimentou estoque', `${p.name}: ${TIPOS_MOV[tipo]} ${delta>0?'+':''}${delta}${nota?' — '+nota:''}`);
+      });
+      closeModal(); showToast('Movimentação registrada.'); if(view) renderEstoque(view);
+    });
+  });
+}
+
 function productModal(existing){
   const isEdit = !!existing;
   openModal(`
@@ -7432,7 +7635,7 @@ function productModal(existing){
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Nome do produto</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;"><label>Estoque atual</label><input id="f-stock" type="number" min="0" value="${existing?.stock??0}" style="width:100%;"></div>
+          <div style="flex:1;"><label>${isEdit?'Estoque atual (use "Movimentar")':'Estoque inicial'}</label><input id="f-stock" type="number" min="0" value="${existing?.stock??0}" ${isEdit?'disabled':''} style="width:100%;"></div>
           <div style="flex:1;"><label>Estoque mínimo</label><input id="f-min" type="number" min="0" value="${existing?.minStock??0}" style="width:100%;"></div>
         </div>
         <div style="display:flex;gap:10px;">
@@ -7448,12 +7651,18 @@ function productModal(existing){
       const name = root.querySelector('#f-name').value.trim();
       if(!name){ showToast('Informe o nome.'); return; }
       const data = {
-        name, stock: parseInt(root.querySelector('#f-stock').value)||0, minStock: parseInt(root.querySelector('#f-min').value)||0,
+        name, minStock: parseInt(root.querySelector('#f-min').value)||0,
         cost: parseFloat(root.querySelector('#f-cost').value)||0, price: parseFloat(root.querySelector('#f-price').value)||0,
       };
+      const inicial = isEdit ? 0 : Math.max(0, parseInt(root.querySelector('#f-stock').value)||0);
+      const novoId = uid();
       update(s=>{
         if(isEdit){ const alvo = s.products.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
-        else{ s.products.push({id:uid(), ...data}); }
+        else{
+          if(s.products.some(x=>x.id===novoId)) return;
+          s.products.push({id:novoId, stock:0, ...data});
+          if(inicial) movimentarEstoque(s, novoId, inicial, 'entrada inicial', { custoUnit: data.cost });
+        }
       });
       closeModal();
     });
@@ -7842,6 +8051,10 @@ function resumoPeriodo(de, ate){
     (Array.isArray(m.ajustesPagos) ? m.ajustesPagos : []).forEach(x=>{ if(dentro(x.date)) clube += Number(x.amount)||0; });
   });
   const despesas = (state.expenses||[]).filter(e=>e.status==='pago' && dentro(e.paidDate)).reduce((t,e)=>t+Number(e.amount||0),0);
+  // FASE 6: vendas de produto (estornadas não contam) e custo do que foi vendido
+  const vendas = (state.sales||[]).filter(v=>v.status==='ok' && dentro(v.at));
+  const produtos = vendas.reduce((t,v)=>t+(Number(v.total)||0),0);
+  const custoProdutos = vendas.reduce((t,v)=>t+(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
   const faltas = (state.appointments||[]).filter(a=>a.status==='faltou' && dentro(a.date)).length;
   const porProf = state.professionals.map(p=>{
     const aps = concl.filter(a=>a.professionalId===p.id);
@@ -7860,7 +8073,8 @@ function resumoPeriodo(de, ate){
     pags.forEach(pg=>{ const n = methodLabelPay(pg.method); porForma[n] = (porForma[n]||0) + (Number(pg.amount)||0); });
   });
   return { de, ate, atendimentos:concl.length, servicos, ticket: concl.length ? servicos/concl.length : 0,
-           clube, comissoes, despesas, faltas, resultado: servicos + clube - comissoes - despesas,
+           clube, comissoes, despesas, faltas, produtos, custoProdutos, margemProdutos: produtos - custoProdutos,
+           resultado: servicos + clube + produtos - custoProdutos - comissoes - despesas,
            porProf, porServico:Object.values(porServico).sort((a,b)=>b.valor-a.valor),
            porForma:Object.entries(porForma).map(([nome,valor])=>({nome,valor})).sort((a,b)=>b.valor-a.valor) };
 }
@@ -7873,13 +8087,13 @@ function variacao(atual, anterior){ return anterior ? (atual-anterior)/Math.abs(
 function compararMeses(ymA, ymB){
   const a = resumoPeriodo(...limitesDoMes(ymA)), b = resumoPeriodo(...limitesDoMes(ymB));
   const linhas = [['Faturamento de serviços','servicos',true],['Atendimentos concluídos','atendimentos',false],['Ticket médio','ticket',true],
-    ['Clube (recebido)','clube',true],['Comissões geradas','comissoes',true],['Despesas pagas','despesas',true],['Resultado','resultado',true],['Faltas','faltas',false]];
+    ['Clube (recebido)','clube',true],['Produtos vendidos','produtos',true],['Margem de produtos','margemProdutos',true],['Comissões geradas','comissoes',true],['Despesas pagas','despesas',true],['Resultado','resultado',true],['Faltas','faltas',false]];
   return linhas.map(([rotulo, k, dinheiro])=>({ rotulo, dinheiro, a:a[k], b:b[k], variacao: variacao(a[k], b[k]) }));
 }
 function csvDoPeriodo(r){
   const L = [['Relatório Primer Barber', `${r.de} a ${r.ate}`], [],
     ['Resumo','Valor'], ['Atendimentos concluídos', r.atendimentos], ['Faturamento de serviços', r.servicos.toFixed(2)], ['Ticket médio', r.ticket.toFixed(2)],
-    ['Clube (recebido)', r.clube.toFixed(2)], ['Comissões geradas', r.comissoes.toFixed(2)], ['Despesas pagas', r.despesas.toFixed(2)], ['Resultado', r.resultado.toFixed(2)], ['Faltas', r.faltas], [],
+    ['Clube (recebido)', r.clube.toFixed(2)], ['Produtos vendidos', r.produtos.toFixed(2)], ['Custo dos produtos vendidos', r.custoProdutos.toFixed(2)], ['Comissões geradas', r.comissoes.toFixed(2)], ['Despesas pagas', r.despesas.toFixed(2)], ['Resultado', r.resultado.toFixed(2)], ['Faltas', r.faltas], [],
     ['Profissional','Atendimentos','Faturamento','Comissão'], ...r.porProf.map(x=>[x.nome, x.qtd, x.bruto.toFixed(2), x.comissao.toFixed(2)]), [],
     ['Serviço','Quantidade','Valor'], ...r.porServico.map(x=>[x.nome, x.qtd, x.valor.toFixed(2)]), [],
     ['Forma de pagamento','Valor'], ...r.porForma.map(x=>[x.nome, x.valor.toFixed(2)])];
@@ -7919,9 +8133,10 @@ function blocoComparativo(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
         ${statCard('Faturamento', BRL(r.servicos), r.atendimentos+' atendimento(s)', 'ok')}
         ${statCard('Clube (recebido)', BRL(r.clube), 'no período', 'ok')}
+        ${statCard('Produtos', BRL(r.produtos), 'margem '+BRL(r.margemProdutos), 'ok')}
         ${statCard('Comissões', BRL(r.comissoes), 'geradas no período', 'warn')}
         ${statCard('Despesas', BRL(r.despesas), 'pagas no período', 'warn')}
-        ${statCard('Resultado', BRL(r.resultado), 'serviços + clube − comissões − despesas', r.resultado>=0?'ok':'bad')}
+        ${statCard('Resultado', BRL(r.resultado), 'serviços + clube + margem de produtos − comissões − despesas', r.resultado>=0?'ok':'bad')}
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;font-size:12.5px;">
         <div><b>Por profissional</b>${r.porProf.map(x=>`<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${esc(x.nome)} (${x.qtd})</span><span class="font-mono">${BRL(x.bruto)} · com. ${BRL(x.comissao)}</span></div>`).join('') || '<div style="color:var(--muted-2);">—</div>'}</div>
@@ -8947,8 +9162,11 @@ function resultadoDoMes(ym){
   const despesas = (state.expenses||[])
     .filter(e=>e.status==='pago' && String(e.paidDate||'').startsWith(ym))
     .reduce((t,e)=>t+Number(e.amount),0);
-  return { receitaServicos, receitaClube, comissoes, despesas,
-           resultado: receitaServicos + receitaClube - comissoes - despesas };
+  // FASE 6: margem das vendas de produto do mês (venda − custo; estornadas não contam)
+  const vendasMes = (state.sales||[]).filter(v=>v.status==='ok' && String(v.at||'').startsWith(ym));
+  const margemProdutos = vendasMes.reduce((t,v)=>t+(Number(v.total)||0)-(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
+  return { receitaServicos, receitaClube, comissoes, despesas, margemProdutos,
+           resultado: receitaServicos + receitaClube + margemProdutos - comissoes - despesas };
 }
 
 function renderDespesas(view){
