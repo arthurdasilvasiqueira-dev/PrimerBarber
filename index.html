@@ -1650,10 +1650,18 @@ const NAV_GROUPS = [
   {label:'Ajuda', items:[
     {id:'ajuda', label:'Central de Ajuda', icon:ICON.help},
   ]},
+  {label:'Primer Barber', items:[
+    {id:'plataforma', label:'Plataforma', icon:ICON.globe},
+  ]},
 ];
 const NAV = NAV_GROUPS.flatMap(g=>g.items);
+// FASE 8: o servidor decide quem é administrador da plataforma (tabela
+// platform_admins). Aqui só esconde/mostra o menu — as funções admin_* do
+// banco recusam qualquer outra pessoa.
+let souAdminPlataforma = false;
+function podeVerPlataforma(){ return souAdminPlataforma && userSession.role==='dono' && !teamSession; }
 function navAllowedForSession(){
-  if(isOwnerLevel()) return NAV.map(n=>n.id);
+  if(isOwnerLevel()) return NAV.map(n=>n.id).filter(id=>id!=='plataforma' || podeVerPlataforma());
   if(userSession.role==='recepcionista') return ['dashboard','agenda','espera','clientes','mensagens','caixa','agendamento-online','servicos','estoque','ajuda'];
   // profissional: acesso restrito à própria agenda, comissões, mensagens e ajuda
   return ['dashboard','agenda','espera','comissoes','ajuda'];
@@ -1864,6 +1872,7 @@ function renderView(){
   if(route==='clube') return renderClube(view);
   if(route==='config') return renderConfig(view);
   if(route==='minha-assinatura') return renderMinhaAssinatura(view);
+  if(route==='plataforma') return renderPlataforma(view);
   if(route==='meus-links') return renderMeusLinks(view);
   if(route==='clientes') return renderClientes(view);
   if(route==='estoque') return renderEstoque(view);
@@ -6570,6 +6579,7 @@ function renderMinhaAssinatura(view){
     active: {label:'Ativa', tone:'ok'},
     past_due: {label:'Pagamento atrasado', tone:'bad'},
     canceled: {label:'Cancelada', tone:'bad'},
+    suspended: {label:'Suspensa', tone:'bad'},
   }[shop.subscription_status] || {label: shop.subscription_status, tone:'muted'};
 
   let periodInfo = '';
@@ -9374,6 +9384,222 @@ async function carregarHistoricoServidor(){
       by: x.actor + (x.claimed_by && x.actor!=='dono' && !x.actor.includes(x.claimed_by) ? ` (tela: ${x.claimed_by})` : '') }));
   }catch(e){ return null; }
 }
+/* ============ FASE 8: PAINEL DA PLATAFORMA (dono do Primer Barber) ============ */
+// (B) assinatura da BARBEARIA no Primer Barber (Stripe). Nada aqui mexe no
+// clube das barbearias (Asaas). Toda ação passa pelas funções admin_* do banco,
+// que conferem se quem pede é administrador e registram em platform_audit.
+let plataformaAba = 'lojas';   // 'lojas' | 'metricas' | 'erros' | 'auditoria'
+let plataformaBusca = '';
+const STATUS_LOJA = {
+  trialing:'Em teste', active:'Pagando', past_due:'Pagamento atrasado',
+  canceled:'Cancelada', suspended:'Suspensa', incomplete:'Incompleta'
+};
+function statusLojaPill(l){
+  const txt = l.status==='trialing' && !l.ativa ? 'Teste vencido' : (STATUS_LOJA[l.status] || l.status || '—');
+  const tom = l.status==='suspended' || l.status==='canceled' || l.status==='past_due' || !l.ativa ? 'pill-bad'
+            : l.status==='trialing' ? 'pill-warn' : 'pill-ok';
+  return `<span class="pill ${tom}">${esc(txt)}</span>`;
+}
+const dataCurta = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+const dataHora = d => d ? new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+
+async function chamarAdmin(fn, args){
+  const { data, error } = await supa.rpc(fn, args||{});
+  if(error) return { error: /restrito/i.test(error.message||'') ? 'Acesso restrito ao administrador da plataforma.' : 'Não foi possível falar com o servidor. Tente de novo.' };
+  return data && data.error ? { error: data.error } : { data };
+}
+
+async function renderPlataforma(view){
+  if(!podeVerPlataforma()){ view.innerHTML = emptyState('Área restrita.'); return; }
+  view.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);">Carregando dados da plataforma...</div>`;
+  const aba = plataformaAba;
+  const pedidos = { m: chamarAdmin('admin_metrics') };
+  if(aba==='lojas') pedidos.l = chamarAdmin('admin_list_shops');
+  if(aba==='erros') pedidos.e = chamarAdmin('admin_errors', { p_limite: 200 });
+  if(aba==='auditoria') pedidos.a = chamarAdmin('admin_audit', {});
+  const m = await pedidos.m;
+  if(route!=='plataforma' || aba!==plataformaAba) return;   // saiu da tela
+  if(m.error){ view.innerHTML = pageHeader('Plataforma', 'Painel do Primer Barber') + emptyState(esc(m.error)); return; }
+  const met = m.data;
+  const btnAba = (id, rotulo)=>`<button class="btn ${plataformaAba===id?'btn-gold':'btn-ghost'}" data-aba-plat="${id}" style="padding:7px 14px;font-size:12.5px;">${rotulo}</button>`;
+  const precosZerados = Number(met.precoBasic)===0 && Number(met.precoPro)===0;
+  let corpo = '';
+
+  if(aba==='lojas'){
+    const r = await pedidos.l;
+    if(route!=='plataforma' || aba!==plataformaAba) return;
+    corpo = r.error ? emptyState(esc(r.error)) : `
+      <div style="margin-bottom:12px;"><input id="plat-busca" value="${esc(plataformaBusca)}" placeholder="Buscar por nome, e-mail ou link..." style="width:100%;max-width:380px;"></div>
+      <div id="plat-lista" style="display:flex;flex-direction:column;gap:8px;"></div>`;
+    view._lojas = r.data || [];
+  }
+  if(aba==='metricas'){
+    corpo = `
+      <div class="card" style="padding:18px 20px;max-width:560px;">
+        <div class="font-display" style="font-size:15px;font-weight:600;margin-bottom:6px;">Preço dos planos (para calcular o MRR)</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px;line-height:1.5;">Use o mesmo valor mensal cobrado no Stripe. Isto só serve para o cálculo deste painel — não muda nenhuma cobrança.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+          <div><label>Básico (R$/mês)</label><input id="plat-pb" type="number" min="0" step="0.01" value="${Number(met.precoBasic)||''}" style="width:130px;"></div>
+          <div><label>Pro (R$/mês)</label><input id="plat-pp" type="number" min="0" step="0.01" value="${Number(met.precoPro)||''}" style="width:130px;"></div>
+          <button class="btn btn-gold" id="plat-salvar-precos">Salvar preços</button>
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-top:14px;max-width:760px;line-height:1.6;">
+        <b>Como ler:</b> "Pagando" = assinatura ativa no Stripe. MRR = soma do preço mensal das barbearias pagando.
+        Churn do mês = barbearias que cancelaram neste mês ÷ barbearias que estavam pagando no começo do mês.
+        Cancelamentos antes desta fase não têm data guardada, então o churn começa a valer a partir de agora.
+      </div>`;
+  }
+  if(aba==='erros'){
+    const r = await pedidos.e;
+    if(route!=='plataforma' || aba!==plataformaAba) return;
+    const lista = r.data || [];
+    corpo = r.error ? emptyState(esc(r.error)) : lista.length===0
+      ? emptyState('Nenhuma falha registrada.', 'Quando o Asaas, o Stripe, o e-mail ou o push falharem, aparece aqui.')
+      : `<div style="display:flex;flex-direction:column;gap:8px;max-width:900px;">${lista.map(x=>`
+          <div class="card" style="padding:11px 15px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+            <div class="font-mono" style="font-size:11.5px;color:var(--muted-2);min-width:118px;">${dataHora(x.at)}</div>
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:13.5px;font-weight:600;">${esc(x.fonte)}${x.loja?` · <span style="color:var(--gold-bright);">${esc(x.loja)}</span>`:''}</div>
+              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;word-break:break-word;">${esc(x.mensagem)}</div>
+              ${x.detalhe?`<div class="font-mono" style="font-size:11px;color:var(--muted-2);margin-top:4px;word-break:break-word;">${esc(String(x.detalhe).slice(0,400))}</div>`:''}
+            </div>
+          </div>`).join('')}</div>`;
+  }
+  if(aba==='auditoria'){
+    const r = await pedidos.a;
+    if(route!=='plataforma' || aba!==plataformaAba) return;
+    const lista = (r.data && r.data.plataforma) || [];
+    corpo = r.error ? emptyState(esc(r.error)) : lista.length===0
+      ? emptyState('Nenhuma ação de administrador ainda.')
+      : `<div style="display:flex;flex-direction:column;gap:8px;max-width:900px;">${lista.map(x=>`
+          <div class="card" style="padding:11px 15px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+            <div class="font-mono" style="font-size:11.5px;color:var(--muted-2);min-width:118px;">${dataHora(x.at)}</div>
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:13.5px;font-weight:600;">${esc(x.acao)}${x.loja?` · ${esc(x.loja)}`:''}</div>
+              <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${esc(x.detalhe||'')}</div>
+            </div>
+            <div style="font-size:12px;color:var(--gold-bright);">${esc(x.admin||'')}</div>
+          </div>`).join('')}</div>
+        <div style="font-size:11.5px;color:var(--muted-2);margin-top:14px;">🔒 Ninguém altera nem apaga este registro.</div>`;
+  }
+
+  view.innerHTML = `
+    ${pageHeader('Plataforma', 'Visão do Primer Barber como um todo — só você vê esta tela')}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px;">
+      ${statCard('MRR (receita mensal)', BRL(Number(met.mrr)||0), precosZerados ? 'Configure os preços na aba Métricas' : met.pagantes+' pagando', precosZerados?'warn':'ok')}
+      ${statCard('Barbearias', met.total, met.novasNoMes+' nova(s) neste mês', 'ok')}
+      ${statCard('Em teste grátis', met.emTeste, met.testeVencido+' com teste vencido', met.testeVencido>0?'warn':'ok')}
+      ${statCard('Pagando', met.pagantes, 'Básico '+met.pagantesBasic+' · Pro '+met.pagantesPro, 'ok')}
+      ${statCard('Atrasadas / suspensas', (met.inadimplentes+met.suspensas), met.inadimplentes+' atrasada(s) · '+met.suspensas+' suspensa(s)', (met.inadimplentes+met.suspensas)>0?'bad':'ok')}
+      ${statCard('Churn do mês', met.churnMes==null?'—':String(met.churnMes).replace('.',',')+'%', met.canceladasNoMes+' cancelamento(s) no mês', met.canceladasNoMes>0?'bad':'ok')}
+      ${statCard('Falhas (24h)', met.errosUltimas24h, 'Asaas, Stripe, e-mail, push', met.errosUltimas24h>0?'bad':'ok')}
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      ${btnAba('lojas','Barbearias')}${btnAba('metricas','Preços e métricas')}${btnAba('erros','Falhas de integração')}${btnAba('auditoria','Ações do administrador')}
+    </div>
+    ${corpo}`;
+  view.querySelectorAll('[data-aba-plat]').forEach(b=>b.addEventListener('click', ()=>{ plataformaAba = b.dataset.abaPlat; renderPlataforma(view); }));
+
+  if(aba==='lojas' && view.querySelector('#plat-lista')){
+    const desenhar = ()=>{
+      const t = plataformaBusca.toLowerCase().trim();
+      const f = view._lojas.filter(l=>!t || ((l.nome||'')+' '+(l.email||'')+' '+(l.slug||'')).toLowerCase().includes(t));
+      view.querySelector('#plat-lista').innerHTML = f.length ? f.map(l=>`
+        <div class="card" style="padding:13px 16px;">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:14px;font-weight:600;">${esc(l.nome||'(sem nome)')} ${l.id===currentShop?.id?'<span style="font-size:11px;color:var(--muted-2);">(sua)</span>':''}</div>
+              <div style="font-size:12px;color:var(--muted);">${esc(l.email||'')} · ${esc(l.slug||'')}</div>
+            </div>
+            ${statusLojaPill(l)}
+            <span class="pill" style="background:rgba(201,162,75,.14);color:var(--gold-bright);border-color:rgba(201,162,75,.3);">${l.plano==='pro'?'Pro':'Básico'}</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted-2);margin-top:8px;line-height:1.6;">
+            Criada ${dataCurta(l.criadaEm)} · último uso ${dataCurta(l.ultimoUso)}
+            ${l.status==='trialing'?` · teste até ${dataCurta(l.fimTeste)}`:''}
+            ${l.status==='active'&&l.fimPeriodo?` · renova ${dataCurta(l.fimPeriodo)}`:''}
+            · ${l.profissionais} profissional(is) · ${l.agendamentos} agendamento(s) · ${l.assinantesClube} no clube
+            ${l.temStripe?'':' · <span style="color:var(--warn);">sem cadastro no Stripe</span>'}
+            ${l.errosUltimos7d>0?` · <span style="color:var(--bad);">${l.errosUltimos7d} falha(s) em 7 dias</span>`:''}
+            ${l.status==='suspended'?`<br><span style="color:var(--bad);">Suspensa em ${dataCurta(l.suspensaEm)}: ${esc(l.motivoSuspensao||'')} (antes: ${esc(STATUS_LOJA[l.statusAntes]||l.statusAntes||'—')})</span>`:''}
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+            ${l.status==='suspended'
+              ? `<button class="btn btn-gold" data-plat-acao="reativar" data-loja="${l.id}" style="padding:6px 12px;font-size:12px;">Reativar</button>`
+              : l.id===currentShop?.id ? '' : `<button class="btn btn-ghost" data-plat-acao="suspender" data-loja="${l.id}" style="padding:6px 12px;font-size:12px;color:var(--bad);">Suspender</button>`}
+            ${l.status!=='active' && l.status!=='suspended' ? `<button class="btn btn-ghost" data-plat-acao="estender_teste" data-loja="${l.id}" style="padding:6px 12px;font-size:12px;">Estender teste</button>` : ''}
+            <button class="btn btn-ghost" data-plat-acao="mudar_plano" data-loja="${l.id}" style="padding:6px 12px;font-size:12px;">Mudar plano</button>
+            <button class="btn btn-ghost" data-plat-acao="historico" data-loja="${l.id}" style="padding:6px 12px;font-size:12px;">Histórico</button>
+          </div>
+        </div>`).join('') : emptyState(view._lojas.length ? 'Nada encontrado para essa busca.' : 'Nenhuma barbearia cadastrada.');
+      view.querySelectorAll('[data-plat-acao]').forEach(b=>b.addEventListener('click', ()=>{
+        const loja = view._lojas.find(x=>x.id===b.dataset.loja);
+        if(loja) acaoPlataformaModal(view, loja, b.dataset.platAcao);
+      }));
+    };
+    view.querySelector('#plat-busca').addEventListener('input', e=>{ plataformaBusca = e.target.value; desenhar(); });
+    desenhar();
+  }
+  view.querySelector('#plat-salvar-precos')?.addEventListener('click', async ()=>{
+    const pb = Number(view.querySelector('#plat-pb').value), pp = Number(view.querySelector('#plat-pp').value);
+    if(!(pb>=0) || !(pp>=0)) return showToast('Preços inválidos.');
+    const r = await chamarAdmin('admin_set_prices', { p_basic: pb, p_pro: pp });
+    showToast(r.error || 'Preços salvos.');
+    if(!r.error) renderPlataforma(view);
+  });
+}
+
+async function acaoPlataformaModal(view, loja, acao){
+  const nome = esc(loja.nome || '(sem nome)');
+  if(acao==='historico'){
+    const r = await chamarAdmin('admin_audit', { p_shop: loja.id });
+    if(r.error) return showToast(r.error);
+    const linha = (at, titulo, det, quem)=>`<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
+      <span class="font-mono" style="color:var(--muted-2);font-size:11px;">${dataHora(at)}</span> · <b>${esc(titulo)}</b>
+      ${det?`<div style="color:var(--muted);">${esc(det)}</div>`:''}${quem?`<div style="color:var(--gold-bright);font-size:11.5px;">${esc(quem)}</div>`:''}</div>`;
+    const pl = r.data.plataforma||[], lj = r.data.loja||[];
+    openModal(`
+      <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:12px;">Histórico — ${nome}</div>
+      <div style="font-size:12px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Ações do administrador</div>
+      ${pl.length ? pl.map(x=>linha(x.at, x.acao, x.detalhe, x.admin)).join('') : '<div style="font-size:12.5px;color:var(--muted);">Nenhuma.</div>'}
+      <div style="font-size:12px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 4px;">Ações dentro da barbearia</div>
+      <div style="max-height:300px;overflow-y:auto;">${lj.length ? lj.map(x=>linha(x.at, x.acao, x.detalhe, x.actor)).join('') : '<div style="font-size:12.5px;color:var(--muted);">Nenhuma.</div>'}</div>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" id="pm-fechar">Fechar</button></div>`,
+      m=>m.querySelector('#pm-fechar').addEventListener('click', closeModal));
+    return;
+  }
+  const textos = {
+    suspender: { titulo:'Suspender '+nome, aviso:'A barbearia, a equipe e o link de agendamento ficam bloqueados até você reativar. Nada é apagado. Se o Stripe mandar aviso de pagamento nesse meio-tempo, ela continua suspensa.', campo:`<label>Motivo (obrigatório)</label><input id="pm-motivo" maxlength="300" style="width:100%;">`, botao:'Suspender' },
+    reativar: { titulo:'Reativar '+nome, aviso:'Volta para o status que estava antes da suspensão (ou o último aviso do Stripe que chegou): '+esc(STATUS_LOJA[loja.statusAntes]||loja.statusAntes||'Pagando')+'.', campo:'', botao:'Reativar' },
+    estender_teste: { titulo:'Estender teste de '+nome, aviso:'Dá mais dias de teste grátis a partir de hoje (ou do fim do teste atual, se ainda não venceu).', campo:`<label>Quantos dias (1 a 90)</label><input id="pm-valor" type="number" min="1" max="90" value="7" style="width:120px;">`, botao:'Estender' },
+    mudar_plano: { titulo:'Mudar plano de '+nome, aviso:'Muda o plano liberado no sistema. <b>Não muda a cobrança no Stripe</b> — se a barbearia paga, ajuste também lá.', campo:`<label>Plano</label><select id="pm-valor" style="width:160px;"><option value="basic" ${loja.plano!=='pro'?'selected':''}>Básico</option><option value="pro" ${loja.plano==='pro'?'selected':''}>Pro</option></select>
+      <label style="margin-top:10px;">Observação (opcional)</label><input id="pm-motivo" maxlength="200" style="width:100%;">`, botao:'Salvar plano' },
+  }[acao];
+  if(!textos) return;
+  openModal(`
+    <div class="font-display" style="font-size:17px;font-weight:600;margin-bottom:10px;">${textos.titulo}</div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.55;margin-bottom:14px;">${textos.aviso}</div>
+    ${textos.campo}
+    <div id="pm-erro" style="color:var(--bad);font-size:12.5px;margin-top:10px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn btn-ghost" id="pm-cancelar">Cancelar</button>
+      <button class="btn ${acao==='suspender'?'btn-ghost':'btn-gold'}" id="pm-ok" ${acao==='suspender'?'style="color:var(--bad);border-color:var(--bad);"':''}>${textos.botao}</button>
+    </div>`, m=>{
+    m.querySelector('#pm-cancelar').addEventListener('click', closeModal);
+    m.querySelector('#pm-ok').addEventListener('click', async ()=>{
+      const btn = m.querySelector('#pm-ok');
+      const motivo = m.querySelector('#pm-motivo')?.value || null;
+      const valor = m.querySelector('#pm-valor')?.value || null;
+      if(acao==='suspender' && !(motivo||'').trim()){ m.querySelector('#pm-erro').textContent = 'Informe o motivo.'; return; }
+      btn.disabled = true; btn.textContent = 'Salvando...';
+      const r = await chamarAdmin('admin_shop_action', { p_shop: loja.id, p_acao: acao, p_valor: valor, p_motivo: motivo });
+      if(r.error){ m.querySelector('#pm-erro').textContent = r.error; btn.disabled = false; btn.textContent = textos.botao; return; }
+      closeModal(); showToast('Feito.'); renderPlataforma(view);
+    });
+  });
+}
+
 async function renderAuditoria(view){
   if(!isOwnerLevel()){ view.innerHTML = emptyState('Apenas o dono ou administrador vê o histórico de ações.'); return; }
   view.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);">Carregando histórico...</div>`;
@@ -10869,6 +11095,18 @@ function shopIsActive(shop){
 }
 
 function renderPaywallScreen(shop){
+  if(shop.subscription_status==='suspended'){
+    authShell(`
+      <div class="auth-title font-display" style="font-weight:600;font-size:22px;">Conta suspensa</div>
+      <div class="auth-subtitle">O acesso a esta barbearia foi suspenso pela equipe do Primer Barber.
+        Seus dados continuam guardados. Fale com o suporte para entender e reativar.</div>
+      <button class="btn btn-ghost auth-switch" id="pw-refresh" style="margin-top:14px;">Verificar novamente</button>
+      <button class="btn btn-ghost auth-switch" id="pw-logout" style="color:var(--muted);">Sair</button>
+    `);
+    document.getElementById('pw-refresh').addEventListener('click', boot);
+    document.getElementById('pw-logout').addEventListener('click', async ()=>{ await supa.auth.signOut(); boot(); });
+    return;
+  }
   const trialExpired = shop.subscription_status==='trialing' && !shopIsActive(shop);
   authShell(`
     <div class="auth-title font-display" style="font-weight:600;font-size:22px;">
@@ -11082,6 +11320,7 @@ async function boot(){
   }
   if(!shop){ renderAuthScreen('login', 'Não encontramos sua barbearia. Fale com o suporte.'); return; }
   currentShop = shop;
+  try { const r = await supa.rpc('is_platform_admin'); souAdminPlataforma = r.data === true; } catch(e){ souAdminPlataforma = false; }
   if(!shopIsActive(shop)){ renderPaywallScreen(shop); return; }
   await loadState();
   await refreshNotifItems();
