@@ -610,6 +610,15 @@ function migrateState(){
   if(!Array.isArray(state.closedPots)) state.closedPots = [];
   if(!Array.isArray(state.expenses)) state.expenses = [];
   if(!Array.isArray(state.auditLog)) state.auditLog = [];
+  state.clubSettings = state.clubSettings || { diasTolerancia: 0 };   // FASE 4
+  // FASE 4B: downgrade agendado passa a valer no dia marcado
+  (state.subscriptionMembers||[]).forEach(m=>{
+    if(m.trocaAgendada && m.trocaAgendada.aPartirDe <= todayISO()){
+      m.eventos = [...(m.eventos||[]), { at:new Date().toISOString(), tipo:'plano trocado', detalhe:`troca agendada aplicada (${m.planId} → ${m.trocaAgendada.planId})` }];
+      m.planId = m.trocaAgendada.planId;
+      delete m.trocaAgendada;
+    }
+  });
   (state.appointments||[]).forEach(a=>{
     if(!a.depositStatus) a.depositStatus = 'nao_aplicavel';
     if(a.depositAmount==null) a.depositAmount = 0;
@@ -911,10 +920,36 @@ function assinantesOrfaos(){
     m.status!=='cancelado' && !(state.subscriptionPlans||[]).some(p=>p.id===m.planId)
   );
 }
+// FASE 4: UMA regra de "assinante em dia", usada em todo lugar (preço,
+// estrela, alertas). Tolerância = dias depois do vencimento em que o plano
+// ainda vale (Clube → Regras do clube). Pausado/cancelado/arquivado: não vale.
+function clubeTolerancia(){ return Math.max(0, Math.min(30, Number(state.clubSettings?.diasTolerancia)||0)); }
+function membroVencido(m, dataISO){
+  if(!m || !m.dueDate) return false;
+  const limite = new Date(String(m.dueDate).slice(0,10)+'T12:00');
+  limite.setDate(limite.getDate() + clubeTolerancia());
+  return limite.toISOString().slice(0,10) < (dataISO || todayISO());
+}
+function membroEmDia(m, dataISO){
+  if(!m || m.arquivado) return false;
+  if(m.status === 'pago') return true;
+  if(m.status === 'pendente' || m.status === 'atrasado') return !membroVencido(m, dataISO);
+  return false;   // pausado, cancelado
+}
+
+// FASE 4B: quantos atendimentos este assinante já usou do plano no mês do
+// atendimento (só os concluídos e cobertos pelo plano; o próprio não conta)
+function usosDoPlanoNoMes(member, plan, appt){
+  const mes = String(appt?.date||todayISO()).slice(0,7);
+  return (state.appointments||[]).filter(a=>a.id!==appt?.id && a.status==='concluido' && String(a.date).slice(0,7)===mes &&
+    (a.clubeUso ? (a.clubeUso.membroId===member.id && a.clubeUso.planoId===plan.id)
+                : (a.cobertoPeloClube && normNome(a.client)===normNome(appt?.client)))).length;
+}
+
 function clubMemberForClient(clientName){
   if(!clientName) return null;
   const alvo = normNome(clientName);
-  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado' && !m.arquivado);
 
   // 0) vínculo manual: se o dono ligou este assinante a um cliente,
   // essa ligação vale acima de qualquer tentativa de adivinhar pelo nome.
@@ -971,7 +1006,7 @@ function clubMemberForClient(clientName){
 function clubMembersForClient(clientName){
   if(!clientName) return [];
   const alvo = normNome(clientName);
-  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado' && !m.arquivado);
 
   const vinculados = ativos.filter(m=>m.linkedClientName && normNome(m.linkedClientName)===alvo);
   if(vinculados.length) return vinculados;
@@ -1016,9 +1051,8 @@ function clubStarBadge(clientName){
   const membros = clubMembersForClient(clientName);
   if(membros.length === 0) return '';
 
-  const vencidoM = m => m.dueDate && String(m.dueDate) < todayISO();
-  const emDiaM = m => m.status === 'pago' || (m.status === 'pendente' && !vencidoM(m));
-  const emDiaCount = membros.filter(emDiaM).length;
+  const vencidoM = m => membroVencido(m);
+  const emDiaCount = membros.filter(m=>membroEmDia(m)).length;
 
   let cor, txt;
   if(membros.length > 1){
@@ -1038,7 +1072,10 @@ function clubStarBadge(clientName){
 
   const m = membros[0];
   const vencido = vencidoM(m);
-  if(m.status === 'atrasado' || vencido){
+  if(m.status === 'pausado'){
+    cor = 'var(--muted-2)';
+    txt = `Assinante do clube — pausado${m.pausadoAte?` até ${new Date(m.pausadoAte+'T12:00').toLocaleDateString('pt-BR')}`:''} (paga valor cheio)`;
+  } else if(!membroEmDia(m)){
     cor = 'var(--bad)';
     txt = 'Assinante do clube — mensalidade atrasada (paga valor cheio)';
   } else if(m.status === 'pago'){
@@ -1861,9 +1898,8 @@ function viewDashboard(){
     : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
   const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
   const overdueMembers = assinantesEmAtraso().length;
-  const mrr = state.subscriptionMembers.filter(m=>m.status!=='cancelado').reduce((a,m)=>{
-    const plan = state.subscriptionPlans.find(p=>p.id===m.planId); return a+(plan?plan.price:0);
-  },0);
+  const met = metricasClube(todayISO().slice(0,7));
+  const mrr = met.mrr;
 
   return `
     ${pageHeader('Painel', new Date().toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'}))}
@@ -2516,16 +2552,18 @@ function precoParaCobrar(appt, service){
   if(membros.length === 0) return out;
 
   let melhor = null;              // o plano que cobre este serviço com o menor preço
+  let franquiaInfo = null;        // FASE 4B: plano com os atendimentos do mês já usados
   let algumEmDiaSemCobrir = null; // usado só para explicar o motivo, se nada cobrir
 
   membros.forEach(member=>{
     const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-    const vencido = member.dueDate && String(member.dueDate) < todayISO();
-    const emDia = member.status === 'pago' || (member.status === 'pendente' && !vencido);
-    if(!emDia || !plan || !planValidOnDate(plan, appt.date)) return;
+    if(!membroEmDia(member) || !plan || !planValidOnDate(plan, appt.date)) return;
 
     let candidato = null;
-    if(plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
+    const limiteUsos = Number(plan.usosPorMes)||0;
+    const franquiaEsgotada = limiteUsos > 0 && usosDoPlanoNoMes(member, plan, appt) >= limiteUsos;
+    if(franquiaEsgotada && !franquiaInfo) franquiaInfo = { plan, limite: limiteUsos };
+    if(!franquiaEsgotada && plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
       candidato = { member, plan, basePrice: 0, priceNote: ' (incluso no clube)', planoAtivo: true };
     } else if(plan.discountPercent > 0){
       candidato = { member, plan, basePrice: svc.price * (1 - plan.discountPercent/100), priceNote: ` (${plan.discountPercent}% desconto clube)`, planoAtivo: false };
@@ -2554,11 +2592,14 @@ function precoParaCobrar(appt, service){
   out.plano = planoPrincipal;
   if(!principal) return out;
 
-  const vencido = principal.dueDate && String(principal.dueDate) < todayISO();
-  const emDia = principal.status === 'pago' || (principal.status === 'pendente' && !vencido);
+  const vencido = membroVencido(principal);
+  const emDia = membroEmDia(principal);
   const maisDeUm = membros.length > 1;
 
-  if(emDia){
+  if(emDia && franquiaInfo && franquiaInfo.plan.includedServiceIds?.includes(svc.id)){
+    out.priceNote = ` (franquia do mês usada — ${franquiaInfo.limite}/${franquiaInfo.limite})`;
+    out.motivoCheio = `O plano "${franquiaInfo.plan.name}" inclui ${franquiaInfo.limite} atendimento(s) por mês, e este cliente já usou todos neste mês.`;
+  } else if(emDia){
     if(!planoPrincipal){
       out.motivoCheio = 'O plano deste assinante foi removido do sistema.';
     } else if(!planValidOnDate(planoPrincipal, appt.date)){
@@ -2571,6 +2612,9 @@ function precoParaCobrar(appt, service){
         ? `"${svc.name}" não está incluído em nenhum dos ${membros.length} planos ativos deste cliente. Se deveria estar, edite o plano certo e marque este serviço.`
         : `"${svc.name}" não está incluído no plano "${planoPrincipal.name}". Se deveria estar, edite o plano e marque este serviço.`;
     }
+  } else if(principal.status === 'pausado'){
+    out.priceNote = ' (clube pausado — valor cheio)';
+    out.motivoCheio = `A assinatura está pausada${principal.pausadoAte?` até ${new Date(principal.pausadoAte+'T12:00').toLocaleDateString('pt-BR')}`:''} — o plano não vale durante a pausa.`;
   } else if(principal.status === 'atrasado' || vencido){
     out.priceNote = ' (clube em atraso — valor cheio)';
     out.motivoCheio = principal.dueDate
@@ -2675,6 +2719,8 @@ function concludeAppt(id){
       ap.valorCobrado = totalCobrado;
       ap.valorPorServico = valorPorServico;
       ap.cobertoPeloClube = planoAtivo;
+      const itemCoberto = multi.itens.find(i=>i.calc.planoAtivo && i.calc.member && i.calc.plano);
+      ap.clubeUso = itemCoberto ? { membroId: itemCoberto.calc.member.id, planoId: itemCoberto.calc.plano.id } : null;
       const sess = s.cashSessions.find(c=>c.status==='aberto');
       const obs = `${nomesServicos} — ${ap.client}${priceNote}${(Number(desconto)>0)?` (desconto ${BRL(desconto)})`:''}${ap.depositStatus==='pago'?' (saldo, sinal já recebido)':''}`;
       // um lançamento por forma de pagamento, para o caixa somar certo
@@ -5073,7 +5119,185 @@ function svcModal(existing){
 }
 
 /* ============ CLUBE DE ASSINATURA ============ */
-function statusPillMember(status){
+// FASE 4: métricas do clube num mês ('AAAA-MM')
+function metricasClube(ym){
+  const todos = (state.subscriptionMembers||[]).filter(m=>!m.arquivado || (m.canceladoEm && m.canceladoEm.slice(0,7)===ym));
+  const preco = m => Number(state.subscriptionPlans.find(p=>p.id===m.planId)?.price)||0;
+  const ativosLista = todos.filter(m=>!['cancelado','pausado'].includes(m.status));
+  const inicioMes = ym + '-01';
+  const cancelNoMes = todos.filter(m=>m.status==='cancelado' && m.canceladoEm && m.canceladoEm.slice(0,7)===ym);
+  const novos = todos.filter(m=>m.criadoEm && m.criadoEm.slice(0,7)===ym);
+  // ativos no começo do mês = existiam antes do mês e não tinham sido cancelados antes dele
+  const ativosInicio = todos.filter(m=>(!m.criadoEm || m.criadoEm.slice(0,10) < inicioMes) &&
+    !(m.status==='cancelado' && (!m.canceladoEm || m.canceladoEm.slice(0,10) < inicioMes))).length;
+  return {
+    ativos: ativosLista.length,
+    pausados: todos.filter(m=>m.status==='pausado').length,
+    cancelados: cancelNoMes.length,
+    canceladosSemData: todos.filter(m=>m.status==='cancelado' && !m.canceladoEm && !m.arquivado).length,
+    novos: novos.length,
+    mrr: ativosLista.reduce((t,m)=>t+preco(m), 0),   // pausados e cancelados não contam
+    churn: ativosInicio ? cancelNoMes.length / ativosInicio * 100 : null,
+  };
+}
+let verMembrosArquivados = false;
+// Ação do clube que também mexe no Asaas: o servidor faz tudo e grava;
+// aqui só relemos os dados depois
+async function acaoClubeNoServidor(body){
+  const { data: res, error } = await supa.functions.invoke('asaas-sync', { body });
+  if(error || res?.error){ showToast(res?.error || 'Não foi possível falar com o servidor. Tente de novo.'); return false; }
+  const remoto = await buscarEstadoRemoto();
+  if(remoto){ state = remoto; migrateState(); }
+  return true;
+}
+function pausarMembroModal(id, view){
+  const m = state.subscriptionMembers.find(x=>x.id===id); if(!m) return;
+  const sugestao = new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  openModal(`<div style="padding:22px;">
+    <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:6px;">Pausar assinatura</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">${esc(m.name)} — durante a pausa não é gerada cobrança nova e o plano não vale (paga valor cheio).</div>
+    <label>Pausar até</label><input id="f-ate" type="date" min="${new Date(Date.now()+86400000).toISOString().slice(0,10)}" value="${sugestao}" style="width:100%;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
+    <button class="btn btn-gold" id="f-ok" style="flex:1;justify-content:center;">Pausar</button></div></div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-ok').addEventListener('click', async (e)=>{
+      const ate = root.querySelector('#f-ate').value;
+      if(!ate || ate <= todayISO()){ showToast('Escolha uma data futura.'); return; }
+      e.currentTarget.disabled = true;
+      if(m.paymentMethod==='asaas' && m.asaasSubscriptionId){
+        if(!await acaoClubeNoServidor({ action:'pause_subscription', memberId:m.id, ate })){ e.currentTarget.disabled = false; return; }
+      } else {
+        await update(s=>{ const x = s.subscriptionMembers.find(x=>x.id===m.id); if(x){ x.statusAntesDaPausa = x.status; x.status='pausado'; x.pausadoEm=new Date().toISOString(); x.pausadoAte=ate;
+          x.eventos = [...(x.eventos||[]), {at:new Date().toISOString(), tipo:'pausado', detalhe:'até '+ate}]; } });
+      }
+      update(s=>registrarAuditoria(s, 'Pausou assinatura do clube', `${m.name} até ${ate}`));
+      closeModal(); showToast('Assinatura pausada.'); renderClube(view);
+    });
+  });
+}
+function retomarMembroModal(id, view){
+  const m = state.subscriptionMembers.find(x=>x.id===id); if(!m) return;
+  const sugestao = (m.pausadoAte && m.pausadoAte > todayISO()) ? m.pausadoAte : todayISO();
+  openModal(`<div style="padding:22px;">
+    <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:6px;">Retomar assinatura</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">${esc(m.name)}</div>
+    <label>Próxima cobrança em</label><input id="f-venc" type="date" min="${todayISO()}" value="${sugestao}" style="width:100%;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
+    <button class="btn btn-gold" id="f-ok" style="flex:1;justify-content:center;">Retomar</button></div></div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-ok').addEventListener('click', async (e)=>{
+      const venc = root.querySelector('#f-venc').value;
+      if(!venc || venc < todayISO()){ showToast('Escolha hoje ou uma data futura.'); return; }
+      e.currentTarget.disabled = true;
+      if(m.paymentMethod==='asaas' && m.asaasSubscriptionId){
+        if(!await acaoClubeNoServidor({ action:'resume_subscription', memberId:m.id, nextDueDate:venc })){ e.currentTarget.disabled = false; return; }
+      } else {
+        await update(s=>{ const x = s.subscriptionMembers.find(x=>x.id===m.id); if(x){ x.status='pendente'; x.dueDate=venc; delete x.pausadoAte; delete x.statusAntesDaPausa;
+          x.eventos = [...(x.eventos||[]), {at:new Date().toISOString(), tipo:'retomado', detalhe:'próxima cobrança em '+venc}]; } });
+      }
+      update(s=>registrarAuditoria(s, 'Retomou assinatura do clube', `${m.name} — próxima cobrança ${venc}`));
+      closeModal(); showToast('Assinatura retomada.'); renderClube(view);
+    });
+  });
+}
+function cancelarMembroModal(id, view){
+  const m = state.subscriptionMembers.find(x=>x.id===id); if(!m) return;
+  const viaAsaas = m.paymentMethod==='asaas' && m.asaasSubscriptionId;
+  openModal(`<div style="padding:22px;">
+    <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:6px;">Cancelar assinatura</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.6;">${esc(m.name)}${viaAsaas ? '<br><b style="color:var(--warn);">A cobrança recorrente no Asaas também é encerrada</b> (cobranças pendentes ou vencidas dela são removidas lá; as já pagas continuam no histórico).' : ''}</div>
+    <label>Motivo (opcional)</label><input id="f-motivo" maxlength="200" placeholder="ex.: mudou de cidade" style="width:100%;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
+    <button class="btn btn-ghost" id="f-ok" style="flex:1;justify-content:center;color:var(--bad);border-color:var(--bad);">Cancelar assinatura</button></div></div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-ok').addEventListener('click', async (e)=>{
+      const motivo = root.querySelector('#f-motivo').value.trim();
+      e.currentTarget.disabled = true;
+      if(viaAsaas){
+        if(!await acaoClubeNoServidor({ action:'cancel_subscription', memberId:m.id, motivo })){ e.currentTarget.disabled = false; return; }
+      } else {
+        await update(s=>{ const x = s.subscriptionMembers.find(x=>x.id===m.id); if(x){ x.statusAntesDoCancelamento = x.status; x.status='cancelado'; x.canceladoEm=new Date().toISOString(); x.canceladoMotivo=motivo; delete x.pausadoAte;
+          x.eventos = [...(x.eventos||[]), {at:new Date().toISOString(), tipo:'cancelado', detalhe:motivo||'assinatura cancelada'}]; } });
+      }
+      update(s=>registrarAuditoria(s, 'Cancelou assinatura do clube', `${m.name}${motivo?' — '+motivo:''}`));
+      closeModal(); showToast('Assinatura cancelada.'); renderClube(view);
+    });
+  });
+}
+
+// FASE 4B: mesma conta do servidor (_shared/clube.ts) — aqui é só a PRÉVIA
+function calcularTrocaPlano(precoAtual, precoNovo, vencimento, hojeISO){
+  const atual = Number(precoAtual)||0, novo = Number(precoNovo)||0;
+  const tipo = novo > atual ? 'upgrade' : novo < atual ? 'downgrade' : 'igual';
+  let dias = 0;
+  if(vencimento && /^\d{4}-\d{2}-\d{2}$/.test(vencimento) && vencimento > hojeISO){
+    dias = Math.round((Date.parse(vencimento+'T12:00:00Z') - Date.parse(hojeISO+'T12:00:00Z')) / 86400000);
+  }
+  dias = Math.max(0, Math.min(30, dias));
+  const diferenca = tipo==='upgrade' ? Math.round((novo-atual)*dias/30*100)/100 : 0;
+  return { tipo, diasRestantes: dias, diferenca, aPartirDe: tipo==='downgrade' ? (vencimento && vencimento > hojeISO ? vencimento : hojeISO) : hojeISO };
+}
+function trocarPlanoModal(id, view){
+  const m = state.subscriptionMembers.find(x=>x.id===id); if(!m) return;
+  const atual = state.subscriptionPlans.find(p=>p.id===m.planId);
+  const outros = state.subscriptionPlans.filter(p=>p.id!==m.planId);
+  if(!outros.length){ showToast('Crie outro plano antes de trocar.'); return; }
+  openModal(`<div style="padding:22px;">
+    <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:6px;">Trocar plano</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">${esc(m.name)} — hoje no <b>${esc(atual?.name||'?')}</b> (${BRL(atual?.price||0)})</div>
+    <label>Novo plano</label><select id="f-novo" style="width:100%;margin-bottom:12px;">${outros.map(p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)}</option>`).join('')}</select>
+    <div id="f-previa" style="font-size:12.5px;line-height:1.7;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
+    <button class="btn btn-gold" id="f-ok" style="flex:1;justify-content:center;">Trocar</button></div></div>`, root=>{
+    const previa = ()=>{
+      const novo = state.subscriptionPlans.find(p=>p.id===root.querySelector('#f-novo').value);
+      let c = calcularTrocaPlano(atual?.price, novo?.price, m.dueDate, todayISO());
+      if(m.status!=='pago') c = { ...c, diferenca:0, diasRestantes:0, aPartirDe:todayISO() };
+      const data = d => new Date(d+'T12:00').toLocaleDateString('pt-BR');
+      root.querySelector('#f-previa').innerHTML =
+        c.tipo==='upgrade' ? (c.diferenca>0
+            ? `⬆ <b>Upgrade na hora.</b> Diferença proporcional dos ${c.diasRestantes} dia(s) até o vencimento: <b>${BRL(c.diferenca)}</b>${m.paymentMethod==='asaas' ? (c.diferenca>=5?' (cobrança avulsa no Asaas)':' (abaixo do mínimo do Asaas: não cobrada)') : ' (cobrar em dinheiro)'}.<br>A partir do próximo vencimento: ${BRL(novo.price)}/mês.`
+            : `⬆ <b>Upgrade na hora</b>, sem cobrança extra${m.status!=='pago'?' (o ciclo atual ainda não foi pago: a cobrança pendente passa para o valor novo)':''}. Novo valor: ${BRL(novo.price)}/mês.`)
+        : c.tipo==='downgrade'
+          ? (c.aPartirDe > todayISO()
+              ? `⬇ <b>Downgrade a partir de ${data(c.aPartirDe)}</b> (o cliente já pagou o plano atual até lá). Depois: ${BRL(novo.price)}/mês. Sem estorno.`
+              : `⬇ <b>Downgrade na hora.</b> Novo valor: ${BRL(novo.price)}/mês.`)
+          : `Mesmo valor (${BRL(novo.price)}): troca na hora.`;
+    };
+    root.querySelector('#f-novo').addEventListener('change', previa); previa();
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-ok').addEventListener('click', async (e)=>{
+      const novoId = root.querySelector('#f-novo').value;
+      const novo = state.subscriptionPlans.find(p=>p.id===novoId);
+      e.currentTarget.disabled = true;
+      if(m.paymentMethod==='asaas' && m.asaasSubscriptionId){
+        const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'change_plan', memberId:m.id, newPlanId:novoId } });
+        if(error || res?.error){ showToast(res?.error || 'Não foi possível falar com o servidor.'); e.currentTarget.disabled = false; return; }
+        const remoto = await buscarEstadoRemoto(); if(remoto){ state = remoto; migrateState(); }
+        if(res.aviso) alert(res.aviso);
+        if(res.invoiceUrl && confirm('Cobrança da diferença criada no Asaas. Abrir o link para enviar ao cliente?')) window.open(res.invoiceUrl, '_blank');
+      } else {
+        let c = calcularTrocaPlano(atual?.price, novo?.price, m.dueDate, todayISO());
+        if(m.status!=='pago') c = { ...c, diferenca:0, diasRestantes:0, aPartirDe:todayISO() };
+        await update(s=>{
+          const x = s.subscriptionMembers.find(x=>x.id===m.id); if(!x) return;
+          const agora = new Date().toISOString();
+          x.trocasDePlano = [...(x.trocasDePlano||[]), { em:agora, de:x.planId, para:novoId, tipo:c.tipo, valorProporcional:c.diferenca, diasRestantes:c.diasRestantes, cobrancaId:null }];
+          if(c.tipo==='downgrade' && c.aPartirDe > todayISO()){ x.trocaAgendada = { planId:novoId, aPartirDe:c.aPartirDe }; }
+          else { delete x.trocaAgendada; x.planId = novoId; }
+          x.eventos = [...(x.eventos||[]), { at:agora, tipo: x.trocaAgendada ? 'troca agendada' : 'plano trocado', detalhe:`${atual?.name||'?'} → ${novo?.name||'?'}` }];
+        });
+        if(c.diferenca > 0) alert(`Cobre ${BRL(c.diferenca)} do cliente (diferença proporcional) e registre no caixa.`);
+      }
+      update(s=>registrarAuditoria(s, 'Trocou plano do clube', `${m.name}: ${atual?.name||'?'} → ${novo?.name||'?'}`));
+      closeModal(); showToast('Troca de plano registrada.'); renderClube(view);
+    });
+  });
+}
+
+function statusPillMember(status, m){
+  if(m?.arquivado) return '<span class="pill pill-muted">Arquivado</span>';
+  if(status==='pausado') return `<span class="pill pill-muted">Pausado${m?.pausadoAte?' até '+new Date(m.pausadoAte+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):''}</span>`;
   if(status==='pago') return '<span class="pill pill-ok">Pago</span>';
   if(status==='pendente') return '<span class="pill pill-warn">Pendente</span>';
   if(status==='atrasado') return '<span class="pill pill-bad">Atrasado</span>';
@@ -5217,7 +5441,7 @@ async function loadSubscriptionRequests(view){
 /* Mostra quais assinantes o sistema não conseguiu casar com um cliente,
    e deixa o dono ligar cada um manualmente. */
 function vinculosModal(view){
-  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+  const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado' && !m.arquivado);
   // um assinante está "ok" se algum cliente cadastrado aponta para ele
   const clientes = (state.clients||[]);
   const casados = new Set();
@@ -5302,9 +5526,8 @@ function renderClube(view){
     view.querySelector('#btn-upgrade-clube').addEventListener('click', ()=>renderPaywallUpgrade('clube'));
     return;
   }
-  const mrr = state.subscriptionMembers.filter(m=>m.status!=='cancelado').reduce((a,m)=>{
-    const plan = state.subscriptionPlans.find(p=>p.id===m.planId); return a+(plan?plan.price:0);
-  },0);
+  const met = metricasClube(todayISO().slice(0,7));
+  const mrr = met.mrr;
   const sum = asaasSummary();
   const recebidoMes = sum.totalRecebidoAsaas + sum.totalRecebidoDinheiro;
 
@@ -5315,6 +5538,20 @@ function renderClube(view){
       ${statCard('Receita recorrente (MRR)', BRL(mrr), 'potencial mensal — assinaturas não canceladas', 'ok')}
       ${statCard('Recebido em '+new Date().toLocaleDateString('pt-BR',{month:'long'}), BRL(recebidoMes), `${state.subscriptionMembers.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).length} de ${state.subscriptionMembers.filter(m=>m.status!=='cancelado').length} assinantes já pagaram`, 'ok')}
       ${statCard('Planos disponíveis', state.subscriptionPlans.length, 'configurados', 'ok')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:14px;">
+      ${statCard('Assinantes ativos', met.ativos, met.pausados ? `${met.pausados} pausado(s)` : 'nenhum pausado', 'ok')}
+      ${statCard('Novos no mês', met.novos, 'assinaturas que começaram', 'ok')}
+      ${statCard('Cancelados no mês', met.cancelados, met.canceladosSemData ? `+${met.canceladosSemData} antigos sem data` : 'neste mês', met.cancelados ? 'warn' : 'ok')}
+      ${statCard('Churn do mês', met.churn==null ? '—' : met.churn.toFixed(1)+'%', 'cancelados ÷ ativos no início do mês', met.churn>5 ? 'bad' : 'ok')}
+    </div>
+    <div class="card" style="padding:14px 18px;margin-bottom:14px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <label>Tolerância de atraso (dias) — o plano ainda vale até X dias depois do vencimento</label>
+        <input id="f-tolerancia" type="number" min="0" max="30" value="${clubeTolerancia()}" style="width:100%;max-width:160px;">
+      </div>
+      <button class="btn btn-ghost" id="f-save-clube-regras">Salvar regra</button>
+      ${state.subscriptionMembers.some(m=>m.arquivado) ? `<button class="btn btn-ghost" id="btn-ver-membros-arquivados">${verMembrosArquivados?'Voltar aos membros':'Ver arquivados ('+state.subscriptionMembers.filter(m=>m.arquivado).length+')'}</button>` : ''}
     </div>
 
     ${(()=>{
@@ -5359,7 +5596,7 @@ function renderClube(view){
 
     ${(()=>{
       // assinantes que nenhum cliente consegue "achar" — estrela não aparece
-      const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado');
+      const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado' && !m.arquivado);
       const casados = new Set();
       (state.clients||[]).forEach(cl=>{ const m = clubMemberForClient(cl.name); if(m) casados.add(m.id); });
       const semVinculo = ativos.filter(m=>!casados.has(m.id)).length;
@@ -5475,20 +5712,26 @@ function renderClube(view){
       <table>
         <thead><tr><th>Membro</th><th>Plano</th><th>Método</th><th>Vencimento</th><th>Status</th><th></th></tr></thead>
         <tbody>
-        ${state.subscriptionMembers.map(m=>{
+        ${state.subscriptionMembers.filter(m=>verMembrosArquivados ? m.arquivado : !m.arquivado).map(m=>{
           const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
           return `<tr>
             <td style="font-weight:500;">${esc(m.name)}<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;">${esc(m.phone)}</div></td>
-            <td>${esc(plan?plan.name:'—')}</td>
+            <td>${esc(plan?plan.name:'—')}${m.trocaAgendada ? `<div style="font-size:11px;color:var(--warn);">→ ${esc(state.subscriptionPlans.find(p=>p.id===m.trocaAgendada.planId)?.name||'?')} em ${new Date(m.trocaAgendada.aPartirDe+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}</div>` : ''}${plan?.usosPorMes ? `<div style="font-size:11px;color:var(--muted-2);">usos no mês: ${usosDoPlanoNoMes(m, plan, {date:todayISO(), client:m.linkedClientName||m.name})}/${plan.usosPorMes}</div>` : ''}</td>
             <td>${methodLabel(m)}</td>
             <td class="font-mono">${m.dueDate?new Date(m.dueDate+'T00:00').toLocaleDateString('pt-BR'):'—'}</td>
-            <td>${statusPillMember(m.status)}</td>
+            <td>${statusPillMember(m.status, m)}</td>
             <td style="text-align:right;white-space:nowrap;">
               ${m.invoiceUrl ? `<a href="${m.invoiceUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 10px;text-decoration:none;">${ICON.link} Ver cobrança</a>` : ''}
               ${m.paymentMethod==='dinheiro' && m.status!=='pago' && m.status!=='cancelado' ? `<button class="btn btn-ghost" style="padding:6px 10px;color:var(--ok);border-color:var(--ok);" data-mark-cash="${m.id}">Marcar pago (dinheiro)</button>` : ''}
               <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-access-member="${m.id}" title="Criar acesso ao portal do cliente">${ICON.lock} Acesso</button>
               <button class="btn btn-ghost" style="padding:6px 8px;" data-edit-member="${m.id}">${ICON.edit}</button>
-              <button class="btn btn-ghost" style="padding:6px 8px;color:var(--bad);border-color:var(--bad);" data-del-member="${m.id}">${ICON.trash}</button>
+              ${m.arquivado ? `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-desarquivar-member="${m.id}">Restaurar</button>`
+               : m.status==='cancelado' ? `<button class="btn btn-ghost" style="padding:6px 8px;" title="Arquivar (o histórico fica)" data-del-member="${m.id}">${ICON.trash}</button>`
+               : `${m.status==='pausado'
+                    ? `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-retomar-member="${m.id}">Retomar</button>`
+                    : `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-pausar-member="${m.id}">Pausar</button>`}
+                  <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-trocar-plano="${m.id}">Trocar plano</button>
+                  <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;color:var(--bad);border-color:var(--bad);" data-cancelar-member="${m.id}">Cancelar</button>`}
             </td>
           </tr>`;
         }).join('')}
@@ -5665,14 +5908,29 @@ function renderClube(view){
   }));
   view.querySelectorAll('[data-access-member]').forEach(b=>b.addEventListener('click', ()=>clientAccessModal(state.subscriptionMembers.find(m=>m.id===b.dataset.accessMember))));
   view.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>memberModal(state.subscriptionMembers.find(m=>m.id===b.dataset.editMember))));
+  view.querySelectorAll('[data-pausar-member]').forEach(b=>b.addEventListener('click', ()=>pausarMembroModal(b.dataset.pausarMember, view)));
+  view.querySelectorAll('[data-retomar-member]').forEach(b=>b.addEventListener('click', ()=>retomarMembroModal(b.dataset.retomarMember, view)));
+  view.querySelectorAll('[data-cancelar-member]').forEach(b=>b.addEventListener('click', ()=>cancelarMembroModal(b.dataset.cancelarMember, view)));
+  view.querySelectorAll('[data-trocar-plano]').forEach(b=>b.addEventListener('click', ()=>trocarPlanoModal(b.dataset.trocarPlano, view)));
+  view.querySelectorAll('[data-desarquivar-member]').forEach(b=>b.addEventListener('click', ()=>{
+    update(s=>{ const x = s.subscriptionMembers.find(x=>x.id===b.dataset.desarquivarMember); if(x){ delete x.arquivado; registrarAuditoria(s, 'Restaurou assinante arquivado', x.name); } });
+    renderClube(view);
+  }));
+  view.querySelector('#btn-ver-membros-arquivados')?.addEventListener('click', ()=>{ verMembrosArquivados = !verMembrosArquivados; renderClube(view); });
+  view.querySelector('#f-save-clube-regras')?.addEventListener('click', ()=>{
+    const dias = Math.max(0, Math.min(30, parseInt(view.querySelector('#f-tolerancia').value, 10) || 0));
+    update(s=>{ s.clubSettings = { ...(s.clubSettings||{}), diasTolerancia: dias }; registrarAuditoria(s, 'Mudou tolerância de atraso do clube', `${dias} dia(s)`); });
+    showToast(dias ? `Tolerância: o plano vale até ${dias} dia(s) depois do vencimento.` : 'Sem tolerância: venceu e não pagou, paga valor cheio.');
+    renderClube(view);
+  });
   view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>{
     const m = state.subscriptionMembers.find(x=>x.id===b.dataset.delMember);
     if(!m) return;
-    if(!confirm(`Excluir o assinante "${m.name}"?\n\nO histórico de pagamentos dele também sai. Se ele só parou de assinar, prefira mudar o status para "cancelado".\n\nEsta ação não pode ser desfeita.`)) return;
-    update(s=>{
-      s.subscriptionMembers = s.subscriptionMembers.filter(x=>x.id!==m.id);
-      registrarAuditoria(s, 'Excluiu assinante do clube', m.name);
-    });
+    // FASE 4: só arquiva (some da lista); pagamentos e pote continuam iguais
+    if(m.status!=='cancelado'){ showToast('Cancele a assinatura antes de arquivar.'); return; }
+    if(!confirm(`Arquivar "${m.name}"?\n\nSai da lista de membros, mas o histórico de pagamentos e o pote continuam iguais. Dá para restaurar em "Ver arquivados".`)) return;
+    update(s=>{ const x = s.subscriptionMembers.find(x=>x.id===m.id); if(x){ x.arquivado = true; x.arquivadoEm = new Date().toISOString(); } registrarAuditoria(s, 'Arquivou assinante do clube', m.name); });
+    renderClube(view);
   }));
   view.querySelectorAll('[data-mark-cash]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{
@@ -5811,6 +6069,8 @@ function planModal(existing){
         </div>
         <div><label>Desconto do assinante em serviços e produtos extras (%)</label><input id="f-discount" type="number" step="1" min="0" max="100" value="${existing?.discountPercent??0}" style="width:100%;">
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Vale para qualquer serviço fora dos incluídos no plano e também para a venda de produtos.</div>
+        <div><label>Atendimentos inclusos por mês (0 = ilimitado)</label><input id="f-usos" type="number" step="1" min="0" max="99" value="${existing?.usosPorMes??0}" style="width:100%;">
+          <div style="font-size:11.5px;color:var(--muted-2);margin-top:4px;">Ex.: 4 = até 4 atendimentos cobertos pelo plano no mês. Depois disso, cobra o valor normal (com o desconto acima, se houver).</div></div>
         </div>
         <div>
           <label>Benefícios para a página pública (um por linha)</label>
@@ -5836,6 +6096,7 @@ function planModal(existing){
       const category = root.querySelector('#f-category').value.trim();
       const price = parseFloat(root.querySelector('#f-price').value);
       const discountPercent = parseFloat(root.querySelector('#f-discount').value)||0;
+      const usosPorMes = Math.max(0, Math.min(99, parseInt(root.querySelector('#f-usos').value, 10) || 0));
       const includedServiceIds = [...root.querySelectorAll('.f-service-check:checked')].map(c=>c.value);
       const benefits = root.querySelector('#f-benefits').value.trim();
       const benefitsList = root.querySelector('#f-benefits-list').value.split('\n').map(l=>l.trim()).filter(Boolean);
@@ -5845,7 +6106,7 @@ function planModal(existing){
       if(!name || isNaN(price)){ showToast('Preencha nome e valor.'); return; }
       if(validDays.length===0){ showToast('Marque pelo menos um dia de validade do plano.'); return; }
       update(s=>{
-        const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden, validDays};
+        const dados = {name, category, price, discountPercent, includedServiceIds, benefits, benefitsList, featured, hidden, validDays, usosPorMes};
         if(isEdit){ const alvo = s.subscriptionPlans.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, dados); }
         else{ s.subscriptionPlans.push({id:uid(), ...dados}); }
       });
@@ -5892,7 +6153,7 @@ function memberModal(existing, prefill){
           </select>
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Use quando o nome no clube for diferente do nome na agenda (apelido, nome incompleto, etc).</div>
         </div>` : ''}
-        <div><label>Plano</label><select id="f-plan" style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
+        <div><label>Plano</label><select id="f-plan" ${existing && existing.status!=='cancelado' ? 'disabled title="Use o botão Trocar plano na lista"' : ''} style="width:100%;">${state.subscriptionPlans.map(p=>`<option value="${p.id}" ${existing?.planId===p.id?'selected':''}>${esc(p.name)} — ${BRL(p.price)}/mês</option>`).join('')}</select></div>
         <div><label>Forma de pagamento</label><select id="f-method" style="width:100%;">
           <option value="asaas" ${!existing||existing.paymentMethod==='asaas'?'selected':''}>Pix / Cartão (via Asaas)</option>
           <option value="dinheiro" ${existing?.paymentMethod==='dinheiro'?'selected':''}>Dinheiro</option>
@@ -5904,6 +6165,7 @@ function memberModal(existing, prefill){
             <option value="pendente" ${!existing||existing.status==='pendente'?'selected':''}>Pendente</option>
             <option value="atrasado" ${existing?.status==='atrasado'?'selected':''}>Atrasado</option>
             <option value="cancelado" ${existing?.status==='cancelado'?'selected':''}>Cancelado</option>
+            ${existing?.status==='pausado' ? `<option value="pausado" selected>Pausado (use "Retomar" na lista)</option>` : ''}
           </select></div>
         </div>
         <div style="font-size:11.5px;color:var(--muted-2);">Membros via Pix/Cartão têm o status atualizado pela sincronização com o Asaas. Membros em dinheiro são marcados como pagos manualmente na lista.</div>
@@ -5965,6 +6227,12 @@ function memberModal(existing, prefill){
       const linkedClientName = root.querySelector('#f-linked')?.value || (existing?.linkedClientName || '');
       const cpf = root.querySelector('#f-cpf').value.trim();
       const novoStatus = root.querySelector('#f-status').value;
+      // FASE 4: pausar/retomar/cancelar têm botões próprios (que também
+      // mudam no Asaas). Aqui só se o assinante não é cobrado pelo Asaas.
+      if(existing?.status==='pausado' && novoStatus!=='pausado'){ showToast('Para tirar da pausa, use "Retomar" na lista de membros.'); return; }
+      if(novoStatus==='cancelado' && existing?.status!=='cancelado' && (paymentMethod==='asaas' || existing?.asaasSubscriptionId)){
+        showToast('Para cancelar, use o botão "Cancelar" na lista — ele cancela a cobrança no Asaas também.'); return;
+      }
       const data = {
         name, phone, email, cpf, planId, paymentMethod, linkedClientName,
         dueDate: root.querySelector('#f-due').value,
@@ -5994,7 +6262,8 @@ function memberModal(existing, prefill){
       // assinante Pix/Cartão. Se já estiver certo, nada muda; se estiver
       // defasado (troca feita antes desta correção), acerta agora.
       if(isEdit && paymentMethod==='asaas' && existing?.asaasSubscriptionId){
-        const novoPlano = state.subscriptionPlans.find(p=>p.id===planId);
+        // troca agendada (downgrade): o Asaas já está com o valor NOVO — não desfaz
+        const novoPlano = state.subscriptionPlans.find(p=>p.id===(existing.trocaAgendada?.planId || planId));
         if(novoPlano){
           const btnEdit = root.querySelector('#f-submit');
           btnEdit.disabled = true; btnEdit.textContent = 'Atualizando no Asaas...';
@@ -6034,7 +6303,7 @@ function memberModal(existing, prefill){
         submitBtn.disabled = false; submitBtn.textContent = isEdit?'Salvar':'Adicionar membro';
         if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
         if(result?.error){ showToast(result.error); return; }
-        update(s=>{ s.subscriptionMembers.push({id:newMemberId, asaasChargeId:'', asaasSubscriptionId:result.subscriptionId, asaasCustomerId:result.customerId, invoiceUrl:result.invoiceUrl, lastPaymentDate:null, lastPaymentAmount:0, ...data}); });
+        update(s=>{ s.subscriptionMembers.push({id:newMemberId, criadoEm:new Date().toISOString(), asaasChargeId:'', asaasSubscriptionId:result.subscriptionId, asaasCustomerId:result.customerId, invoiceUrl:result.invoiceUrl, lastPaymentDate:null, lastPaymentAmount:0, ...data}); });
         showToast('Assinante cadastrado e cobrança recorrente criada no Asaas.');
         closeModal();
         return;
@@ -6043,6 +6312,7 @@ function memberModal(existing, prefill){
         if(isEdit){
           const alvo = s.subscriptionMembers.find(x=>x.id===existing.id);
           if(alvo){
+            if(data.status==='cancelado' && alvo.status!=='cancelado') alvo.canceladoEm = new Date().toISOString();
             Object.assign(alvo, data);
             if(desfezPagamentoDoMes){
               // desfez o recebimento do mês: tira também do histórico
@@ -6053,7 +6323,7 @@ function memberModal(existing, prefill){
           }
         }
         else{
-          const novoMembro = {id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, ...data};
+          const novoMembro = {id:uid(), asaasChargeId:'', asaasSubscriptionId:'', asaasCustomerId:'', invoiceUrl:'', lastPaymentDate:null, lastPaymentAmount:0, criadoEm:new Date().toISOString(), ...data};
           if(novoMembro.lastPaymentDate) registrarPagamentoNoHistorico(novoMembro, novoMembro.lastPaymentDate, novoMembro.lastPaymentAmount);
           s.subscriptionMembers.push(novoMembro);
         }
