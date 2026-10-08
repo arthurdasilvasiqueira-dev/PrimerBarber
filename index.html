@@ -660,7 +660,8 @@ function limparAvisoDeFalha(){
 function bloqueioDoServidor(error){
   const hint = error?.hint || '';
 //  - agenda_conflito: outro aparelho/cliente ocupou o horário no meio → recarrega a agenda.
-  if(hint!=='shop_inactive' && hint!=='plan_limit' && hint!=='agenda_conflito') return false;
+//  - lancamento_protegido: tentou apagar/alterar dinheiro já lançado (Fase 5).
+  if(hint!=='shop_inactive' && hint!=='plan_limit' && hint!=='agenda_conflito' && hint!=='lancamento_protegido') return false;
   showToast(error.message || 'Operação não permitida pelo seu plano.');
   setTimeout(boot, hint==='shop_inactive' ? 1200 : 2600);
   return true;
@@ -1448,21 +1449,33 @@ function registrarPagamentoNoHistorico(m, dateISO, amount){
   const dia = String(dateISO).slice(0,10);
   if(dia.length < 10) return;
   if(!Array.isArray(m.paymentHistory)) m.paymentHistory = [];
-  if(m.paymentHistory.some(h=>h.date===dia)) return;
+  if(m.paymentHistory.some(h=>h.date===dia && !h.estornado)) return;
   m.paymentHistory.push({date:dia, amount:Number(amount)||0});
 }
 function pagouNoMes(m, ym){
   if(!m) return false;
-  if(Array.isArray(m.paymentHistory) && m.paymentHistory.some(h=>String(h.date).slice(0,7)===ym)) return true;
+  if(Array.isArray(m.paymentHistory) && m.paymentHistory.some(h=>!h.estornado && String(h.date).slice(0,7)===ym)) return true;
+  if(Array.isArray(m.paymentHistory) && m.paymentHistory.some(h=>h.estornado && String(h.date).slice(0,7)===ym)) return false;
   if(!m.lastPaymentDate) return false;
   return String(m.lastPaymentDate).slice(0,7) === ym;
 }
+// FASE 5: o pote / a receita do clube no mês = o que foi RECEBIDO no mês
+// (valor de cada pagamento, + diferenças de troca de plano), não o preço
+// atual do plano — mudar o preço do plano não reescreve meses passados.
+// Pagamento sem valor registrado (importação antiga): usa o preço do plano.
+function recebidoDoMembroNoMes(m, ym){
+  const plano = Number(state.subscriptionPlans.find(p=>p.id===m.planId)?.price)||0;
+  const valor = v => (Number(v)||0) > 0 ? Number(v) : plano;
+  let total = 0;
+  const hist = (Array.isArray(m.paymentHistory) ? m.paymentHistory : []).filter(h=>String(h.date).slice(0,7)===ym);
+  if(hist.length){ hist.filter(h=>!h.estornado).forEach(h=>{ total += valor(h.amount); }); }
+  else if(m.lastPaymentDate && String(m.lastPaymentDate).slice(0,7)===ym){ total += valor(m.lastPaymentAmount); }
+  (Array.isArray(m.ajustesPagos) ? m.ajustesPagos : []).forEach(a=>{ if(String(a.date).slice(0,7)===ym) total += Number(a.amount)||0; });
+  return total;
+}
 function clubMonthlyPot(ym){
   const mes = ym || todayISO().slice(0,7);
-  return state.subscriptionMembers.filter(m=>pagouNoMes(m, mes)).reduce((total,m)=>{
-    const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
-    return total + (plan ? plan.price : 0);
-  }, 0);
+  return state.subscriptionMembers.reduce((total,m)=>total + recebidoDoMembroNoMes(m, mes), 0);
 }
 function clubFichaEntries(customPeriod = null){
   const monthPrefix = customPeriod || currentPeriod();
@@ -4445,9 +4458,11 @@ function renderComissoes(view){
     const w = state.withdrawalRequests.find(x=>x.id===b.dataset.approveWithdrawal);
     if(!w) return;
     update(s=>{
-      s.commissionPayments.push({id:uid(), professionalId:w.professionalId, amount:w.amount, date:new Date().toISOString(), source:'saque'});
+      // FASE 5: saque já pago (por outro aparelho, ou segundo toque) não paga de novo
       const target = s.withdrawalRequests.find(x=>x.id===w.id);
-      if(target){ target.status='pago'; target.resolvedAt=new Date().toISOString(); }
+      if(!target || target.status!=='pendente') return;
+      s.commissionPayments.push({id:uid(), chave:`saque:${w.id}`, professionalId:w.professionalId, amount:w.amount, date:new Date().toISOString(), source:'saque'});
+      target.status='pago'; target.resolvedAt=new Date().toISOString();
       registrarAuditoria(s, 'Pagou saque', `${profName(w.professionalId)} — ${BRL(w.amount)}`);
     });
     showToast('Saque marcado como pago.');
@@ -4567,6 +4582,7 @@ function withdrawalRequestModal(prof){
   });
 }
 function valeModal(profId, view){
+  const valeIdUnico = uid();   // FASE 5: identidade deste vale (evita lançar duas vezes)
   if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode dar vale.'); return; }
   const prof = state.professionals.find(p=>p.id===profId);
   if(!prof) return;
@@ -4613,15 +4629,18 @@ function valeModal(profId, view){
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
-    root.querySelector('#v-save').addEventListener('click', ()=>{
+    root.querySelector('#v-save').addEventListener('click', (e)=>{
+      const chaveVale = 'vale:' + valeIdUnico;
       const amount = parseFloat(root.querySelector('#v-amount').value);
       const origem = root.querySelector('input[name="v-origem"]:checked').value;
       const note = root.querySelector('#v-note').value.trim();
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
       if(origem==='caixa' && !openSession()){ showToast('Abra o caixa antes de dar vale em dinheiro.'); return; }
+      e.currentTarget.disabled = true;   // FASE 5: dois toques não lançam dois vales
       update(s=>{
+        if(s.commissionPayments.some(x=>x.chave===chaveVale)) return;
         s.commissionPayments.push({
-          id:uid(), professionalId:profId, amount, date:new Date().toISOString(),
+          id:uid(), chave:chaveVale, professionalId:profId, amount, date:new Date().toISOString(),
           source:'vale', origem, note,
         });
         registrarAuditoria(s, 'Deu vale', `${prof.name} — ${BRL(amount)} (${origem==='caixa'?'do caixa':'por fora'})${note?' — '+note:''}`);
@@ -4660,8 +4679,13 @@ function payServiceCommission(profId){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const amount = parseFloat(root.querySelector('#f-amount').value);
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
+      root.querySelector('#f-submit').disabled = true;
+      // FASE 5: a chave é o "retrato" do que já estava pago quando a tela abriu —
+      // outro aparelho (ou um segundo toque) pagando o mesmo saldo é recusado
+      const chave = `servico:${profId}:${Math.round(c.paid*100)}`;
       update(s=>{
-        s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal()});
+        if(s.commissionPayments.some(x=>x.chave===chave)){ return; }
+        s.commissionPayments.push({id:uid(), chave, professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal()});
         registrarAuditoria(s, 'Pagou comissão de serviços', `${profName(profId)} — ${BRL(amount)}`);
       });
       closeModal();
@@ -4698,8 +4722,11 @@ function reopenClubMonthModal(){
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#ro-ok').addEventListener('click', ()=>{
       update(s=>{
+        // FASE 5: já reaberto por outro aparelho → não estorna de novo
+        if(!(s.closedPots||[]).some(x=>x.period===period && x.status==='fechado')) return;
+        const vez = (s.closedPots||[]).filter(x=>x.period===period).length;
         linhas.forEach(([pid,v])=>{
-          s.commissionPayments.push({id:uid(), professionalId:pid, amount:-v, date:new Date().toISOString(), source:'pote', period, reversal:true});
+          s.commissionPayments.push({id:uid(), chave:`estorno-pote:${period}:${pid}:${vez}`, professionalId:pid, amount:-v, date:new Date().toISOString(), source:'pote', period, reversal:true});
         });
         (s.closedPots||[]).forEach(x=>{ if(x.period===period && x.status==='fechado'){ x.status='reaberto'; x.reopenedAt=new Date().toISOString(); x.reopenedBy=quemEstaLogado(); } });
         registrarAuditoria(s, 'Reabriu o fechamento do pote', `${periodLabelBR(period)} — estornou ${BRL(linhas.reduce((a,[,v])=>a+v,0))}`);
@@ -4738,8 +4765,11 @@ function closeClubMonthModal(){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const fb = clubFichasBreakdown(period);   // mês ainda aberto → números ao vivo
       update(s=>{
+        // FASE 5: mês já fechado (outro aparelho fechou no meio) → não paga de novo
+        if((s.closedPots||[]).some(x=>x.period===period && x.status==='fechado')) return;
+        const vez = (s.closedPots||[]).filter(x=>x.period===period).length;
         rows.forEach(r=>{
-          s.commissionPayments.push({id:uid(), professionalId:r.prof.id, amount:r.owed, date:new Date().toISOString(), source:'pote', period});
+          s.commissionPayments.push({id:uid(), chave:`pote:${period}:${r.prof.id}:${vez}`, professionalId:r.prof.id, amount:r.owed, date:new Date().toISOString(), source:'pote', period});
         });
         // congela os números do mês no momento do fechamento
         if(!Array.isArray(s.closedPots)) s.closedPots = [];
@@ -6316,7 +6346,8 @@ function memberModal(existing, prefill){
             Object.assign(alvo, data);
             if(desfezPagamentoDoMes){
               // desfez o recebimento do mês: tira também do histórico
-              alvo.paymentHistory = (alvo.paymentHistory||[]).filter(h=>String(h.date).slice(0,7)!==mesAtual);
+              // FASE 5: nada é apagado — o pagamento do mês fica marcado como estornado
+              (alvo.paymentHistory||[]).forEach(h=>{ if(String(h.date).slice(0,7)===mesAtual && !h.estornado){ h.estornado = true; h.estornadoEm = new Date().toISOString(); } });
             } else if(data.lastPaymentDate){
               registrarPagamentoNoHistorico(alvo, data.lastPaymentDate, data.lastPaymentAmount);
             }
@@ -7793,6 +7824,113 @@ function rankingClientes(ym){
   return lista.slice(0,8).map(x=>({...x, pct:(x.total/soma)*100}));
 }
 
+// ============ FASE 5: COMPARAR MESES E RELATÓRIO POR PERÍODO ============
+// Números de UM período (datas 'AAAA-MM-DD', inclusivas). Mesmas contas
+// das outras telas: valor real cobrado, comissão serviço a serviço,
+// clube pelo que foi RECEBIDO, despesas PAGAS no período.
+function resumoPeriodo(de, ate){
+  const dentro = d => d && String(d).slice(0,10) >= de && String(d).slice(0,10) <= ate;
+  const concl = (state.appointments||[]).filter(a=>a.status==='concluido' && dentro(a.date));
+  const servicos = concl.reduce((t,a)=>t+valorRealAtendimento(a),0);
+  const comissoes = concl.reduce((t,a)=>{ const p = state.professionals.find(x=>x.id===a.professionalId); return t + (p ? comissaoDoAtendimento(a, p) : 0); },0);
+  let clube = 0;
+  (state.subscriptionMembers||[]).forEach(m=>{
+    const plano = Number(state.subscriptionPlans.find(p=>p.id===m.planId)?.price)||0;
+    const hist = (Array.isArray(m.paymentHistory) ? m.paymentHistory : []);
+    if(hist.length) hist.filter(h=>!h.estornado && dentro(h.date)).forEach(h=>{ clube += (Number(h.amount)||0) > 0 ? Number(h.amount) : plano; });
+    else if(dentro(m.lastPaymentDate)) clube += (Number(m.lastPaymentAmount)||0) > 0 ? Number(m.lastPaymentAmount) : plano;
+    (Array.isArray(m.ajustesPagos) ? m.ajustesPagos : []).forEach(x=>{ if(dentro(x.date)) clube += Number(x.amount)||0; });
+  });
+  const despesas = (state.expenses||[]).filter(e=>e.status==='pago' && dentro(e.paidDate)).reduce((t,e)=>t+Number(e.amount||0),0);
+  const faltas = (state.appointments||[]).filter(a=>a.status==='faltou' && dentro(a.date)).length;
+  const porProf = state.professionals.map(p=>{
+    const aps = concl.filter(a=>a.professionalId===p.id);
+    return { nome:p.name, qtd:aps.length, bruto:aps.reduce((t,a)=>t+valorRealAtendimento(a),0), comissao:aps.reduce((t,a)=>t+comissaoDoAtendimento(a,p),0) };
+  }).filter(r=>r.qtd>0).sort((a,b)=>b.bruto-a.bruto);
+  const porServico = {};
+  concl.forEach(a=>{
+    const itens = Array.isArray(a.valorPorServico) && a.valorPorServico.length ? a.valorPorServico
+      : (Array.isArray(a.serviceIds) && a.serviceIds.length ? a.serviceIds : [a.serviceId]).map((id,i)=>({serviceId:id, valor: i===0 ? valorRealAtendimento(a) : 0}));
+    itens.forEach(it=>{ const n = serviceById(it.serviceId)?.name || 'Serviço removido';
+      porServico[n] = porServico[n] || {nome:n, qtd:0, valor:0}; porServico[n].qtd++; porServico[n].valor += Number(it.valor)||0; });
+  });
+  const porForma = {};
+  concl.forEach(a=>{
+    const pags = Array.isArray(a.pagamentos) && a.pagamentos.length ? a.pagamentos : [{method:a.paymentMethod||'dinheiro', amount:valorRealAtendimento(a)}];
+    pags.forEach(pg=>{ const n = methodLabelPay(pg.method); porForma[n] = (porForma[n]||0) + (Number(pg.amount)||0); });
+  });
+  return { de, ate, atendimentos:concl.length, servicos, ticket: concl.length ? servicos/concl.length : 0,
+           clube, comissoes, despesas, faltas, resultado: servicos + clube - comissoes - despesas,
+           porProf, porServico:Object.values(porServico).sort((a,b)=>b.valor-a.valor),
+           porForma:Object.entries(porForma).map(([nome,valor])=>({nome,valor})).sort((a,b)=>b.valor-a.valor) };
+}
+function limitesDoMes(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return [`${ym}-01`, new Date(Date.UTC(y, m, 0)).toISOString().slice(0,10)];
+}
+// variação percentual (null quando não dá para comparar)
+function variacao(atual, anterior){ return anterior ? (atual-anterior)/Math.abs(anterior)*100 : null; }
+function compararMeses(ymA, ymB){
+  const a = resumoPeriodo(...limitesDoMes(ymA)), b = resumoPeriodo(...limitesDoMes(ymB));
+  const linhas = [['Faturamento de serviços','servicos',true],['Atendimentos concluídos','atendimentos',false],['Ticket médio','ticket',true],
+    ['Clube (recebido)','clube',true],['Comissões geradas','comissoes',true],['Despesas pagas','despesas',true],['Resultado','resultado',true],['Faltas','faltas',false]];
+  return linhas.map(([rotulo, k, dinheiro])=>({ rotulo, dinheiro, a:a[k], b:b[k], variacao: variacao(a[k], b[k]) }));
+}
+function csvDoPeriodo(r){
+  const L = [['Relatório Primer Barber', `${r.de} a ${r.ate}`], [],
+    ['Resumo','Valor'], ['Atendimentos concluídos', r.atendimentos], ['Faturamento de serviços', r.servicos.toFixed(2)], ['Ticket médio', r.ticket.toFixed(2)],
+    ['Clube (recebido)', r.clube.toFixed(2)], ['Comissões geradas', r.comissoes.toFixed(2)], ['Despesas pagas', r.despesas.toFixed(2)], ['Resultado', r.resultado.toFixed(2)], ['Faltas', r.faltas], [],
+    ['Profissional','Atendimentos','Faturamento','Comissão'], ...r.porProf.map(x=>[x.nome, x.qtd, x.bruto.toFixed(2), x.comissao.toFixed(2)]), [],
+    ['Serviço','Quantidade','Valor'], ...r.porServico.map(x=>[x.nome, x.qtd, x.valor.toFixed(2)]), [],
+    ['Forma de pagamento','Valor'], ...r.porForma.map(x=>[x.nome, x.valor.toFixed(2)])];
+  return L.map(l=>l.map(c=>`"${String(c??'').replace(/"/g,'""')}"`).join(';')).join('\n');
+}
+let relatComp = null, relatDe = null, relatAte = null;
+function blocoComparativo(){
+  const ymA = relatComp?.a || todayISO().slice(0,7), ymB = relatComp?.b || shiftYM(ymA, -1);
+  const linhas = compararMeses(ymA, ymB);
+  const fmt = (v, din) => din ? BRL(v) : (Number.isInteger(v) ? v : v.toFixed(1));
+  const seta = (l)=>{ if(l.variacao==null) return '<span style="color:var(--muted-2);">—</span>';
+    const ruim = (l.rotulo==='Despesas pagas' || l.rotulo==='Faltas' || l.rotulo==='Comissões geradas') ? l.variacao>0 : l.variacao<0;
+    return `<span style="color:${Math.abs(l.variacao)<0.05?'var(--muted)':ruim?'var(--bad)':'var(--ok)'};">${l.variacao>0?'▲':l.variacao<0?'▼':'='} ${Math.abs(l.variacao).toFixed(1)}%</span>`; };
+  const de = relatDe || limitesDoMes(todayISO().slice(0,7))[0], ate = relatAte || todayISO();
+  const r = resumoPeriodo(de, ate);
+  return `
+    <div class="card" style="padding:18px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Comparar meses</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+          <input type="month" id="rel-comp-a" value="${ymA}" max="${todayISO().slice(0,7)}"> <span style="color:var(--muted);">vs</span>
+          <input type="month" id="rel-comp-b" value="${ymB}" max="${todayISO().slice(0,7)}">
+        </div>
+      </div>
+      <table><thead><tr><th></th><th>${esc(periodLabelBR(ymA))}</th><th>${esc(periodLabelBR(ymB))}</th><th>Variação</th></tr></thead><tbody>
+        ${linhas.map(l=>`<tr><td>${esc(l.rotulo)}</td><td class="font-mono">${fmt(l.a,l.dinheiro)}</td><td class="font-mono" style="color:var(--muted);">${fmt(l.b,l.dinheiro)}</td><td class="font-mono">${seta(l)}</td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Relatório por período</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+          de <input type="date" id="rel-de" value="${de}" max="${todayISO()}"> até <input type="date" id="rel-ate" value="${ate}" max="${todayISO()}">
+          <button class="btn btn-ghost" id="rel-csv" style="padding:6px 12px;">${ICON.arrowDown} Exportar CSV</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
+        ${statCard('Faturamento', BRL(r.servicos), r.atendimentos+' atendimento(s)', 'ok')}
+        ${statCard('Clube (recebido)', BRL(r.clube), 'no período', 'ok')}
+        ${statCard('Comissões', BRL(r.comissoes), 'geradas no período', 'warn')}
+        ${statCard('Despesas', BRL(r.despesas), 'pagas no período', 'warn')}
+        ${statCard('Resultado', BRL(r.resultado), 'serviços + clube − comissões − despesas', r.resultado>=0?'ok':'bad')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;font-size:12.5px;">
+        <div><b>Por profissional</b>${r.porProf.map(x=>`<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${esc(x.nome)} (${x.qtd})</span><span class="font-mono">${BRL(x.bruto)} · com. ${BRL(x.comissao)}</span></div>`).join('') || '<div style="color:var(--muted-2);">—</div>'}</div>
+        <div><b>Por serviço</b>${r.porServico.slice(0,12).map(x=>`<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${esc(x.nome)} (${x.qtd})</span><span class="font-mono">${BRL(x.valor)}</span></div>`).join('') || '<div style="color:var(--muted-2);">—</div>'}</div>
+        <div><b>Por forma de pagamento</b>${r.porForma.map(x=>`<div style="display:flex;justify-content:space-between;padding:3px 0;"><span>${esc(x.nome)}</span><span class="font-mono">${BRL(x.valor)}</span></div>`).join('') || '<div style="color:var(--muted-2);">—</div>'}</div>
+      </div>
+    </div>`;
+}
+
 function renderRelatorios(view){
   const done = state.appointments.filter(a=>a.status==='concluido');
   const ticketMedio = done.length ? done.reduce((a,ap)=>a+valorRealAtendimento(ap),0)/done.length : 0;
@@ -7808,7 +7946,7 @@ function renderRelatorios(view){
 
   const bySvc = state.services.map(s=>({
     name:s.name,
-    count: done.filter(a=>a.serviceId===s.id).length
+    count: done.filter(a=>(Array.isArray(a.serviceIds) && a.serviceIds.length ? a.serviceIds : [a.serviceId]).includes(s.id)).length
   })).sort((a,b)=>b.count-a.count);
   const maxSvc = Math.max(1, ...bySvc.map(b=>b.count));
 
@@ -7823,9 +7961,8 @@ function renderRelatorios(view){
     const apps = doneSemana.filter(a=>a.professionalId===p.id);
     const bruto = apps.reduce((t,a)=>t+valorRealAtendimento(a),0);
     const comissao = apps.reduce((t,a)=>{
-      const v = valorRealAtendimento(a);
-      if(v<=0) return t; // coberto pelo clube: não gera comissão de serviço
-      return t + v*(effectiveCommissionPercent(p, a.serviceId)/100);
+      // FASE 5: a MESMA conta da tela de Comissões (serviço por serviço)
+      return t + comissaoDoAtendimento(a, p);
     },0);
     return { prof:p, valor:bruto, comissao, lucro: bruto-comissao, qtd: apps.length };
   }).sort((a,b)=>b.valor-a.valor);
@@ -7839,9 +7976,7 @@ function renderRelatorios(view){
     const apps = doneMes.filter(a=>a.professionalId===p.id);
     const bruto = apps.reduce((t,a)=>t+valorRealAtendimento(a),0);
     const comissao = apps.reduce((t,a)=>{
-      const v = valorRealAtendimento(a);
-      if(v<=0) return t;
-      return t + v*(effectiveCommissionPercent(p, a.serviceId)/100);
+      return t + comissaoDoAtendimento(a, p);   // FASE 5: mesma conta das Comissões
     },0);
     return { prof:p, valor:bruto, comissao, lucro: bruto-comissao, qtd: apps.length };
   }).sort((a,b)=>b.valor-a.valor);
@@ -7852,6 +7987,7 @@ function renderRelatorios(view){
 
   view.innerHTML = `
     ${pageHeader('Relatórios', 'Desempenho com base nos atendimentos concluídos')}
+    ${isOwnerLevel() ? blocoComparativo() : ''}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px;">
       ${statCard('Ticket médio', BRL(ticketMedio), 'por atendimento concluído', 'ok')}
       ${statCard('Taxa de ocupação', ocupacao+'%', 'agendamentos concluídos vs. total', 'ok')}
@@ -7995,6 +8131,22 @@ function renderRelatorios(view){
     <div style="margin-top:14px;font-size:12px;color:var(--muted-2);">Os relatórios são calculados em tempo real a partir da agenda e do caixa — sem necessidade de exportação manual.</div>
   `;
   view.querySelector('#rel-sem-prev')?.addEventListener('click', ()=>{ relatSemana = addDaysISO(relatSemana,-7); renderRelatorios(view); });
+  // FASE 5: comparar meses / período
+  const mudaComp = ()=>{ relatComp = { a: view.querySelector('#rel-comp-a').value || todayISO().slice(0,7), b: view.querySelector('#rel-comp-b').value || shiftYM(todayISO().slice(0,7),-1) }; renderRelatorios(view); };
+  view.querySelector('#rel-comp-a')?.addEventListener('change', mudaComp);
+  view.querySelector('#rel-comp-b')?.addEventListener('change', mudaComp);
+  const mudaPeriodo = ()=>{ const de = view.querySelector('#rel-de').value, ate = view.querySelector('#rel-ate').value;
+    if(!de || !ate || de > ate){ showToast('A data inicial precisa ser antes da final.'); return; }
+    relatDe = de; relatAte = ate; renderRelatorios(view); };
+  view.querySelector('#rel-de')?.addEventListener('change', mudaPeriodo);
+  view.querySelector('#rel-ate')?.addEventListener('change', mudaPeriodo);
+  view.querySelector('#rel-csv')?.addEventListener('click', ()=>{
+    const r = resumoPeriodo(relatDe || limitesDoMes(todayISO().slice(0,7))[0], relatAte || todayISO());
+    const blob = new Blob(['\uFEFF' + csvDoPeriodo(r)], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob); const a = document.createElement('a');
+    a.href = url; a.download = `relatorio-${r.de}-a-${r.ate}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    showToast('Relatório exportado.');
+  });
   view.querySelector('#rel-sem-next')?.addEventListener('click', ()=>{ relatSemana = addDaysISO(relatSemana,7); renderRelatorios(view); });
   view.querySelector('#rel-mes-prev')?.addEventListener('click', ()=>{ relatMes = shiftYM(relatMes,-1); renderRelatorios(view); });
   view.querySelector('#rel-mes-next')?.addEventListener('click', ()=>{ relatMes = shiftYM(relatMes,1); renderRelatorios(view); });
