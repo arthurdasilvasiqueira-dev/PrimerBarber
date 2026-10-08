@@ -607,6 +607,9 @@ function migrateState(){
     if(!Array.isArray(m.paymentHistory)) m.paymentHistory = [];
     if(m.lastPaymentDate) registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
   });
+  if(!Array.isArray(state.closedPots)) state.closedPots = [];
+  if(!Array.isArray(state.expenses)) state.expenses = [];
+  if(!Array.isArray(state.auditLog)) state.auditLog = [];
   (state.appointments||[]).forEach(a=>{
     if(!a.depositStatus) a.depositStatus = 'nao_aplicavel';
     if(a.depositAmount==null) a.depositAmount = 0;
@@ -641,27 +644,72 @@ function limparAvisoDeFalha(){
   document.getElementById('save-error-bar')?.remove();
 }
 
+// O servidor recusou o salvamento por uma regra de cobrança (o banco
+// confere isso desde a Fase 2A — a tela sozinha não basta):
+//  - shop_inactive: a assinatura venceu → recarrega e cai na tela de planos;
+//  - plan_limit: passou do limite do plano → avisa e volta ao dado salvo.
+function bloqueioDoServidor(error){
+  const hint = error?.hint || '';
+//  - agenda_conflito: outro aparelho/cliente ocupou o horário no meio → recarrega a agenda.
+  if(hint!=='shop_inactive' && hint!=='plan_limit' && hint!=='agenda_conflito') return false;
+  showToast(error.message || 'Operação não permitida pelo seu plano.');
+  setTimeout(boot, hint==='shop_inactive' ? 1200 : 2600);
+  return true;
+}
+
 let salvandoAgora = false;
-async function persist(){
-  if(!supa || !currentShop) return;
+// Versão da linha da barbearia no servidor, lida junto com os dados. É o que
+// impede dois aparelhos de se sobrescreverem: o salvamento só vale se a
+// versão ainda for a mesma de quando lemos (senão relê e refaz).
+let versaoRemota = null;
+
+async function persist(){   // devolve 'ok' | 'conflito' | 'erro'
+  if(!supa || !currentShop) return 'erro';
   salvandoAgora = true;
   setTimeout(()=>{ salvandoAgora = false; }, 1500);
   try{
     if(teamSession){
-      // Equipe logada por PIN — grava por uma função que revalida o PIN
-      const { data: res, error } = await supa.rpc('team_save', {
+      // Equipe logada por PIN — o servidor revalida o PIN e decide o que o
+      // nível de acesso desta pessoa pode alterar.
+      const args = {
         p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId,
         p_pin: teamSession.pin, p_data: state
-      });
-      if(error || res?.error){ avisarFalhaAoSalvar(error || res.error); }
-      else { limparAvisoDeFalha(); }
-      return;
+      };
+      let { data: res, error } = await supa.rpc('team_save', { ...args, p_expected_version: versaoRemota });
+      if(error && /could not find the function|PGRST202/i.test((error.message||'')+(error.code||''))){
+        // banco ainda na versão antiga (sem controle de versão)
+        ({ data: res, error } = await supa.rpc('team_save', args));
+      }
+      if(res?.conflict) return 'conflito';
+      if(error && bloqueioDoServidor(error)) return 'erro';
+      if(error || res?.error){ avisarFalhaAoSalvar(error || res.error); return 'erro'; }
+      if(res?.version != null) versaoRemota = res.version;
+      if(res?.ignored?.length){
+        console.warn('Alterações não permitidas para o seu perfil (o servidor ignorou):', res.ignored);
+        if(!persist._avisouIgnorado){
+          persist._avisouIgnorado = true;
+          showToast('Algumas alterações não foram salvas: o seu perfil não tem permissão para elas.');
+        }
+      }
+      limparAvisoDeFalha();
+      return 'ok';
     }
     const slug = state?.onlineBooking?.slug || null;
-    const { error } = await supa.from('shops').update({ data: state, booking_slug: slug || null }).eq('id', currentShop.id);
-    if(error){ avisarFalhaAoSalvar(error); }
-    else { limparAvisoDeFalha(); }
-  }catch(e){ avisarFalhaAoSalvar(e); }
+    const alvo = supa.from('shops').update({ data: state, booking_slug: slug || null }).eq('id', currentShop.id);
+    if(versaoRemota == null){
+      // não sabemos a versão (banco antigo): grava como sempre foi
+      const { error } = await alvo;
+      if(error){ if(!bloqueioDoServidor(error)) avisarFalhaAoSalvar(error); return 'erro'; }
+      limparAvisoDeFalha();
+      return 'ok';
+    }
+    const { data: linhas, error } = await alvo.eq('version', versaoRemota).select('version');
+    if(error){ if(!bloqueioDoServidor(error)) avisarFalhaAoSalvar(error); return 'erro'; }
+    if(!linhas || linhas.length === 0) return 'conflito';   // alguém gravou no meio
+    if(linhas[0].version != null) versaoRemota = linhas[0].version;
+    limparAvisoDeFalha();
+    return 'ok';
+  }catch(e){ avisarFalhaAoSalvar(e); return 'erro'; }
 }
 /* Aplica a alteração sobre o dado MAIS RECENTE do servidor, não sobre o que
    está na memória deste navegador. Sem isso, dois aparelhos usando ao mesmo
@@ -675,7 +723,11 @@ function update(mutator){
   // 2) e enfileira a gravação segura (uma de cada vez, na ordem)
   filaDeSalvamento = filaDeSalvamento.then(()=>salvarComMerge(mutator)).catch(e=>{
     console.error(e);
+    return 'erro';
   });
+  // quem precisa, pode esperar a gravação terminar: resolve com
+  // 'ok' | 'erro' | 'conflito' (e só deve seguir — e-mail, aviso — se 'ok')
+  return filaDeSalvamento;
 }
 
 async function buscarEstadoRemoto(){
@@ -686,31 +738,46 @@ async function buscarEstadoRemoto(){
         p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId, p_pin: teamSession.pin
       });
       if(error || !res?.ok) return null;
+      versaoRemota = (res.version != null) ? res.version : null;
       return res.data;
     }
-    const { data, error } = await supa.from('shops').select('data').eq('id', currentShop.id).maybeSingle();
-    if(error || !data) return null;
-    return data.data;
+    let r = await supa.from('shops').select('data, version').eq('id', currentShop.id).maybeSingle();
+    if(r.error && /version/i.test(r.error.message||'')){
+      // banco ainda sem a coluna de versão
+      r = await supa.from('shops').select('data').eq('id', currentShop.id).maybeSingle();
+    }
+    if(r.error || !r.data) return null;
+    versaoRemota = (r.data.version != null) ? r.data.version : null;
+    return r.data.data;
   }catch(e){ return null; }
 }
 
 async function salvarComMerge(mutator){
-  const remoto = await buscarEstadoRemoto();
-  if(remoto){
-    // aplica a MESMA alteração sobre os dados frescos do servidor
-    const anterior = state;
-    state = remoto;
-    try{
-      migrateState();
-      mutator(state);
-    }catch(e){
-      // se a alteração não fizer sentido no dado novo, mantém o que tínhamos
-      console.error('Não foi possível aplicar sobre os dados novos', e);
-      state = anterior;
+  let resultado = 'erro';
+  for(let tentativa = 0; tentativa < 5; tentativa++){
+    const remoto = await buscarEstadoRemoto();
+    if(remoto){
+      // aplica a MESMA alteração sobre os dados frescos do servidor
+      const anterior = state;
+      state = remoto;
+      try{
+        migrateState();
+        mutator(state);
+      }catch(e){
+        // se a alteração não fizer sentido no dado novo, mantém o que tínhamos
+        console.error('Não foi possível aplicar sobre os dados novos', e);
+        state = anterior;
+      }
     }
+    resultado = await persist();
+    if(resultado !== 'conflito') break;
+    // Outro aparelho (ou um cliente agendando pelo link) gravou entre a
+    // nossa leitura e a nossa gravação: relê e refaz sobre o dado novo.
+    if(tentativa === 4) avisarFalhaAoSalvar(new Error('Outro aparelho estava gravando ao mesmo tempo. Tente de novo.'));
+    await new Promise(r=>setTimeout(r, 120 * (tentativa + 1)));
   }
-  await persist();
-  render();
+  try{ render(); }catch(e){ console.error(e); }   // falha de tela não muda o resultado da gravação
+  return resultado;
 }
 function showToast(msg){
   clearTimeout(toastTimer);
@@ -1091,6 +1158,7 @@ function mesclarClientesDuplicados(grupo, idParaManter){
     // remove os registros de cliente duplicados
     const idsRemover = new Set(outros.map(o=>o.id));
     s.clients = s.clients.filter(c=>!idsRemover.has(c.id));
+    registrarAuditoria(s, 'Mesclou clientes duplicados', `${nomesAntigos.join(', ')} → ${nomeNovo}`);
   });
 }
 
@@ -1325,6 +1393,19 @@ function maybeAwardReferral(client){
 // lastPaymentDate guarda só o ÚLTIMO pagamento e é sobrescrito todo mês —
 // então, sozinho, ele "apaga" o mês anterior. Para o pote de meses passados
 // sair certo, guardamos também cada mês pago em paymentHistory.
+/* ===== HISTÓRICO DE AÇÕES (auditoria) =====
+   Registra QUEM fez o quê nas operações sensíveis (dinheiro, comissão,
+   exclusões). Fica guardado junto dos dados da barbearia. */
+function quemEstaLogado(){
+  try{ if(userSession && userSession.professionalId) return profName(userSession.professionalId); }catch(e){}
+  return (typeof state!=='undefined' && state && state.ownerName) || 'Dono';
+}
+function registrarAuditoria(s, acao, detalhe){
+  if(!s) return;
+  if(!Array.isArray(s.auditLog)) s.auditLog = [];
+  s.auditLog.push({id:uid(), at:new Date().toISOString(), by:quemEstaLogado(), acao, detalhe:String(detalhe||'').slice(0,300)});
+  if(s.auditLog.length > 1500) s.auditLog = s.auditLog.slice(-1000);
+}
 function registrarPagamentoNoHistorico(m, dateISO, amount){
   if(!m || !dateISO) return;
   const dia = String(dateISO).slice(0,10);
@@ -1383,6 +1464,30 @@ function clubFichasBreakdown(customPeriod = null){
     const value = totalFichas>0 ? potStaff*(fichas/totalFichas) : 0;
     return {prof:p, fichas, value};
   }).filter(r=>r.fichas>0);
+
+  // Mês já FECHADO: os números ficam congelados no que foi realmente pago.
+  // Sem isso, editar um atendimento antigo mudava um mês que já foi pago.
+  const snap = pegarSnapshotPote(period);
+  if(snap){
+    return {
+      potTotal:snap.potTotal, potStaff:snap.potStaff, potBarbearia:snap.potBarbearia,
+      staffPercent:snap.staffPercent, totalFichas:snap.totalFichas, entries,
+      rows: snap.rows.map(r=>({prof:(state.professionals||[]).find(p=>p.id===r.profId) || {id:r.profId, name:r.name}, fichas:r.fichas, value:r.value})),
+      congelado:true,
+    };
+  }
+  if(monthAlreadyClosed(period)){
+    // fechado antes do congelamento existir: usa o que foi pago de verdade
+    const pagos = {};
+    (state.commissionPayments||[]).filter(cp=>cp.source==='pote' && cp.period===period)
+      .forEach(cp=>{ pagos[cp.professionalId] = (pagos[cp.professionalId]||0) + Number(cp.amount); });
+    const rowsPagos = (state.professionals||[])
+      .map(p=>({prof:p, fichas:byProf[p.id]||0, value:pagos[p.id]||0}))
+      .filter(r=>r.value>0 || r.fichas>0);
+    const totalPago = Object.values(pagos).reduce((a,v)=>a+v,0);
+    const potTotalPago = staffPercent>0 ? totalPago/(staffPercent/100) : totalPago;
+    return {potTotal:potTotalPago, potStaff:totalPago, potBarbearia:potTotalPago-totalPago, staffPercent, totalFichas, entries, rows:rowsPagos, congelado:'legado'};
+  }
   return {potTotal, potStaff, potBarbearia, staffPercent, totalFichas, entries, rows};
 }
 
@@ -1470,6 +1575,7 @@ const NAV_GROUPS = [
   {label:'Financeiro', items:[
     {id:'caixa', label:'Caixa', icon:ICON.cash},
     {id:'comissoes', label:'Comissões', icon:ICON.percent},
+    {id:'despesas', label:'Despesas', icon:ICON.receipt},
     {id:'central', label:'Central de Inteligência', icon:ICON.chart},
     {id:'relatorios', label:'Relatórios', icon:ICON.chart},
   ]},
@@ -1487,6 +1593,7 @@ const NAV_GROUPS = [
     {id:'minha-assinatura', label:'Configurações da Conta', icon:ICON.shield},
     {id:'config', label:'Integração Asaas', icon:ICON.gear},
     {id:'notafiscal', label:'Notas Fiscais', icon:ICON.receipt},
+    {id:'auditoria', label:'Histórico de Ações', icon:ICON.clock},
   ]},
   {label:'Ajuda', items:[
     {id:'ajuda', label:'Central de Ajuda', icon:ICON.help},
@@ -1662,7 +1769,7 @@ function openProfileSwitchModal(){
         ${state.professionals.slice().sort(byName).map(p=>`
           <div style="display:flex;gap:8px;align-items:center;">
             <div style="flex:1;font-size:13.5px;">${esc(p.name)} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
-            <input type="password" maxlength="4" placeholder="PIN" data-pin-for="${p.id}" style="width:70px;text-align:center;">
+            <input type="password" maxlength="8" inputmode="numeric" placeholder="PIN" data-pin-for="${p.id}" style="width:84px;text-align:center;">
             <button class="btn btn-ghost" style="padding:8px 10px;" data-login-prof="${p.id}">Entrar</button>
           </div>
         `).join('')}
@@ -1716,6 +1823,8 @@ function renderView(){
   if(route==='espera') return renderWaitlist(view);
   if(route==='notafiscal') return renderNotaFiscal(view);
   if(route==='ajuda') return renderAjuda(view);
+  if(route==='auditoria') return renderAuditoria(view);
+  if(route==='despesas') return renderDespesas(view);
   if(route==='configuracoes') return renderConfiguracoes(view);
 }
 
@@ -2241,6 +2350,7 @@ function reabrirComanda(apptId, view){
   }
   const a = state.appointments.find(x=>x.id===apptId);
   if(!a) return;
+  if(!confirmarSeMesFechado(a.date, 'Reabrir esta comanda')) return;
   const svc = serviceById(a.serviceId);
 
   // acha o lançamento que este atendimento gerou no caixa
@@ -2298,7 +2408,7 @@ function reabrirComanda(apptId, view){
         Ao reabrir:<br>
         • O atendimento volta para <b>"agendado"</b><br>
         • O valor sai da <b>comissão</b> do profissional<br>
-        • ${caixaFechado ? 'Um estorno é lançado no caixa de hoje' : lancamento ? 'O lançamento sai do caixa' : 'Nada muda no caixa'}
+        • ${caixaFechado ? 'Um estorno é lançado no caixa de hoje' : lancamento ? 'Um estorno é lançado no caixa (o lançamento original fica no histórico)' : 'Nada muda no caixa'}
       </div>
 
       <button class="btn btn-gold" id="rc-confirmar" style="width:100%;justify-content:center;padding:13px;">Reabrir comanda</button>
@@ -2319,11 +2429,19 @@ function reabrirComanda(apptId, view){
         ap.status = 'agendado';
         ap.paymentMethod = null;
         ap.reabertoEm = new Date().toISOString();
+        registrarAuditoria(s, 'Reabriu comanda', `${ap.client} — ${appointmentServiceNames(ap)} (${ap.date}) — ${BRL(valor)}`);
 
         if(lancamento){
           const sess = s.cashSessions.find(x=>x.id===sessaoDoLancamento.id);
           if(sess && sess.status==='aberto'){
-            sess.entries = sess.entries.filter(e=>e.id!==lancamento.id);
+            // NÃO apaga o lançamento original: registra uma saída de estorno.
+            // Assim o histórico do caixa continua completo e auditável.
+            sess.entries.push({
+              id:uid(), type:'saida', method:lancamento.method || 'dinheiro',
+              estorno:true, apptId,
+              desc:`Estorno — ${appointmentServiceNames(ap)} de ${ap.client} (comanda reaberta)`,
+              amount: valor, time:new Date().toTimeString().slice(0,5), auto:true,
+            });
           } else if(sess){
             // caixa fechado: não mexe no passado, lança o estorno hoje
             const hoje = s.cashSessions.find(x=>x.status==='aberto');
@@ -2888,8 +3006,10 @@ function apptActionsModal(apptId, view){
     });
     root.querySelector('#ac-cancelar')?.addEventListener('click', ()=>{
       if(!confirm('Cancelar este agendamento?')) return;
-      update(s=>{ s.appointments.find(y=>y.id===a.id).status='cancelado'; });
+      const eraAtivo = a.status!=='cancelado';
+      const gravando = update(s=>{ s.appointments.find(y=>y.id===a.id).status='cancelado'; });
       showToast('Agendamento cancelado.'); recarrega();
+      if(eraAtivo && currentShop) gravando.then(()=>enviarEmailAgendamento({ tipo:'cancelamento', shopId: currentShop.id, appointmentId: a.id }));
     });
     root.querySelector('#ac-cancelar-serie')?.addEventListener('click', ()=>{
       const futuros = state.appointments.filter(x=>x.seriesId===a.seriesId && x.status!=='cancelado' && x.status!=='concluido' && x.date>=a.date);
@@ -2905,7 +3025,12 @@ function apptActionsModal(apptId, view){
     });
     root.querySelector('#ac-reabrir')?.addEventListener('click', ()=>{ closeModal(); reabrirComanda(a.id, view); });
     root.querySelector('#ac-reativar')?.addEventListener('click', ()=>{
-      update(s=>{ s.appointments.find(y=>y.id===a.id).status='agendado'; });
+      // enquanto estava cancelado, o horário pode ter sido ocupado por outro
+      const choqueAoSalvar = state.appointments.some(x=>x.id!==a.id && x.professionalId===a.professionalId && x.date===a.date &&
+        x.status!=='cancelado' && x.status!=='faltou' &&
+        timesOverlap(x.time, appointmentDuration(x), a.time, appointmentDuration(a)));
+      if(choqueAoSalvar && !confirm('⚠ Esse horário já foi ocupado por outro agendamento.\n\nReativar mesmo assim, como um encaixe?')) return;
+      update(s=>{ const y = s.appointments.find(y=>y.id===a.id); y.status='agendado'; if(choqueAoSalvar) y.encaixe = true; });
       showToast('Agendamento reativado.'); recarrega();
     });
     root.querySelector('#ac-excluir')?.addEventListener('click', ()=>{
@@ -2978,11 +3103,18 @@ function editarServicoModal(apptId, view){
       const svcs = servicosMarcados();
       if(svcs.length===0){ showToast('Marque ao menos um serviço.'); return; }
       const serviceIds = svcs.map(s=>s.id);
+      const durNova = svcs.reduce((t,sv)=>t+(Number(sv.duration)||30),0);
+      const choqueAoSalvar = a.status!=='concluido' && a.status!=='cancelado' &&
+        state.appointments.some(x=>x.id!==a.id && x.professionalId===a.professionalId && x.date===a.date &&
+          x.status!=='cancelado' && x.status!=='faltou' &&
+          timesOverlap(x.time, appointmentDuration(x), a.time, durNova));
+      if(choqueAoSalvar && !confirm('⚠ Com essa duração, o horário passa a bater com outro agendamento.\n\nSalvar mesmo assim, como um encaixe?')) return;
       update(s=>{
         const ap = s.appointments.find(x=>x.id===apptId);
         if(!ap) return;
         ap.serviceIds = serviceIds;
         ap.serviceId = serviceIds[0];
+        if(choqueAoSalvar) ap.encaixe = true;
       });
       closeModal();
       showToast('Serviço atualizado.');
@@ -3045,12 +3177,19 @@ function reagendarModal(apptId, view){
       const d = root.querySelector('#r-date').value;
       const t = root.querySelector('#r-time').value;
       if(!d || !t){ showToast('Preencha data e horário.'); return; }
-      update(s=>{
+      const choqueAoSalvar = state.appointments.some(x=>x.id!==a.id && x.professionalId===pid && x.date===d &&
+        x.status!=='cancelado' && x.status!=='faltou' &&
+        timesOverlap(x.time, appointmentDuration(x), t, appointmentDuration(a)));
+      if(choqueAoSalvar && !confirm('⚠ Já existe outro agendamento nesse horário.\n\nSalvar mesmo assim, como um encaixe?')) return;
+      const gravando = update(s=>{
         const x = s.appointments.find(y=>y.id===a.id);
         x.professionalId = pid; x.date = d; x.time = t;
+        x.encaixe = choqueAoSalvar || undefined;
         x.confirmed = false;
+        x.reminderSent = false;   // horário novo: o lembrete de 2h precisa valer pro novo horário
         if(x.status==='confirmado') x.status='agendado';
       });
+      if(currentShop) gravando.then(r=>{ if(r==='ok') enviarEmailAgendamento({ tipo:'reagendamento', shopId: currentShop.id, appointmentId: a.id }); });
       closeModal();
       showToast(`Reagendado para ${new Date(d+'T12:00').toLocaleDateString('pt-BR')} às ${t}.`);
       if(view) renderAgenda(view);
@@ -3757,8 +3896,22 @@ function periodLabel(period){
   const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   return `${meses[parseInt(m)-1]}/${y}`;
 }
+// Fechado = há pagamento de pote LÍQUIDO no mês. Reabrir não apaga nada:
+// registra um estorno (valor negativo) que zera o líquido.
 function monthAlreadyClosed(period){
-  return state.commissionPayments.some(c=>c.source==='pote' && c.period===period);
+  const liquido = (state.commissionPayments||[])
+    .filter(c=>c.source==='pote' && c.period===period)
+    .reduce((a,c)=>a+Number(c.amount),0);
+  return liquido > 0.004;
+}
+function pegarSnapshotPote(period){
+  return (state.closedPots||[]).filter(x=>x.period===period && x.status==='fechado').slice(-1)[0] || null;
+}
+// Avisa antes de mexer num atendimento de um mês cujo pote já foi pago.
+function confirmarSeMesFechado(dateISO, acao){
+  const ym = String(dateISO||'').slice(0,7);
+  if(!ym || !monthAlreadyClosed(ym)) return true;
+  return confirm(`O pote de ${periodLabel(ym)} já foi fechado e pago.\n\n${acao} NÃO muda o que já foi pago — o fechamento fica congelado.\n\nContinuar mesmo assim?`);
 }
 /* Congela o valor cobrado nos atendimentos antigos.
    Depois disso, mudar plano/status não altera mais comissões do passado. */
@@ -4070,6 +4223,7 @@ function renderComissoes(view){
         </div>
         <div style="display:flex;align-items:center;gap:16px;">
           <div style="text-align:right;"><div style="font-size:11px;color:var(--muted-2);">Total do fechamento</div><div class="font-mono" style="font-size:18px;color:var(--gold-bright);">${BRL(totalPotOwed)}</div></div>
+          ${closed ? `<button class="btn btn-ghost" id="btn-reopen-month" style="font-size:12.5px;">Reabrir fechamento</button>` : ''}
           <button class="btn btn-gold" id="btn-close-month" ${closed || totalPotOwed<=0 ? 'disabled':''}>${ICON.check} Fechar mês do clube</button>
         </div>
       </div>
@@ -4126,6 +4280,7 @@ function renderComissoes(view){
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
   view.querySelectorAll('[data-vale]').forEach(b=>b.addEventListener('click', ()=>valeModal(b.dataset.vale, view)));
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
+  view.querySelector('#btn-reopen-month')?.addEventListener('click', reopenClubMonthModal);
   view.querySelector('#btn-request-withdrawal')?.addEventListener('click', ()=>withdrawalRequestModal(myProf));
   view.querySelector('#btn-save-club-pct')?.addEventListener('click', ()=>{
     const val = parseFloat(view.querySelector('#f-club-staff-pct').value);
@@ -4140,6 +4295,7 @@ function renderComissoes(view){
       s.commissionPayments.push({id:uid(), professionalId:w.professionalId, amount:w.amount, date:new Date().toISOString(), source:'saque'});
       const target = s.withdrawalRequests.find(x=>x.id===w.id);
       if(target){ target.status='pago'; target.resolvedAt=new Date().toISOString(); }
+      registrarAuditoria(s, 'Pagou saque', `${profName(w.professionalId)} — ${BRL(w.amount)}`);
     });
     showToast('Saque marcado como pago.');
     renderComissoes(view);
@@ -4147,7 +4303,7 @@ function renderComissoes(view){
   view.querySelectorAll('[data-decline-withdrawal]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{
       const target = s.withdrawalRequests.find(x=>x.id===b.dataset.declineWithdrawal);
-      if(target){ target.status='recusado'; target.resolvedAt=new Date().toISOString(); }
+      if(target){ target.status='recusado'; target.resolvedAt=new Date().toISOString(); registrarAuditoria(s, 'Recusou saque', `${profName(target.professionalId)} — ${BRL(target.amount)}`); }
     });
     showToast('Pedido de saque recusado.');
     renderComissoes(view);
@@ -4213,8 +4369,11 @@ function trocarServicoGrupoModal(g, view){
     root.querySelector('#tg-save').addEventListener('click', ()=>{
       const novoServId = root.querySelector('#tg-service').value;
       if(!novoServId){ showToast('Escolha o serviço correto.'); return; }
+      const mesesFechados = [...new Set(g.apps.map(ap=>String(ap.date).slice(0,7)).filter(ym=>monthAlreadyClosed(ym)))];
+      if(mesesFechados.length && !confirm(`Há atendimentos de mês(es) já fechado(s) (${mesesFechados.map(periodLabel).join(', ')}).\n\nTrocar o serviço NÃO muda o que já foi pago — o fechamento fica congelado.\n\nContinuar?`)) return;
       update(s=>{
         s.appointments.forEach(ap=>{ if(idsAfetados.includes(ap.id)) ap.serviceId = novoServId; });
+        registrarAuditoria(s, 'Trocou o serviço de atendimentos em lote', `${idsAfetados.length} atendimento(s) → ${serviceById(novoServId)?.name||novoServId}`);
       });
       closeModal();
       showToast(`${idsAfetados.length} atendimento(s) corrigido(s).`);
@@ -4312,6 +4471,7 @@ function valeModal(profId, view){
           id:uid(), professionalId:profId, amount, date:new Date().toISOString(),
           source:'vale', origem, note,
         });
+        registrarAuditoria(s, 'Deu vale', `${prof.name} — ${BRL(amount)} (${origem==='caixa'?'do caixa':'por fora'})${note?' — '+note:''}`);
         if(origem==='caixa'){
           const sess = s.cashSessions.find(x=>x.status==='aberto');
           sess.entries.push({
@@ -4347,12 +4507,56 @@ function payServiceCommission(profId){
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const amount = parseFloat(root.querySelector('#f-amount').value);
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
-      update(s=>{ s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal()}); });
+      update(s=>{
+        s.commissionPayments.push({id:uid(), professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal()});
+        registrarAuditoria(s, 'Pagou comissão de serviços', `${profName(profId)} — ${BRL(amount)}`);
+      });
       closeModal();
       showToast('Comissão de serviços paga.');
     });
   });
 }
+/* Reabrir um mês fechado NÃO apaga nada: registra um estorno (valor
+   negativo) de cada pagamento do pote e marca o fechamento como reaberto. */
+function reopenClubMonthModal(){
+  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode reabrir um fechamento.'); return; }
+  const period = currentPeriod();
+  if(!monthAlreadyClosed(period)){ showToast('Este mês não está fechado.'); return; }
+  const porProf = {};
+  (state.commissionPayments||[]).filter(c=>c.source==='pote' && c.period===period)
+    .forEach(c=>{ porProf[c.professionalId] = (porProf[c.professionalId]||0) + Number(c.amount); });
+  const linhas = Object.entries(porProf).filter(([,v])=>v>0.004);
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Reabrir ${periodLabelBR(period)}</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.7;margin-bottom:14px;">
+        Nada é apagado: o sistema registra um <b>estorno</b> de cada pagamento abaixo, e o mês volta a poder ser fechado.<br>
+        <b style="color:var(--warn);">Se você já entregou o dinheiro aos profissionais, o acerto é por fora do sistema.</b>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+        ${linhas.map(([pid,v])=>`<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:8px 12px;background:var(--panel-2);border-radius:8px;"><span>${esc(profName(pid))}</span><span class="font-mono">${BRL(v)}</span></div>`).join('')}
+      </div>
+      <button class="btn btn-gold" id="ro-ok" style="width:100%;justify-content:center;">Reabrir e estornar</button>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#ro-ok').addEventListener('click', ()=>{
+      update(s=>{
+        linhas.forEach(([pid,v])=>{
+          s.commissionPayments.push({id:uid(), professionalId:pid, amount:-v, date:new Date().toISOString(), source:'pote', period, reversal:true});
+        });
+        (s.closedPots||[]).forEach(x=>{ if(x.period===period && x.status==='fechado'){ x.status='reaberto'; x.reopenedAt=new Date().toISOString(); x.reopenedBy=quemEstaLogado(); } });
+        registrarAuditoria(s, 'Reabriu o fechamento do pote', `${periodLabelBR(period)} — estornou ${BRL(linhas.reduce((a,[,v])=>a+v,0))}`);
+      });
+      closeModal();
+      showToast('Fechamento reaberto. Os estornos ficaram registrados.');
+    });
+  });
+}
+
 function closeClubMonthModal(){
   const period = currentPeriod();
   if(monthAlreadyClosed(period)){ showToast(`O pote de ${periodLabelBR(period)} já foi fechado anteriormente.`); return; }
@@ -4379,10 +4583,21 @@ function closeClubMonthModal(){
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-submit').addEventListener('click', ()=>{
+      const fb = clubFichasBreakdown(period);   // mês ainda aberto → números ao vivo
       update(s=>{
         rows.forEach(r=>{
           s.commissionPayments.push({id:uid(), professionalId:r.prof.id, amount:r.owed, date:new Date().toISOString(), source:'pote', period});
         });
+        // congela os números do mês no momento do fechamento
+        if(!Array.isArray(s.closedPots)) s.closedPots = [];
+        s.closedPots.forEach(x=>{ if(x.period===period && x.status==='fechado') x.status = 'substituido'; });
+        s.closedPots.push({
+          id:uid(), period, status:'fechado', closedAt:new Date().toISOString(), closedBy:quemEstaLogado(),
+          potTotal:fb.potTotal, potStaff:fb.potStaff, potBarbearia:fb.potBarbearia,
+          staffPercent:fb.staffPercent, totalFichas:fb.totalFichas,
+          rows: fb.rows.map(r=>({profId:r.prof.id, name:r.prof.name, fichas:r.fichas, value:r.value})),
+        });
+        registrarAuditoria(s, 'Fechou o pote do clube', `${periodLabelBR(period)} — ${BRL(total)} para ${rows.length} profissional(is)`);
       });
       closeModal();
       showToast(`Fechamento de ${periodLabelBR(period)} concluído com sucesso!`);
@@ -4479,7 +4694,18 @@ function renderProfissionais(view){
   });
   view.querySelectorAll('[data-edit-prof]').forEach(b=>b.addEventListener('click', ()=>profModal(state.professionals.find(p=>p.id===b.dataset.editProf))));
   view.querySelectorAll('[data-del-prof]').forEach(b=>b.addEventListener('click', ()=>{
-    update(s=>{ s.professionals = s.professionals.filter(p=>p.id!==b.dataset.delProf); });
+    const p = state.professionals.find(x=>x.id===b.dataset.delProf);
+    if(!p) return;
+    const atend = state.appointments.filter(a=>a.professionalId===p.id).length;
+    const pagtos = state.commissionPayments.filter(cp=>cp.professionalId===p.id).length;
+    const aviso = (atend||pagtos)
+      ? `\n\n⚠ ${p.name} tem ${atend} atendimento(s) e ${pagtos} pagamento(s) de comissão no histórico. Eles continuam existindo, mas ficam sem o nome do profissional e ele deixa de aparecer nos relatórios.`
+      : '';
+    if(!confirm(`Excluir o profissional "${p.name}"?${aviso}\n\nEsta ação não pode ser desfeita.`)) return;
+    update(s=>{
+      s.professionals = s.professionals.filter(x=>x.id!==p.id);
+      registrarAuditoria(s, 'Excluiu profissional', `${p.name} (${atend} atendimentos no histórico)`);
+    });
   }));
 }
 function profModal(existing){
@@ -4524,7 +4750,7 @@ function profModal(existing){
         <div style="font-size:11px;color:var(--muted-2);margin-top:-6px;">Desmarque para quem trabalha na barbearia mas não corta — recepção, gerente, etc. Quem está desmarcado não aparece como opção de barbeiro, nem nas comissões e no pote do clube.</div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
-          <div style="flex:1;"><label>PIN de login (4 a 8 dígitos)</label><input id="f-pin" maxlength="8" inputmode="numeric" value="${esc(existing?.pin) || String(100000+Math.floor(Math.random()*900000))}" style="width:100%;"><div style="font-size:10.5px;color:var(--muted-2);margin-top:4px;">Usado no link de acesso da equipe. Quanto mais dígitos, mais seguro.</div></div>
+          <div style="flex:1;"><label>PIN de login (6 a 8 números)</label><input id="f-pin" maxlength="8" inputmode="numeric" value="${esc(existing?.pin) || String(100000+Math.floor(Math.random()*900000))}" style="width:100%;"><div style="font-size:10.5px;color:var(--muted-2);margin-top:4px;">Usado no link de acesso da equipe. Após 5 erros o acesso trava por 15 minutos.</div></div>
         </div>
 
         <label>Dias de trabalho</label>
@@ -4605,7 +4831,14 @@ function profModal(existing){
       const phone = root.querySelector('#f-phone').value.trim();
       const accessRole = root.querySelector('#f-access-role').value;
       const commission = parseFloat(root.querySelector('#f-comm').value)||0;
-      const pin = root.querySelector('#f-pin').value.trim() || '0000';
+      const pin = root.querySelector('#f-pin').value.trim();
+      // PIN novo ou alterado: 6 a 8 números. (PIN antigo de 4 dígitos continua
+      // valendo para entrar; só não dá mais para criar um fraco.)
+      if(pin !== (existing?.pin||'') && !/^\d{6,8}$/.test(pin)){
+        showToast('O PIN precisa ter de 6 a 8 números.');
+        root.querySelector('#f-pin').focus();
+        return;
+      }
       const selectedDays = [...root.querySelectorAll('[data-workday]:checked')].map(el=>parseInt(el.dataset.workday));
       const workStart = root.querySelector('#f-start').value;
       const workEnd = root.querySelector('#f-end').value;
@@ -4618,8 +4851,17 @@ function profModal(existing){
       const email = root.querySelector('#f-email').value.trim();
       const data = {name, phone, email, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
       update(s=>{
-        if(isEdit){ const alvo = s.professionals.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, data); }
-        else{ s.professionals.push({id:uid(), ...data}); }
+        if(isEdit){
+          const alvo = s.professionals.find(x=>x.id===existing.id);
+          if(alvo){
+            const antes = {c:alvo.commission, r:alvo.accessRole, pin:alvo.pin};
+            Object.assign(alvo, data);
+            if(antes.c !== alvo.commission) registrarAuditoria(s, 'Alterou a comissão', `${alvo.name}: ${antes.c}% → ${alvo.commission}%`);
+            if(antes.r !== alvo.accessRole) registrarAuditoria(s, 'Alterou o nível de acesso', `${alvo.name}: ${antes.r||'—'} → ${alvo.accessRole}`);
+            if(antes.pin !== alvo.pin) registrarAuditoria(s, 'Trocou o PIN de acesso', alvo.name);
+          }
+        }
+        else{ s.professionals.push({id:uid(), ...data}); registrarAuditoria(s, 'Cadastrou profissional', data.name); }
       });
       closeModal();
     });
@@ -5204,6 +5446,7 @@ function renderClube(view){
           m.lastPaymentDate = todayISO();
           m.lastPaymentAmount = p ? Number(p.price) : 0;
           registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
+          registrarAuditoria(s, 'Marcou mensalidade como paga', `${m.name} — ${BRL(m.lastPaymentAmount)}`);
         });
         showToast('Pagamento registrado.');
         closeModal();
@@ -5270,6 +5513,7 @@ function renderClube(view){
         }
       });
     });
+    update(s=>{ registrarAuditoria(s, 'Registrou pagamentos de assinantes sem data', `${semData.length} assinante(s) com a data de hoje`); });
     showToast('Pagamentos registrados. O valor do mês foi atualizado.');
     renderClube(view);
   });
@@ -5314,13 +5558,22 @@ function renderClube(view){
   }));
   view.querySelectorAll('[data-access-member]').forEach(b=>b.addEventListener('click', ()=>clientAccessModal(state.subscriptionMembers.find(m=>m.id===b.dataset.accessMember))));
   view.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>memberModal(state.subscriptionMembers.find(m=>m.id===b.dataset.editMember))));
-  view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.subscriptionMembers = s.subscriptionMembers.filter(m=>m.id!==b.dataset.delMember); })));
+  view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>{
+    const m = state.subscriptionMembers.find(x=>x.id===b.dataset.delMember);
+    if(!m) return;
+    if(!confirm(`Excluir o assinante "${m.name}"?\n\nO histórico de pagamentos dele também sai. Se ele só parou de assinar, prefira mudar o status para "cancelado".\n\nEsta ação não pode ser desfeita.`)) return;
+    update(s=>{
+      s.subscriptionMembers = s.subscriptionMembers.filter(x=>x.id!==m.id);
+      registrarAuditoria(s, 'Excluiu assinante do clube', m.name);
+    });
+  }));
   view.querySelectorAll('[data-mark-cash]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{
       const m = s.subscriptionMembers.find(mm=>mm.id===b.dataset.markCash);
       const plan = s.subscriptionPlans.find(p=>p.id===m.planId);
       m.status = 'pago'; m.lastPaymentDate = todayISO(); m.lastPaymentAmount = plan?plan.price:0;
       registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
+      registrarAuditoria(s, 'Marcou mensalidade como paga (dinheiro)', `${m.name} — ${BRL(m.lastPaymentAmount)}`);
     });
     showToast('Pagamento em dinheiro registrado.');
   }));
@@ -5368,7 +5621,7 @@ function confirmAsaasImport(view){
   renderConfig(view);
 }
 async function syncAsaas(){
-  if(!state.asaas.apiKey){
+  if(!(state.asaas.apiKey || state.asaas.configured)){
     showToast('Configure sua API Key do Asaas em Integração Asaas antes de sincronizar.');
     return;
   }
@@ -5662,7 +5915,7 @@ function memberModal(existing, prefill){
         return;
       }
       if(!isEdit && paymentMethod==='asaas'){
-        if(!state.asaas.apiKey){ showToast('Configure sua API Key do Asaas em Integração Asaas antes de cadastrar via Pix/Cartão.'); return; }
+        if(!(state.asaas.apiKey || state.asaas.configured)){ showToast('Configure sua API Key do Asaas em Integração Asaas antes de cadastrar via Pix/Cartão.'); return; }
         const submitBtn = root.querySelector('#f-submit');
         submitBtn.disabled = true; submitBtn.textContent = 'Criando cobrança no Asaas...';
         const plan = state.subscriptionPlans.find(p=>p.id===planId);
@@ -5908,6 +6161,24 @@ function renderMinhaAssinatura(view){
         <div><label>Email cadastrado</label><input value="${esc(shop.email)}" disabled style="width:100%;opacity:.7;"></div>
         <button class="btn btn-ghost" id="btn-save-owner-name" style="width:fit-content;">Salvar nome</button>
       </div>
+      ${isOwnerLevel() ? `
+      <div class="divider-blade" style="margin:18px 0;"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;">📧 Avisos por e-mail aos assinantes do clube</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:var(--muted);line-height:1.6;cursor:pointer;">
+        <input type="checkbox" id="chk-email-mensalidade" ${state.messageSettings?.emailMensalidade?'checked':''} style="width:auto;margin-top:3px;">
+        <span>Mandar e-mail <b>3 dias antes</b> do vencimento da mensalidade e quando ela <b>atrasar</b> (só para assinantes com e-mail cadastrado).
+        O Asaas também pode enviar os avisos dele — se preferir só os dele, deixe desmarcado.</span>
+      </label>
+
+      <div class="divider-blade" style="margin:18px 0;"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">💾 Seus dados</div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:12px;line-height:1.6;">
+        Baixe uma cópia completa dos dados da barbearia (clientes, agenda, caixa, comissões, assinantes) num arquivo.
+        Guarde em local seguro — é o seu backup e também a forma de levar seus dados com você.
+      </div>
+      <button class="btn btn-ghost" id="btn-backup" style="font-size:13px;">${ICON.arrowDown} Baixar backup dos meus dados</button>
+      ` : ''}
+
       <div class="divider-blade" style="margin:18px 0;"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🔔 Notificação mesmo com o site fechado</div>
       <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:12px;line-height:1.6;">
@@ -5990,6 +6261,16 @@ function renderMinhaAssinatura(view){
       if(k==='push' && el.checked) pedirPermissaoAlertas();
     });
   });
+  view.querySelector('#chk-email-mensalidade')?.addEventListener('change', (e)=>{
+    const ligado = e.target.checked;
+    update(s=>{
+      s.messageSettings = s.messageSettings || {};
+      s.messageSettings.emailMensalidade = ligado;
+      registrarAuditoria(s, 'Avisos por e-mail aos assinantes', ligado ? 'ligou' : 'desligou');
+    });
+    showToast(ligado ? 'Avisos por e-mail aos assinantes ligados.' : 'Avisos por e-mail aos assinantes desligados.');
+  });
+  view.querySelector('#btn-backup')?.addEventListener('click', baixarBackup);
   view.querySelector('#btn-ativar-push')?.addEventListener('click', async (e)=>{
     const btn = e.currentTarget;
     btn.disabled = true; btn.textContent = 'Ativando...';
@@ -6093,11 +6374,15 @@ function renderConfig(view){
             <option value="production" ${a.env==='production'?'selected':''}>Produção</option>
           </select>
         </div>
-        <div><label>API Key do Asaas</label><input id="f-key" type="password" value="${esc(a.apiKey)}" placeholder="$aact_..." style="width:100%;"></div>
+        <div><label>API Key do Asaas ${(a.apiKey||a.configured) ? '<span class="pill pill-ok" style="margin-left:6px;">✓ chave salva</span>' : ''}</label>
+          <input id="f-key" type="password" value="" autocomplete="off" placeholder="${(a.apiKey||a.configured) ? 'chave guardada com segurança — digite outra só para trocar' : '$aact_...'}" style="width:100%;">
+          <div style="font-size:11.5px;color:var(--muted-2);margin-top:4px;">Por segurança, a chave fica guardada só no servidor e não aparece mais aqui depois de salva.</div>
+        </div>
         <div><label>Wallet ID (opcional)</label><input id="f-wallet" value="${esc(a.walletId)}" placeholder="deixe em branco se não souber" style="width:100%;"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-gold" id="f-save" style="justify-content:center;">Salvar configuração</button>
           <button class="btn btn-ghost" id="f-test" style="justify-content:center;">${ICON.check} Testar conexão</button>
+          ${(a.apiKey||a.configured) ? `<button class="btn btn-ghost" id="f-remove-key" style="justify-content:center;color:var(--bad);">Remover chave</button>` : ''}
         </div>
         <div id="asaas-test-result" style="font-size:12.5px;line-height:1.6;"></div>
       </div>
@@ -6126,18 +6411,29 @@ function renderConfig(view){
       <div class="font-mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;word-break:break-all;color:var(--gold-bright);">${SUPABASE_URL}/functions/v1/asaas-webhook</div>
     </div>
   `;
-  view.querySelector('#f-save').addEventListener('click', ()=>{
-    update(s=>{
+  view.querySelector('#f-save').addEventListener('click', async ()=>{
+    const novaChave = view.querySelector('#f-key').value.trim();
+    // A chave vai uma vez para o servidor, que a guarda no cofre e tira dos
+    // dados (Fase 2B). Campo vazio = mantém a chave que já está salva.
+    const r = await update(s=>{
       s.asaas.env = view.querySelector('#f-env').value;
-      s.asaas.apiKey = view.querySelector('#f-key').value.trim();
       s.asaas.walletId = view.querySelector('#f-wallet').value.trim();
+      if(novaChave) s.asaas.apiKey = novaChave;
     });
+    if(r!=='ok') return;
+    if(novaChave){ state.asaas.apiKey = ''; state.asaas.configured = true; }   // não fica na memória do navegador
     showToast('Configuração salva.');
+    renderConfig(view);
+  });
+  view.querySelector('#f-remove-key')?.addEventListener('click', async ()=>{
+    if(!confirm('Remover a chave do Asaas? As cobranças automáticas do clube param de ser sincronizadas até você salvar outra chave.')) return;
+    const r = await update(s=>{ s.asaas.apiKey = ''; s.asaas.configured = false; });
+    if(r==='ok'){ showToast('Chave removida.'); renderConfig(view); }
   });
   view.querySelector('#f-test').addEventListener('click', async (e)=>{
     const btn = e.currentTarget;
     const out = view.querySelector('#asaas-test-result');
-    if(!state.asaas.apiKey){
+    if(!(state.asaas.apiKey || state.asaas.configured)){
       out.innerHTML = `<span style="color:var(--bad);">Salve a API Key primeiro (botão "Salvar configuração").</span>`;
       return;
     }
@@ -6157,7 +6453,7 @@ function renderConfig(view){
   view.querySelector('#f-import-asaas').addEventListener('click', async (e)=>{
     const btn = e.currentTarget;
     const out = view.querySelector('#asaas-import-result');
-    if(!state.asaas.apiKey){
+    if(!(state.asaas.apiKey || state.asaas.configured)){
       out.innerHTML = `<span style="color:var(--bad);font-size:12.5px;">Salve e teste a API Key primeiro.</span>`;
       return;
     }
@@ -6457,7 +6753,16 @@ function renderClientes(view){
     e.target.value = '';
   });
   view.querySelectorAll('[data-edit-client]').forEach(b=>b.addEventListener('click', ()=>clientModal(state.clients.find(c=>c.id===b.dataset.editClient))));
-  view.querySelectorAll('[data-del-client]').forEach(b=>b.addEventListener('click', ()=>update(s=>{ s.clients = s.clients.filter(c=>c.id!==b.dataset.delClient); })));
+  view.querySelectorAll('[data-del-client]').forEach(b=>b.addEventListener('click', ()=>{
+    const cl = state.clients.find(x=>x.id===b.dataset.delClient);
+    if(!cl) return;
+    const atend = state.appointments.filter(a=>String(a.client).trim().toLowerCase()===cl.name.trim().toLowerCase()).length;
+    if(!confirm(`Excluir o cliente "${cl.name}"?${atend?`\n\nOs ${atend} atendimento(s) dele continuam no histórico e nos relatórios.`:''}\n\nEsta ação não pode ser desfeita.`)) return;
+    update(s=>{
+      s.clients = s.clients.filter(x=>x.id!==cl.id);
+      registrarAuditoria(s, 'Excluiu cliente', cl.name);
+    });
+  }));
   view.querySelector('#btn-ver-duplicados')?.addEventListener('click', ()=>duplicadosModal(view));
 }
 
@@ -7446,10 +7751,12 @@ function renderOnlineBooking(view){
 }
 
 async function acceptBookingRequest(req){
-  // Avisa se o pedido cair num dia de folga ou fora do expediente do
-  // profissional, antes de jogar direto na agenda sem querer.
+  let encaixeConfirmado = false;
   const prof = state.professionals.find(p=>p.id===req.professional_id);
+  const svc = serviceById(req.service_id);
   if(prof){
+    // Avisa se o pedido cair num dia de folga ou fora do expediente do
+    // profissional, antes de jogar direto na agenda sem querer.
     const dow = new Date(req.date+'T12:00').getDay();
     const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
     const foraDoDia = !dias.includes(dow);
@@ -7460,30 +7767,26 @@ async function acceptBookingRequest(req){
         : `${req.time} está fora do expediente de ${prof.name} (${prof.workStart||'09:00'} às ${prof.workEnd||'18:00'})`;
       if(!confirm(`⚠ ${motivo}.\n\nAceitar mesmo assim como uma exceção?`)) return;
     }
+    // Já tem outro cliente nesse horário? (o pedido pode ter sido feito
+    // antes de alguém marcar o mesmo horário pelo painel)
+    const dur = svc ? (Number(svc.duration)||30) : 30;
+    const choque = state.appointments.some(x=>x.professionalId===prof.id && x.date===String(req.date).slice(0,10) &&
+      x.status!=='cancelado' && x.status!=='faltou' && timesOverlap(x.time, appointmentDuration(x), req.time, dur));
+    if(choque && !confirm(`⚠ ${prof.name} já tem outro agendamento nesse horário (${req.time}).\n\nAceitar mesmo assim, como um encaixe?`)) return;
+    encaixeConfirmado = choque;
   }
-  update(s=>{
-    s.appointments.push({id:uid(), date:req.date, time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||'', clientEmail:req.client_email||''});
+  const novoId = uid();
+  const gravou = await update(s=>{
+    s.appointments.push({id:novoId, date:String(req.date).slice(0,10), time:req.time, professionalId:req.professional_id, serviceId:req.service_id, client:req.client_name, status:'agendado', confirmed:false, depositStatus:'nao_aplicavel', depositAmount:0, createdAt:new Date().toISOString(), rating:null, origem:'online', clientPhone:req.client_phone||'', clientEmail:req.client_email||'', encaixe: encaixeConfirmado || undefined});
   });
+  // não gravou (horário ocupado no meio, sem internet...): o pedido continua
+  // pendente e o cliente NÃO recebe e-mail de confirmação
+  if(gravou !== 'ok') return;
   await supa.from('booking_requests').update({status:'aceito'}).eq('id', req.id);
   showToast('Agendamento aceito e adicionado à agenda.');
   await refreshNotifItems();
-
-  // Só agora que virou de verdade um agendamento — dispara os e-mails
-  const shopNameEmail = state.shopProfile?.name || '';
-  if(req.client_email){
-    enviarEmailAgendamento({
-      tipo:'confirmacao_cliente', to: req.client_email, shopName: shopNameEmail,
-      clientName: req.client_name, serviceName: req.service_name, profName: req.professional_name,
-      date: req.date, time: req.time,
-    });
-  }
-  if(prof?.email){
-    enviarEmailAgendamento({
-      tipo:'aviso_profissional', to: prof.email, shopName: shopNameEmail,
-      clientName: req.client_name, serviceName: req.service_name, profName: prof.name,
-      date: req.date, time: req.time,
-    });
-  }
+  // e-mails só agora que virou de verdade um agendamento (e já está gravado)
+  enviarEmailAgendamento({ tipo:'confirmacao', shopId: currentShop.id, appointmentId: novoId });
 }
 async function declineBookingRequest(id){
   await supa.from('booking_requests').update({status:'recusado'}).eq('id', id);
@@ -7653,15 +7956,20 @@ async function statusNotificacaoPush(){
   }catch(e){ return 'off'; }
 }
 
-async function enviarPushParaLoja(shopId, title, message, url){
+// Manda só QUAL barbearia e QUE tipo de aviso ('agendamento' | 'assinatura').
+// O servidor monta o texto a partir do pedido gravado no banco — assim a
+// função não serve para mandar notificação falsa (com link de golpe).
+async function enviarPushParaLoja(shopId, tipo){
   try{
-    await supa.functions.invoke('push-notify', { body: { shopId, title, message, url } });
+    await supa.functions.invoke('push-notify', { body: { shopId, tipo } });
   }catch(e){ /* notificação é extra, nunca deve travar o fluxo principal */ }
 }
 
-// Dispara e-mail de confirmação (cliente) ou aviso (profissional) na
-// hora do agendamento. "Fire and forget": se falhar, não trava o
-// agendamento — o cliente já está marcado de qualquer forma.
+// Dispara os e-mails de um agendamento: tipo = 'confirmacao' | 'cancelamento'
+// | 'reagendamento'. Mandamos só o evento e o id — o SERVIDOR confere que o
+// agendamento existe e busca nomes, horário e e-mails no banco (assim a
+// função não serve para mandar e-mail arbitrário). "Fire and forget": se
+// falhar, não trava nada.
 async function enviarEmailAgendamento(payload){
   try{
     await supa.functions.invoke('appointment-email', { body: payload });
@@ -8041,6 +8349,264 @@ function waitlistModal(){
 }
 
 /* ============ #10 NOTAS FISCAIS (view) ============ */
+/* ============ DESPESAS E RESULTADO DO MÊS ============
+   Contas a pagar da barbearia (aluguel, energia, produtos...). Nada é
+   apagado: despesa errada vira "cancelada", e fica no histórico. */
+const CATEGORIAS_DESPESA = ['Aluguel','Energia','Água','Internet / Telefone','Produtos e materiais','Equipamentos','Marketing','Impostos e taxas','Salários / Pró-labore','Outros'];
+let despMes = null;
+
+function despesaVence(e){ return String(e.dueDate||''); }
+function resultadoDoMes(ym){
+  const receitaServicos = state.appointments
+    .filter(a=>a.status==='concluido' && String(a.date).startsWith(ym))
+    .reduce((t,a)=>t+valorRealAtendimento(a),0);
+  const receitaClube = clubMonthlyPot(ym);
+  const comissoes = state.professionals.reduce((t,p)=>t+monthlyEarnedForProf(p.id, ym),0);
+  const despesas = (state.expenses||[])
+    .filter(e=>e.status==='pago' && String(e.paidDate||'').startsWith(ym))
+    .reduce((t,e)=>t+Number(e.amount),0);
+  return { receitaServicos, receitaClube, comissoes, despesas,
+           resultado: receitaServicos + receitaClube - comissoes - despesas };
+}
+
+function renderDespesas(view){
+  if(!isOwnerLevel()){ view.innerHTML = emptyState('Apenas o dono ou administrador acessa as despesas.'); return; }
+  if(!despMes) despMes = mesReal();
+  const ym = despMes;
+  const hoje = todayISO();
+  const todas = (state.expenses||[]).filter(e=>e.status!=='cancelado');
+  const doMes = todas.filter(e=>String(e.dueDate).startsWith(ym) || String(e.paidDate||'').startsWith(ym))
+    .sort((a,b)=>despesaVence(a).localeCompare(despesaVence(b)));
+  const aPagar = todas.filter(e=>e.status==='pendente' && String(e.dueDate).startsWith(ym)).reduce((t,e)=>t+Number(e.amount),0);
+  const pagasMes = todas.filter(e=>e.status==='pago' && String(e.paidDate||'').startsWith(ym)).reduce((t,e)=>t+Number(e.amount),0);
+  const vencidas = todas.filter(e=>e.status==='pendente' && String(e.dueDate) < hoje);
+  const totVenc = vencidas.reduce((t,e)=>t+Number(e.amount),0);
+  const res = resultadoDoMes(ym);
+  const ehMesAtual = ym === mesReal();
+
+  view.innerHTML = `
+    ${pageHeader('Despesas', 'Contas a pagar e resultado do mês', `<button class="btn btn-gold" id="btn-nova-desp">${ICON.plus} Nova despesa</button>`)}
+
+    <div class="card" style="padding:12px 18px;margin-bottom:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-left:4px solid var(--gold);">
+      <button type="button" class="btn btn-ghost" id="desp-prev" style="padding:7px 12px;font-size:13px;">&larr; Mês anterior</button>
+      <div style="font-weight:700;font-size:15px;min-width:170px;text-align:center;">${periodLabelBR(ym)}</div>
+      <button type="button" class="btn btn-ghost" id="desp-next" style="padding:7px 12px;font-size:13px;${ehMesAtual?'opacity:.4;cursor:not-allowed;':''}" ${ehMesAtual?'disabled':''}>Próximo mês &rarr;</button>
+    </div>
+
+    ${vencidas.length ? `<div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:var(--bad);font-size:12.5px;">
+      <b style="color:var(--bad);">${vencidas.length} despesa(s) vencida(s) sem pagamento</b> — ${BRL(totVenc)} no total.
+    </div>` : ''}
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:22px;">
+      ${statCard('A pagar no mês', BRL(aPagar), 'ainda pendente', aPagar>0?'warn':'ok')}
+      ${statCard('Pago no mês', BRL(pagasMes), 'saiu de fato', 'ok')}
+      ${statCard('Resultado estimado', BRL(res.resultado), 'receitas − comissões − despesas pagas', res.resultado>=0?'ok':'bad')}
+    </div>
+
+    <div class="card" style="padding:16px 18px;margin-bottom:22px;max-width:620px;">
+      <div class="font-display" style="font-size:14.5px;font-weight:600;margin-bottom:10px;">Resultado do mês — como chegamos</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Serviços concluídos (valor cobrado)</span><span class="font-mono">${BRL(res.receitaServicos)}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">Mensalidades do clube recebidas</span><span class="font-mono">${BRL(res.receitaClube)}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">− Comissões dos profissionais (serviços + pote)</span><span class="font-mono" style="color:var(--bad);">${BRL(res.comissoes)}</span></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted);">− Despesas pagas</span><span class="font-mono" style="color:var(--bad);">${BRL(res.despesas)}</span></div>
+        <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:2px;font-weight:600;"><span>Resultado estimado</span><span class="font-mono" style="color:${res.resultado>=0?'var(--ok)':'var(--bad)'};">${BRL(res.resultado)}</span></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted-2);margin-top:10px;line-height:1.6;">É uma estimativa: não inclui venda de produtos, e a comissão é a calculada pelo sistema (não necessariamente já paga).</div>
+    </div>
+
+    ${doMes.length===0 ? emptyState('Nenhuma despesa neste mês.', 'Use "Nova despesa" para lançar aluguel, energia, produtos etc.') : `
+    <div style="display:flex;flex-direction:column;gap:8px;max-width:840px;">
+      ${doMes.map(e=>{
+        const venc = e.status==='pendente' && String(e.dueDate) < hoje;
+        return `<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;${venc?'border-color:var(--bad);':''}">
+          <div style="flex:1;min-width:200px;">
+            <div style="font-size:14px;font-weight:600;">${esc(e.desc)}</div>
+            <div style="font-size:12px;color:var(--muted-2);margin-top:2px;">${esc(e.category||'Outros')} · vence ${new Date(String(e.dueDate)+'T12:00').toLocaleDateString('pt-BR')}${e.status==='pago'?` · pago em ${new Date(String(e.paidDate)+'T12:00').toLocaleDateString('pt-BR')} (${esc(methodLabelPay(e.method||'dinheiro'))})`:''}</div>
+          </div>
+          <div class="font-mono" style="font-size:15px;">${BRL(e.amount)}</div>
+          <span class="pill ${e.status==='pago'?'pill-ok':(venc?'pill-bad':'pill-warn')}">${e.status==='pago'?'Pago':(venc?'Vencida':'Pendente')}</span>
+          <div style="display:flex;gap:6px;">
+            ${e.status==='pendente' ? `<button class="btn btn-gold" data-pagar-desp="${e.id}" style="padding:6px 11px;font-size:12px;">Marcar paga</button>
+              <button class="btn btn-ghost" data-edit-desp="${e.id}" style="padding:6px 9px;">${ICON.edit}</button>` : ''}
+            <button class="btn btn-ghost" data-cancel-desp="${e.id}" style="padding:6px 9px;font-size:12px;color:var(--bad);border-color:var(--bad);">Cancelar</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`}
+  `;
+
+  view.querySelector('#btn-nova-desp').addEventListener('click', ()=>despesaModal(null, view));
+  view.querySelector('#desp-prev').addEventListener('click', ()=>{ despMes = shiftYM(despMes,-1); renderDespesas(view); });
+  view.querySelector('#desp-next')?.addEventListener('click', ()=>{ if(shiftYM(despMes,1) <= mesReal()){ despMes = shiftYM(despMes,1); renderDespesas(view); } });
+  view.querySelectorAll('[data-pagar-desp]').forEach(b=>b.addEventListener('click', ()=>pagarDespesaModal(b.dataset.pagarDesp, view)));
+  view.querySelectorAll('[data-edit-desp]').forEach(b=>b.addEventListener('click', ()=>despesaModal(state.expenses.find(x=>x.id===b.dataset.editDesp), view)));
+  view.querySelectorAll('[data-cancel-desp]').forEach(b=>b.addEventListener('click', ()=>{
+    const e = state.expenses.find(x=>x.id===b.dataset.cancelDesp); if(!e) return;
+    if(!confirm(`Cancelar a despesa "${e.desc}" (${BRL(e.amount)})?\n\nEla não é apagada: fica no histórico como cancelada.${e.status==='pago'?'\n\nAtenção: ela já estava paga. Cancelar não devolve o dinheiro ao caixa.':''}`)) return;
+    update(s=>{
+      const x = s.expenses.find(y=>y.id===e.id);
+      if(x){ x.status='cancelado'; x.canceladoEm=new Date().toISOString(); }
+      registrarAuditoria(s, 'Cancelou despesa', `${e.desc} — ${BRL(e.amount)}`);
+    });
+  }));
+}
+
+function despesaModal(existing, view){
+  const isEdit = !!existing;
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">${isEdit?'Editar despesa':'Nova despesa'}</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div><label>Descrição</label><input id="d-desc" value="${esc(existing?.desc)}" placeholder="Ex: Aluguel do ponto" style="width:100%;"></div>
+        <div><label>Categoria</label><select id="d-cat" style="width:100%;">${CATEGORIAS_DESPESA.map(k=>`<option ${existing?.category===k?'selected':''}>${k}</option>`).join('')}</select></div>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;"><label>Valor (R$)</label><input id="d-valor" type="number" step="0.01" min="0.01" value="${existing?.amount??''}" style="width:100%;"></div>
+          <div style="flex:1;"><label>Vencimento</label><input id="d-venc" type="date" value="${existing?.dueDate||todayISO()}" style="width:100%;"></div>
+        </div>
+        ${isEdit ? '' : `<div><label>Repetir todo mês por quantos meses? <span style="color:var(--muted-2);font-weight:400;">— útil para aluguel, internet</span></label>
+          <input id="d-rep" type="number" min="1" max="24" value="1" style="width:100%;"></div>`}
+        <button class="btn btn-gold" id="d-save" style="justify-content:center;">${isEdit?'Salvar':'Lançar'}</button>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#d-save').addEventListener('click', ()=>{
+      const desc = root.querySelector('#d-desc').value.trim();
+      const category = root.querySelector('#d-cat').value;
+      const amount = Math.round(parseFloat(root.querySelector('#d-valor').value)*100)/100;
+      const dueDate = root.querySelector('#d-venc').value;
+      if(!desc){ showToast('Informe a descrição.'); return; }
+      if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
+      if(!dueDate){ showToast('Informe o vencimento.'); return; }
+      const reps = isEdit ? 1 : Math.max(1, Math.min(24, parseInt(root.querySelector('#d-rep').value)||1));
+      update(s=>{
+        if(isEdit){
+          const x = s.expenses.find(y=>y.id===existing.id);
+          if(x){ Object.assign(x, {desc, category, amount, dueDate}); registrarAuditoria(s, 'Editou despesa', `${desc} — ${BRL(amount)}`); }
+        } else {
+          for(let i=0;i<reps;i++){
+            const d = new Date(dueDate+'T12:00'); d.setMonth(d.getMonth()+i);
+            s.expenses.push({id:uid(), desc: reps>1?`${desc} (${i+1}/${reps})`:desc, category, amount, dueDate:d.toISOString().slice(0,10), status:'pendente', createdAt:new Date().toISOString(), criadoPor:quemEstaLogado()});
+          }
+          registrarAuditoria(s, 'Lançou despesa', `${desc} — ${BRL(amount)}${reps>1?` × ${reps} meses`:''}`);
+        }
+      });
+      closeModal();
+      if(view) renderDespesas(view);
+    });
+  });
+}
+
+function pagarDespesaModal(id, view){
+  const e = state.expenses.find(x=>x.id===id); if(!e) return;
+  const caixa = openSession();
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Marcar como paga</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(e.desc)} — <b class="font-mono">${BRL(e.amount)}</b></div>
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div><label>Data do pagamento</label><input id="p-data" type="date" value="${todayISO()}" style="width:100%;"></div>
+        <div><label>Forma de pagamento</label><select id="p-met" style="width:100%;">${PAYMENT_METHODS.map(m=>`<option value="${m.id}">${m.label}</option>`).join('')}</select></div>
+        <label id="p-caixa-wrap" style="display:${caixa?'flex':'none'};align-items:center;gap:9px;font-size:13px;">
+          <input type="checkbox" id="p-caixa" style="width:auto;"> Tirar do caixa aberto (saída em dinheiro)
+        </label>
+        <button class="btn btn-gold" id="p-ok" style="justify-content:center;">Confirmar pagamento</button>
+      </div>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const met = root.querySelector('#p-met');
+    met.addEventListener('change', ()=>{ root.querySelector('#p-caixa-wrap').style.display = (caixa && met.value==='dinheiro') ? 'flex' : 'none'; });
+    root.querySelector('#p-caixa-wrap').style.display = (caixa && met.value==='dinheiro') ? 'flex' : 'none';
+    root.querySelector('#p-ok').addEventListener('click', ()=>{
+      const paidDate = root.querySelector('#p-data').value || todayISO();
+      const method = met.value;
+      const noCaixa = !!root.querySelector('#p-caixa')?.checked && method==='dinheiro' && !!openSession();
+      update(s=>{
+        const x = s.expenses.find(y=>y.id===id); if(!x) return;
+        x.status='pago'; x.paidDate=paidDate; x.method=method; x.pagoPor=quemEstaLogado();
+        if(noCaixa){
+          const sess = s.cashSessions.find(z=>z.status==='aberto');
+          if(sess) sess.entries.push({id:uid(), type:'saida', method:'dinheiro', desc:`Despesa — ${x.desc}`, amount:Number(x.amount), time:new Date().toTimeString().slice(0,5), auto:true, despesaId:x.id});
+        }
+        registrarAuditoria(s, 'Pagou despesa', `${x.desc} — ${BRL(x.amount)} (${methodLabelPay(method)})`);
+      });
+      closeModal();
+      if(view) renderDespesas(view);
+    });
+  });
+}
+
+function baixarBackup(){
+  const copia = JSON.parse(JSON.stringify(state));
+  // a chave do Asaas é segredo: não vai no arquivo de backup
+  if(copia.asaas) copia.asaas.apiKey = copia.asaas.apiKey ? '(oculta por segurança)' : '';
+  const pacote = { sistema:'Primer Barber', exportadoEm:new Date().toISOString(), dados:copia };
+  const blob = new Blob([JSON.stringify(pacote, null, 2)], {type:'application/json'});
+  const nome = String(state.shopProfile?.name||'barbearia').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\W+/g,'-').toLowerCase();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `backup-${nome}-${todayISO()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+  update(s=>{ registrarAuditoria(s, 'Baixou backup dos dados', ''); });
+  showToast('Backup baixado. Guarde o arquivo em local seguro.');
+}
+
+/* ============ HISTÓRICO DE AÇÕES (auditoria) ============ */
+// Histórico do servidor (Fase 2B): tabela audit_events, que ninguém apaga,
+// com quem estava logado de verdade. Se não der para ler (equipe/admin
+// pelo PIN, ou banco ainda sem a tabela), mostra o histórico salvo nos dados.
+async function carregarHistoricoServidor(){
+  if(!supa || !currentShop || teamSession) return null;
+  try{
+    const { data, error } = await supa.from('audit_events')
+      .select('at, actor, claimed_by, acao, detalhe').eq('shop_id', currentShop.id)
+      .order('at', { ascending:false }).limit(500);
+    if(error || !data) return null;
+    return data.map(x=>({ at:x.at, acao:x.acao, detalhe:x.detalhe||'',
+      by: x.actor + (x.claimed_by && x.actor!=='dono' && !x.actor.includes(x.claimed_by) ? ` (tela: ${x.claimed_by})` : '') }));
+  }catch(e){ return null; }
+}
+async function renderAuditoria(view){
+  if(!isOwnerLevel()){ view.innerHTML = emptyState('Apenas o dono ou administrador vê o histórico de ações.'); return; }
+  view.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);">Carregando histórico...</div>`;
+  const doServidor = await carregarHistoricoServidor();
+  if(route!=='auditoria') return;   // a pessoa já saiu da tela
+  const lista = doServidor || (state.auditLog||[]).slice().reverse();
+  view.innerHTML = `
+    ${pageHeader('Histórico de Ações', 'Quem fez o quê nas operações de dinheiro, comissões e exclusões')}
+    <div style="margin-bottom:14px;"><input id="aud-busca" placeholder="Buscar por pessoa, ação ou valor..." style="width:100%;max-width:380px;"></div>
+    <div id="aud-lista" style="display:flex;flex-direction:column;gap:8px;max-width:840px;"></div>
+    <div style="font-size:11.5px;color:var(--muted-2);margin-top:14px;max-width:840px;line-height:1.6;">
+      Mostra as últimas ações registradas. Cobre vales, pagamentos e saques, fechamento do pote, reabertura de comanda,
+      mudança de comissão, exclusões e mensalidades marcadas como pagas.
+      ${doServidor ? '<br>🔒 Registro guardado no servidor: não pode ser apagado nem alterado, nem pelo dono.' : ''}
+    </div>`;
+  const desenhar = ()=>{
+    const t = (view.querySelector('#aud-busca').value||'').toLowerCase().trim();
+    const f = lista.filter(x=>!t || (x.acao+' '+x.detalhe+' '+x.by).toLowerCase().includes(t)).slice(0,200);
+    view.querySelector('#aud-lista').innerHTML = f.length ? f.map(x=>`
+      <div class="card" style="padding:11px 15px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+        <div class="font-mono" style="font-size:11.5px;color:var(--muted-2);min-width:112px;">${new Date(x.at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:13.5px;font-weight:600;">${esc(x.acao)}</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${esc(x.detalhe)}</div>
+        </div>
+        <div style="font-size:12px;color:var(--gold-bright);">${esc(x.by)}</div>
+      </div>`).join('')
+      : emptyState(lista.length ? 'Nada encontrado para essa busca.' : 'Nenhuma ação registrada ainda.', lista.length ? '' : 'As ações sensíveis passam a aparecer aqui a partir de agora.');
+  };
+  view.querySelector('#aud-busca').addEventListener('input', desenhar);
+  desenhar();
+}
+
 /* ============ CENTRAL DE AJUDA ============
    Conteúdo do produto — igual para todas as barbearias que usam o
    sistema, por isso fica fixo no código (não é dado de cada loja).
@@ -8080,6 +8646,8 @@ const GUIAS_AJUDA = [
     { titulo:'Comissão de serviços avulsos', texto:'O card "A receber agora" mostra a comissão do mês, já descontando o que já foi pago, vales adiantados e saques. É calculada sobre o valor que realmente foi cobrado do cliente — se o serviço estava incluso no clube e saiu de graça, ele não gera comissão de serviço (a recompensa dele vem pelas fichas do pote).', imagem:null },
     { titulo:'Pagando a comissão (dono)', texto:'No card do profissional, clique em "Pagar" pra quitar o valor pendente de serviços avulsos. O botão fica desabilitado se não houver nada a pagar.', imagem:null },
     { titulo:'Dando um vale / adiantamento (dono)', texto:'Clique em "Vale" no card do profissional, informe o valor e escolha se sai do caixa da barbearia ou da conta bancária. O valor é descontado automaticamente do que ele tem a receber — se o vale for maior que a comissão, o saldo fica negativo e vai sendo abatido sozinho conforme ele atende mais clientes.', imagem:null },
+    { titulo:'Navegando entre meses', texto:'Use "Mês anterior" e "Próximo mês" para ver o pote e as comissões de outros meses. "A receber agora" e o painel sempre mostram o mês atual, independentemente do mês que você está olhando aqui.', imagem:null },
+    { titulo:'Fechamento congelado e reabertura (dono)', texto:'Ao fechar o mês do clube, os números ficam congelados no que foi pago: editar um atendimento antigo não muda mais um mês já fechado. Se precisar corrigir, "Reabrir fechamento" registra um estorno — nada é apagado — e o mês pode ser fechado de novo.', imagem:null },
     { titulo:'Pote do Clube de Assinatura', texto:'É a parte do dinheiro das mensalidades que é dividida entre os profissionais, proporcional às "fichas" que cada um acumulou no mês (cada serviço tem um valor em fichas, configurado na tela de Serviços). O pote só existe se as mensalidades tiverem realmente entrado naquele mês.', imagem:null },
     { titulo:'Quando uma ficha não conta (dono)', texto:'Se um atendimento de assinante não gerou ficha, a tela mostra um aviso explicando o motivo (serviço sem fichas configuradas, ou o profissional marcado como "não atende clientes") com um botão pra corrigir na hora — sem precisar refazer o atendimento.', imagem:null },
     { titulo:'Solicitando um saque (profissional)', texto:'Clique em "Solicitar saque" no seu card, informe o valor (até o limite que você tem a receber) e envie. O pedido fica esperando o dono aceitar.', imagem:null },
@@ -8136,6 +8704,17 @@ const GUIAS_AJUDA = [
     { titulo:'Desempenho por profissional — mês', texto:'A mesma divisão de bruto, comissão e lucro, mas olhando o mês inteiro — útil pra comparar o desempenho de cada um ao longo do tempo.', imagem:null },
     { titulo:'Faturamento por serviço', texto:'Mostra quais serviços mais venderam, ajudando a identificar o que vale a pena divulgar mais.', imagem:null },
   ] },
+  { id:'despesas', titulo:'Despesas', papeis:['dono'], imagemGeral:'ajuda/ajuda-despesas.png', passos:[
+    { titulo:'Lançando uma despesa', texto:'Clique em "Nova despesa", escolha a categoria (aluguel, energia, produtos...), o valor e o vencimento. Para contas que se repetem todo mês, como aluguel e internet, informe por quantos meses repetir e o sistema cria todas de uma vez.', imagem:null },
+    { titulo:'Marcando como paga', texto:'Quando pagar, clique em "Marcar paga", informe a data e a forma de pagamento. Se foi em dinheiro e o caixa está aberto, dá para marcar para tirar do caixa automaticamente.', imagem:null },
+    { titulo:'Despesas vencidas', texto:'Um aviso vermelho no topo mostra quantas contas já passaram do vencimento sem pagamento, e o valor total.', imagem:null },
+    { titulo:'Cancelando uma despesa lançada errado', texto:'Nada é apagado: a despesa vira "cancelada" e continua no histórico. Isso mantém as contas auditáveis.', imagem:null },
+    { titulo:'Resultado do mês', texto:'O card mostra uma estimativa do que sobrou: serviços concluídos + mensalidades recebidas, menos as comissões dos profissionais e as despesas pagas. Não inclui a venda de produtos.', imagem:null },
+  ] },
+  { id:'auditoria', titulo:'Histórico de Ações', papeis:['dono'], imagemGeral:'ajuda/ajuda-auditoria.png', passos:[
+    { titulo:'Para que serve', texto:'Registra quem fez o quê nas operações sensíveis: vales, pagamentos e saques, fechamento e reabertura do pote, comissão alterada, comanda reaberta, exclusões e mensalidades marcadas como pagas.', imagem:null },
+    { titulo:'Buscando um registro', texto:'Use o campo de busca para achar por nome da pessoa, tipo de ação ou valor.', imagem:null },
+  ] },
   { id:'configuracoes', titulo:'Configurações da Página', papeis:['dono'], imagemGeral:'ajuda/ajuda-configuracoes.png', passos:[
     { titulo:'Nome da barbearia', texto:'É o nome que aparece na página pública de agendamento, na página de planos e no topo do sistema.', imagem:null },
     { titulo:'Logo', texto:'Envie uma imagem quadrada, de preferência 512×512 px, com no máximo 600KB. PNG com fundo transparente costuma ficar melhor.', imagem:null },
@@ -8152,6 +8731,10 @@ const GUIAS_AJUDA = [
   ] },
 ];
 const FAQ_AJUDA = [
+  { pergunta:'Como faço backup dos meus dados?', resposta:'Em Configurações da Conta, role até "Seus dados" e clique em "Baixar backup dos meus dados". Guarde o arquivo em local seguro.', papeis:['dono'] },
+  { pergunta:'Errei o pagamento de um mês fechado. E agora?', resposta:'Em Comissões, vá até o mês e clique em "Reabrir fechamento". O sistema registra um estorno (nada é apagado) e você pode fechar de novo. Se já entregou o dinheiro, o acerto com o profissional é por fora.', papeis:['dono'] },
+  { pergunta:'Alguém mexeu num valor. Como descubro quem foi?', resposta:'Abra "Histórico de Ações" no menu: ele mostra quem fez cada operação de dinheiro, comissão ou exclusão, e quando.', papeis:['dono'] },
+  { pergunta:'Meu profissional errou o PIN várias vezes e não consegue entrar.', resposta:'Depois de 5 erros o acesso trava por 15 minutos, por segurança. É só esperar e tentar de novo com o PIN certo.', papeis:['dono'] },
   // { pergunta, resposta, papeis:[...] }
   { pergunta:'Esqueci minha senha, como faço?', resposta:'Na tela de login, clique em "Esqueci minha senha" e siga as instruções enviadas por e-mail.', papeis:['dono','recepcionista','profissional'] },
   { pergunta:'Como meu profissional acessa o sistema pelo celular dele?', resposta:'Cadastre-o na tela de Profissionais com um PIN de acesso, e envie o link de equipe (disponível em "Meus Links"). Ele entra direto pelo celular, sem precisar do seu login e senha.', papeis:['dono'] },
@@ -8581,6 +9164,7 @@ function renderPublicBookingScreen(step1Only){
             <div><label>Telefone (WhatsApp)</label><input id="pb-phone" style="width:100%;" placeholder="(11) 90000-0000"></div>
             <div><label>E-mail <span style="color:var(--muted-2);font-weight:400;">— para você receber a confirmação do horário</span></label><input id="pb-email" type="email" style="width:100%;" placeholder="seu@email.com"></div>
             <button class="btn btn-gold" id="pb-confirm" style="justify-content:center;">Confirmar agendamento</button>
+            <div id="pb-msg" role="alert" style="display:none;font-size:12.5px;line-height:1.5;color:var(--bad);"></div>
           </div>
           <div id="pb-done" style="display:none;text-align:center;padding:20px 0;">
             <div data-done-title style="font-size:15px;font-weight:600;margin-bottom:6px;">Pedido enviado! ✅</div>
@@ -8600,6 +9184,19 @@ async function loadPublicSlots(){
   const wrap = document.getElementById('pb-slots-wrap');
   const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
   if(!wrap || !prof) return;
+
+  // Sem serviço escolhido não há como saber a duração nem agendar: antes os
+  // horários apareciam assim mesmo e o "Confirmar" só dava um alerta que,
+  // no celular, nem sempre aparece — parecia que o botão não funcionava.
+  if(!pubBooking.serviceId){
+    const semServicos = !(pubBooking.info.services||[]).length;
+    wrap.innerHTML = `<div style="font-size:12.5px;color:var(--muted);padding:8px 0;">${semServicos
+      ? 'Esta barbearia ainda não liberou serviços para agendamento online. Fale direto com ela pelo WhatsApp.'
+      : 'Escolha o serviço (passo 1) para ver os horários.'}</div>`;
+    const form = document.getElementById('pb-form');
+    if(form) form.style.display = 'none';
+    return;
+  }
 
   // Confere se o profissional trabalha neste dia da semana ANTES de
   // qualquer coisa. Sem isso, o sistema gerava horários mesmo em dias
@@ -8651,19 +9248,46 @@ async function loadPublicSlots(){
 }
 
 document.addEventListener('click', function pbConfirmDelegate(e){
-  if(e.target && e.target.id === 'pb-confirm') submitPublicBooking();
+  if(e.target && e.target.id === 'pb-confirm') enviarAgendamentoPublico();
 });
+// Aviso na própria página, junto do botão: o alert() do navegador às vezes
+// não aparece no celular (e o cliente acha que o botão está travado).
+function pbAviso(msg){
+  const el = document.getElementById('pb-msg');
+  if(!el){ alert(msg); return; }
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+  if(msg) el.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+let pbEnviando = false;
+async function enviarAgendamentoPublico(){
+  if(pbEnviando) return;               // evita pedido em dobro com dois toques
+  const btn = document.getElementById('pb-confirm');
+  pbEnviando = true;
+  pbAviso('');
+  if(btn){ btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try{
+    await submitPublicBooking();
+  }catch(e){
+    console.error(e);
+    pbAviso('Não foi possível enviar agora. Confira sua internet e tente de novo.');
+  }finally{
+    pbEnviando = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Confirmar agendamento'; }
+  }
+}
 async function submitPublicBooking(){
   const name = document.getElementById('pb-name').value.trim();
   const phone = document.getElementById('pb-phone').value.trim();
   const email = document.getElementById('pb-email')?.value.trim() || '';
   if(!name || !phone || !pubBooking.serviceId || !pubBooking.professionalId || !pubBooking.time){
-    alert('Preencha todos os campos e escolha um horário.'); return;
+    pbAviso(!pubBooking.serviceId ? 'Escolha o serviço (passo 1).'
+      : !pubBooking.time ? 'Escolha um horário.' : 'Preencha seu nome e telefone.'); return;
   }
   // E-mail agora é obrigatório: é a única forma confiável do cliente saber
   // com certeza se o agendamento foi confirmado ou não.
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    alert('Informe um e-mail válido para receber a confirmação do agendamento.');
+    pbAviso('Informe um e-mail válido para receber a confirmação do agendamento.');
     document.getElementById('pb-email').focus();
     return;
   }
@@ -8681,11 +9305,11 @@ async function submitPublicBooking(){
     p_client_phone: phone,
     p_client_email: email || null,
   });
-  if(!erroAuto && auto?.error){ alert(auto.error); return; }
+  if(!erroAuto && auto?.error){ pbAviso(auto.error); return; }
   if(erroAuto){
     // Sem confirmação da automação: melhor avisar do que deixar o cliente
     // achar que está tudo certo quando pode não estar.
-    alert('Não foi possível confirmar seu agendamento agora. Tente novamente ou fale direto com a barbearia.');
+    pbAviso('Não foi possível confirmar seu agendamento agora. Tente novamente ou fale direto com a barbearia.');
     return;
   }
   const aceitoNaHora = auto?.auto === true;
@@ -8700,38 +9324,17 @@ async function submitPublicBooking(){
     status: aceitoNaHora ? 'aceito' : 'pendente',
   });
   if(error){
-    alert('Não foi possível enviar o pedido. Tente novamente.'); return;
+    pbAviso('Não foi possível enviar o pedido. Tente novamente.'); return;
   }
 
   // Avisa a barbearia na hora — chega mesmo com o site fechado
-  enviarPushParaLoja(
-    pubBooking.shopId,
-    aceitoNaHora ? 'Novo agendamento confirmado!' : 'Novo pedido de agendamento',
-    `${name} — ${service.name} com ${prof.name}, ${new Date(pubBooking.date+'T'+pubBooking.time).toLocaleDateString('pt-BR')} às ${pubBooking.time}`,
-    aceitoNaHora ? '?agenda' : '?route=agendamento-online'
-  );
+  enviarPushParaLoja(pubBooking.shopId, 'agendamento');
 
   // E-mails de confirmação/aviso — só quando o horário já entrou direto na
   // agenda (aceite automático). No caminho manual, o e-mail sai quando a
   // barbearia aceitar o pedido (função acceptBookingRequest).
-  if(aceitoNaHora){
-    const shopNameEmail = pubBooking.info?.name || '';
-    if(email){
-      enviarEmailAgendamento({
-        tipo:'confirmacao_cliente', to: email, shopName: shopNameEmail,
-        clientName: name, serviceName: auto.serviceName || service.name,
-        profName: auto.professionalName || prof.name,
-        date: pubBooking.date, time: pubBooking.time,
-      });
-    }
-    if(auto.professionalEmail){
-      enviarEmailAgendamento({
-        tipo:'aviso_profissional', to: auto.professionalEmail, shopName: shopNameEmail,
-        clientName: name, serviceName: auto.serviceName || service.name,
-        profName: auto.professionalName || prof.name,
-        date: pubBooking.date, time: pubBooking.time,
-      });
-    }
+  if(aceitoNaHora && auto.appointmentId){
+    enviarEmailAgendamento({ tipo:'confirmacao', shopId: pubBooking.shopId, appointmentId: auto.appointmentId });
   }
 
   document.getElementById('pb-form').style.display = 'none';
@@ -8829,7 +9432,7 @@ function renderClientSignup(slug, errorMsg){
     const { data: log } = await supa.rpc('client_login', { p_slug: slug, p_email: email, p_password: pass });
     if(log?.ok){
       clientSession = { ...log, slug };
-      showToast(res.linkedToPlan ? 'Conta criada e vinculada ao seu plano!' : 'Conta criada com sucesso!');
+      showToast(res.linkedToPlan ? 'Conta criada e vinculada ao seu plano!' : 'Conta criada! Se você é assinante, peça à barbearia para vincular seu plano.');
       renderClientPortal();
     } else {
       renderClientLogin(slug, 'Conta criada! Agora é só entrar.');
@@ -8978,6 +9581,10 @@ async function renderPublicPlans(slug){
   const { data, error } = await supa.rpc('get_public_shop_plans', { p_slug: slug });
   if(error || !data || !data.shop_id){
     app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13.5px;">Página de planos não encontrada.</div></div></div>`;
+    return;
+  }
+  if(data.active===false){
+    app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13.5px;">Esta barbearia não está aceitando assinaturas no momento.</div></div></div>`;
     return;
   }
   planPageData = data;
@@ -9179,12 +9786,7 @@ function publicSubscribeModal(plan){
       btn.disabled = false; btn.textContent = 'Enviar pedido de assinatura';
       if(error && !criouSozinho){ showToast('Não foi possível enviar. Tente novamente.'); return; }
 
-      enviarPushParaLoja(
-        d.shop_id,
-        criouSozinho ? 'Nova assinatura do clube!' : 'Novo pedido de assinatura',
-        `${name} — ${plan.name} (${BRL(plan.price)}/mês)`,
-        '?route=clube'
-      );
+      enviarPushParaLoja(d.shop_id, 'assinatura');
 
       const done = root.querySelector('#ps-done');
       if(criouSozinho){
