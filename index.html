@@ -9032,6 +9032,142 @@ function messageChannelRow(phone, text, onSend){
   }
   return `<a class="btn btn-gold" href="${waLink(phone, text)}" target="_blank" rel="noopener" data-wa-send="1">${ICON.send} Enviar via WhatsApp</a>`;
 }
+/* ============ FASE 7: WHATSAPP AUTOMÁTICO (Evolution API) ============
+   A barbearia conecta o PRÓPRIO WhatsApp lendo um QR code. O servidor
+   (funções appointment-email e send-reminders) manda sozinho: confirmação,
+   remarcação/cancelamento, lembrete ~2h antes, avisos ao barbeiro e (se ligar)
+   cobrança do clube. Conexão não oficial: o número pode ser banido — por
+   isso o aviso, os limites e o intervalo entre mensagens. Só o dono mexe. */
+const WA_TIPOS = [
+  ['confirmacao', 'Confirmação, remarcação e cancelamento para o cliente', true],
+  ['lembrete', 'Lembrete ~2h antes do horário', true],
+  ['barbeiro', 'Avisos para o barbeiro (novo, remarcado, cancelado, lembrete)', true],
+  ['cobranca', 'Cobrança do clube (vencendo em 3 dias / em atraso, com link)', false],
+];
+const WA_ESTADO = { open:['Conectado','pill-ok'], connecting:['Aguardando leitura do QR code','pill-warn'], close:['Desconectado','pill-bad'], inexistente:['Não conectado','pill-bad'] };
+let waPoll = null;
+function whatsAutoCfg(s){ return Object.assign({ ativo:false, confirmacao:true, lembrete:true, barbeiro:true, cobranca:false }, (s||state).whatsappAuto||{}); }
+async function chamarWhats(acao){
+  try{
+    const { data, error } = await supa.functions.invoke('whatsapp', { body:{ acao } });
+    if(error) return { error:'Não foi possível falar com o servidor. Tente de novo.' };
+    return data || { error:'Sem resposta do servidor.' };
+  }catch(e){ return { error:'Não foi possível falar com o servidor. Tente de novo.' }; }
+}
+function qrValido(v){ return typeof v==='string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v); }
+
+async function montarWhatsAuto(caixa){
+  clearInterval(waPoll); waPoll = null;
+  const cfg = whatsAutoCfg();
+  caixa.innerHTML = `
+    <div class="card" style="padding:18px 20px;margin-bottom:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">${ICON.chat} WhatsApp automático</div>
+        <span class="pill pill-muted" id="wa-estado">Verificando...</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+        O sistema manda as mensagens sozinho, pelo WhatsApp da barbearia. Conecte lendo o QR code com o celular
+        (WhatsApp → Aparelhos conectados → Conectar aparelho).
+      </div>
+      <div class="pill pill-warn" style="display:block;padding:10px 12px;font-size:12px;line-height:1.55;margin-bottom:14px;">
+        ⚠ Esta conexão não é oficial do WhatsApp: existe risco de o número ser <b>bloqueado</b>. Recomendamos usar um número
+        só da barbearia (não o pessoal). O sistema manda só para quem tem horário ou assinatura aqui, no máximo 40 por hora,
+        com intervalo entre as mensagens.
+      </div>
+      <div id="wa-qr" style="display:none;text-align:center;margin-bottom:14px;"></div>
+      <div id="wa-msg" style="font-size:12.5px;color:var(--bad);margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+        <button class="btn btn-gold" id="wa-conectar">Conectar</button>
+        <button class="btn btn-ghost" id="wa-teste">Enviar mensagem de teste</button>
+        <button class="btn btn-ghost" id="wa-desconectar" style="color:var(--bad);">Desconectar</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;margin-bottom:8px;cursor:pointer;">
+        <input type="checkbox" id="wa-ativo" ${cfg.ativo?'checked':''} style="width:auto;"> Enviar mensagens automáticas
+      </label>
+      <div style="display:flex;flex-direction:column;gap:6px;padding-left:24px;margin-bottom:14px;">
+        ${WA_TIPOS.map(([k, rot])=>`<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" data-wa-tipo="${k}" ${cfg[k]?'checked':''} style="width:auto;"> ${rot}</label>`).join('')}
+      </div>
+      <details><summary style="font-size:12.5px;cursor:pointer;color:var(--muted);">Últimas mensagens enviadas</summary>
+        <div id="wa-hist" style="margin-top:8px;font-size:12px;"></div></details>
+    </div>`;
+  const $ = sel => caixa.querySelector(sel);
+  const msg = t => { $('#wa-msg').style.color = 'var(--bad)'; $('#wa-msg').textContent = t || ''; };
+  const ok = t => { $('#wa-msg').style.color = 'var(--ok)'; $('#wa-msg').textContent = t; };
+  const mostrarEstado = (e)=>{
+    const [rot, cls] = WA_ESTADO[e] || ['Desconhecido','pill-muted'];
+    const el = $('#wa-estado'); el.className = 'pill ' + cls; el.textContent = rot;
+    if(e==='open'){ $('#wa-qr').style.display = 'none'; clearInterval(waPoll); waPoll = null; }
+  };
+  const salvarCfg = ()=>{
+    const novo = { ativo: $('#wa-ativo').checked };
+    caixa.querySelectorAll('[data-wa-tipo]').forEach(c=>{ novo[c.dataset.waTipo] = c.checked; });
+    update(s=>{ s.whatsappAuto = { ...whatsAutoCfg(s), ...novo }; registrarAuditoria(s, 'Configurou WhatsApp automático', novo.ativo ? 'ligado' : 'desligado'); });
+  };
+  $('#wa-ativo').addEventListener('change', salvarCfg);
+  caixa.querySelectorAll('[data-wa-tipo]').forEach(c=>c.addEventListener('change', salvarCfg));
+
+  $('#wa-conectar').addEventListener('click', async ()=>{
+    msg(''); const b = $('#wa-conectar'); b.disabled = true; b.textContent = 'Gerando QR code...';
+    const r = await chamarWhats('conectar');
+    b.disabled = false; b.textContent = 'Conectar';
+    if(r.error){ msg(r.error); return; }
+    mostrarEstado(r.estado);
+    if(r.estado==='open'){ ok('Já está conectado.'); return; }
+    if(!qrValido(r.qr)){ msg('O QR code ainda não ficou pronto. Clique em Conectar de novo em alguns segundos.'); return; }
+    const q = $('#wa-qr'); q.style.display = 'block';
+    q.innerHTML = '';
+    const img = document.createElement('img'); img.src = r.qr; img.alt = 'QR code do WhatsApp'; img.style.cssText = 'width:240px;max-width:100%;background:#fff;padding:8px;border-radius:10px;';
+    const dica = document.createElement('div'); dica.style.cssText = 'font-size:12px;color:var(--muted);margin-top:6px;'; dica.textContent = 'Abra o WhatsApp no celular da barbearia → Aparelhos conectados → Conectar aparelho, e aponte para este código.';
+    q.appendChild(img); q.appendChild(dica);
+    // confere a cada 4 s se já leu (para em 2 minutos)
+    let voltas = 0;
+    clearInterval(waPoll);
+    waPoll = setInterval(async ()=>{
+      if(!document.body.contains(caixa) || ++voltas > 30){ clearInterval(waPoll); waPoll = null; return; }
+      const st = await chamarWhats('status');
+      if(st.estado) mostrarEstado(st.estado);
+      if(st.estado==='open'){ ok('WhatsApp conectado! Ligue "Enviar mensagens automáticas" abaixo.'); }
+    }, 4000);
+  });
+  $('#wa-teste').addEventListener('click', async ()=>{
+    msg(''); const b = $('#wa-teste'); b.disabled = true; b.textContent = 'Enviando...';
+    const r = await chamarWhats('teste');
+    b.disabled = false; b.textContent = 'Enviar mensagem de teste';
+    if(r.error) msg(r.error); else ok('Mensagem de teste enviada para o WhatsApp da barbearia.');
+    carregarHistoricoWhats(caixa);
+  });
+  $('#wa-desconectar').addEventListener('click', async ()=>{
+    if(!confirm('Desconectar o WhatsApp? As mensagens automáticas param até conectar de novo.')) return;
+    const r = await chamarWhats('desconectar');
+    if(r.error) msg(r.error); else { mostrarEstado('close'); ok('Desconectado.'); }
+  });
+
+  const st = await chamarWhats('status');
+  if(!document.body.contains(caixa)) return;
+  if(st.error){ const el = $('#wa-estado'); el.className = 'pill pill-muted'; el.textContent = 'Indisponível'; msg(st.error); }
+  else mostrarEstado(st.estado);
+  carregarHistoricoWhats(caixa);
+}
+
+const WA_STATUS_ROT = { enviado:'enviada', pendente:'na fila', erro:'falhou', expirado:'perdeu a hora' };
+async function carregarHistoricoWhats(caixa){
+  const el = caixa.querySelector('#wa-hist');
+  if(!el) return;
+  let data = null, error = null;
+  try {
+    ({ data, error } = await supa.from('whatsapp_outbox').select('criado_em, tipo, destino, status, erro')
+      .eq('shop_id', currentShop.id).order('criado_em', { ascending:false }).limit(30));
+  } catch(e){ error = e; }
+  if(error){ el.textContent = 'Não foi possível carregar.'; return; }
+  el.innerHTML = (data||[]).length ? data.map(m=>`<div style="display:flex;gap:10px;padding:4px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+      <span class="font-mono" style="color:var(--muted-2);">${new Date(m.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+      <span>${esc(m.tipo)}</span><span style="color:var(--muted);">${esc(String(m.destino||'').replace(/^55/,''))}</span>
+      <span style="color:${m.status==='enviado'?'var(--ok)':m.status==='pendente'?'var(--warn)':'var(--bad)'};">${esc(WA_STATUS_ROT[m.status]||m.status)}</span>
+      ${m.erro?`<span style="color:var(--muted-2);">${esc(m.erro)}</span>`:''}
+    </div>`).join('') : '<div style="color:var(--muted);">Nenhuma mensagem ainda.</div>';
+}
+
 function renderMensagens(view){
   const T = state.messageTemplates;
   const MS = state.messageSettings;
@@ -9041,6 +9177,7 @@ function renderMensagens(view){
 
   view.innerHTML = `
     ${pageHeader('Mensagens Automáticas', 'Confirmação, lembrete, retorno de clientes ausentes e oferta de serviços/produtos')}
+    ${podeUsarLgpd() ? '<div id="wa-auto"></div>' : ''}
 
     <div class="card" style="padding:16px 18px;margin-bottom:22px;">
       <div style="font-size:13px;color:var(--muted);line-height:1.7;">Este painel identifica automaticamente quem precisa receber cada mensagem com base na agenda e no histórico de clientes. Toque em <strong style="color:var(--ink);">Enviar via WhatsApp</strong> para abrir a conversa já com o texto pronto — o envio 100% automático (disparado sozinho, sem toque, mesmo com o sistema fechado) exige um servidor com a API oficial do WhatsApp Business rodando em segundo plano.</div>
@@ -9165,6 +9302,9 @@ function renderMensagens(view){
       </table>
     `}
   `;
+
+  const caixaWa = view.querySelector('#wa-auto');
+  if(caixaWa) montarWhatsAuto(caixaWa);
 
   view.querySelector('#btn-save-reminder-hours').addEventListener('click', ()=>{
     const v = parseInt(view.querySelector('#f-reminder-hours').value)||3;
@@ -11452,6 +11592,7 @@ function renderLegalPage(type){
       <li><b>Supabase</b> — armazenamento seguro do banco de dados</li>
       <li><b>Asaas</b> (quando o dono da barbearia ativa essa integração) — processamento de cobranças recorrentes aos clientes finais da própria barbearia</li>
       <li><b>Resend</b> — envio dos e-mails de confirmação, lembrete e avisos</li>
+      <li><b>WhatsApp</b> — quando a barbearia conecta o próprio WhatsApp, as mensagens automáticas (confirmação, lembrete, avisos ao barbeiro e cobrança do clube) saem pelo número dela, por um servidor do Primer Barber que não guarda as conversas</li>
       <li><b>Serviço de notificações do navegador</b> (Google, Apple ou Mozilla, conforme o aparelho) — entrega dos avisos de novo agendamento, quando a barbearia ativa</li>
       <li><b>Meta (Facebook)</b> — somente na tela de entrar/criar conta da barbearia e somente se a pessoa aceitar os cookies de medição (veja o item 9)</li>
     </ul>
