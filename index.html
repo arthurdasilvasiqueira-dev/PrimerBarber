@@ -292,421 +292,111 @@
   }
 </style>
 <style id="landing-css">
-/* ===================== LANDING (página de venda) =====================
-   Sempre escura/dourada (identidade do Primer Barber), independente do tema
-   do painel. Tudo com prefixo .lp- para não mexer no resto do sistema. */
+/* ===================== TELA DE ENTRADA (dividida) =====================
+   Computador: painel da marca (escuro/dourado) à esquerda + formulário claro
+   à direita. Celular: só o formulário de entrar (com o logo no topo).
+   Tudo com prefixo .lp- para não mexer no resto do sistema. */
 html.sem-landing #landing{display:none !important;}
 html.com-landing #app:empty{display:none;}
 #landing{
-  --lp-bg:#0a0b0d; --lp-bg2:#101215; --lp-panel:#15171b; --lp-border:#262a30;
-  --lp-gold:#c9a24b; --lp-gold-2:#e3c078; --lp-ink:#f4f5f6; --lp-muted:#b3b8bf; --lp-muted-2:#8a9099;
-  background:var(--lp-bg); color:var(--lp-ink); font-family:'Inter',system-ui,sans-serif;
-  min-height:100vh; line-height:1.55; -webkit-font-smoothing:antialiased;
+  --lp-gold:#c9a24b; --lp-gold-2:#e3c078; --lp-gold-escuro:#7a5a12;
+  --lp-claro:#f7f4ee; --lp-tinta:#1b1a17; --lp-cinza:#6b6862; --lp-cinza-2:#8d887f; --lp-borda:#ddd6c8;
+  display:grid;grid-template-columns:1fr;min-height:100vh;background:var(--lp-claro);color:var(--lp-tinta);
+  font-family:'Inter',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;
 }
 #landing *{box-sizing:border-box;}
-#landing a{color:var(--lp-gold-2);}
 #landing img{max-width:100%;height:auto;display:block;}
-#landing :focus-visible{outline:3px solid var(--lp-gold-2);outline-offset:2px;border-radius:6px;}
-.lp-serif{font-family:'Fraunces',Georgia,serif;}
-.lp-wrap{max-width:1180px;margin:0 auto;padding:0 18px;}
-.lp-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:12px 22px;border-radius:12px;
-  font:600 15.5px/1.2 'Inter',sans-serif;text-decoration:none;cursor:pointer;border:1px solid transparent;transition:transform .15s,background .15s,border-color .15s;}
-.lp-btn-gold{background:var(--lp-gold);color:#14110a !important;box-shadow:0 10px 30px -10px rgba(201,162,75,.6);}
-.lp-btn-gold:hover{background:var(--lp-gold-2);transform:translateY(-1px);}
-.lp-btn-ghost{background:transparent;color:var(--lp-ink) !important;border-color:var(--lp-border);}
-.lp-btn-ghost:hover{border-color:var(--lp-gold);}
-.lp-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12.5px;font-weight:600;
-  background:rgba(201,162,75,.12);color:var(--lp-gold-2);border:1px solid rgba(201,162,75,.3);}
-.lp-novo{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.04em;
-  background:var(--lp-gold);color:#14110a;vertical-align:middle;}
+#landing :focus-visible{outline:3px solid var(--lp-gold);outline-offset:2px;border-radius:6px;}
 
-/* topo */
-.lp-top{position:sticky;top:0;z-index:40;background:rgba(10,11,13,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--lp-border);}
-.lp-top .lp-wrap{display:flex;align-items:center;gap:12px;height:62px;}
-.lp-marca{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--lp-ink) !important;margin-right:auto;}
-.lp-marca img{width:34px;height:34px;border-radius:9px;background:#1a1d22;padding:5px;}
-.lp-marca b{font:600 19px/1 'Fraunces',serif;}
-.lp-menu{display:none;gap:22px;margin-right:18px;}
-.lp-menu a{color:var(--lp-muted) !important;text-decoration:none;font-size:14px;}
-.lp-menu a:hover{color:var(--lp-ink) !important;}
-.lp-top .lp-btn{min-height:44px;padding:10px 16px;font-size:14.5px;}
+/* painel da marca (só no computador) */
+.lp-marca-painel{display:none;position:relative;overflow:hidden;color:#f4f5f6;padding:48px 56px;flex-direction:column;
+  background:radial-gradient(90% 70% at 100% 0%,rgba(201,162,75,.22),transparent 60%),radial-gradient(60% 50% at 0% 100%,rgba(201,162,75,.10),transparent 70%),#0d0e10;}
+.lp-logo{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;}
+.lp-logo img{width:42px;height:42px;border-radius:11px;background:#1a1d22;padding:6px;}
+.lp-logo b{font:600 22px/1 'Fraunces',Georgia,serif;}
+.lp-meio{margin:auto 0;}
+.lp-marca-painel h1{font:500 clamp(34px,3.4vw,48px)/1.12 'Fraunces',Georgia,serif;margin:0 0 30px;letter-spacing:-.01em;max-width:540px;}
+.lp-marca-painel h1 em{color:var(--lp-gold-2);font-style:italic;}
+.lp-itens{list-style:none;padding:0;margin:0;display:grid;gap:18px;max-width:480px;}
+.lp-itens li{display:flex;gap:14px;font-size:17px;line-height:1.45;color:#e7e8ea;}
+.lp-ic{flex:0 0 34px;height:34px;border-radius:9px;border:1px solid rgba(227,192,120,.4);color:var(--lp-gold-2);display:flex;align-items:center;justify-content:center;}
+.lp-ic svg{width:17px;height:17px;}
+.lp-pill{display:inline-flex;align-items:center;gap:6px;margin-top:30px;padding:7px 13px;border-radius:999px;font-size:13.5px;font-weight:600;
+  color:var(--lp-gold-2);border:1px solid rgba(227,192,120,.35);background:rgba(201,162,75,.10);}
+.lp-copy{color:#8a9099;font-size:14px;}
+.lp-copy a{color:#b3b8bf;}
 
-/* estrutura: landing + cartão de acesso */
-.lp-grade{display:block;}
-.lp-acesso{display:none;}
-.lp-secao{padding:56px 0;border-top:1px solid var(--lp-border);}
-.lp-secao h2{font:600 clamp(26px,6.4vw,38px)/1.15 'Fraunces',serif;margin:0 0 12px;letter-spacing:-.01em;}
-.lp-secao .lp-sub{color:var(--lp-muted);font-size:16px;margin:0 0 28px;max-width:640px;}
-.lp-kicker{color:var(--lp-gold-2);font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px;}
-
-/* hero */
-.lp-hero{padding:34px 0 46px;}
-.lp-hero h1{font:600 clamp(34px,9vw,58px)/1.06 'Fraunces',serif;margin:14px 0 14px;letter-spacing:-.02em;}
-.lp-hero h1 em{font-style:normal;color:var(--lp-gold-2);}
-.lp-hero p.lp-lead{color:var(--lp-muted);font-size:17px;margin:0 0 22px;max-width:560px;}
-.lp-ctas{display:flex;flex-direction:column;gap:10px;}
-.lp-garantias{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--lp-muted-2);font-size:13.5px;margin-top:14px;padding:0;list-style:none;}
-.lp-garantias li::before{content:"✓ ";color:var(--lp-gold-2);font-weight:700;}
-.lp-hero-visual{margin-top:30px;position:relative;}
-.lp-celular{width:min(78%,300px);margin:0 auto;border:9px solid #1d2026;border-radius:34px;overflow:hidden;
-  box-shadow:0 40px 80px -30px rgba(0,0,0,.9),0 0 0 1px #2c3038;background:#0d0f12;aspect-ratio:390/760;}
-.lp-celular img{width:100%;height:100%;object-fit:cover;object-position:top;}
-.lp-notebook{display:none;}
-.lp-ilustrativo{color:var(--lp-muted-2);font-size:12px;text-align:center;margin-top:10px;}
-
-/* cartões */
-.lp-cards{display:grid;grid-template-columns:1fr;gap:12px;}
-.lp-card{background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:16px;padding:20px;}
-.lp-card h3{font:600 17.5px/1.3 'Inter',sans-serif;margin:10px 0 6px;}
-.lp-card p{color:var(--lp-muted);margin:0;font-size:15px;}
-.lp-ico{width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:21px;
-  background:rgba(201,162,75,.12);border:1px solid rgba(201,162,75,.25);}
-.lp-dor{display:grid;gap:4px;}
-.lp-dor .lp-de{color:#e59a8c;font-weight:600;font-size:15.5px;}
-.lp-dor .lp-para{color:var(--lp-ink);font-size:15px;}
-.lp-dor .lp-para::before{content:"→ ";color:var(--lp-gold-2);font-weight:700;}
-
-/* passos */
-.lp-passos{display:grid;gap:12px;counter-reset:passo;list-style:none;padding:0;margin:0;}
-.lp-passos li{counter-increment:passo;display:flex;gap:14px;align-items:flex-start;background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:16px;padding:18px;}
-.lp-passos li::before{content:counter(passo);flex:0 0 38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  background:var(--lp-gold);color:#14110a;font:700 17px/1 'Inter',sans-serif;}
-.lp-passos b{display:block;font-size:16.5px;margin-bottom:3px;}
-.lp-passos span{color:var(--lp-muted);font-size:15px;}
-
-/* galeria (desliza com o dedo) */
-.lp-galeria{display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 18px 16px;margin:0 -18px;scrollbar-width:thin;}
-.lp-galeria figure{flex:0 0 86%;scroll-snap-align:center;margin:0;background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:16px;overflow:hidden;}
-.lp-galeria img{width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top left;background:#0d0f12;}
-.lp-galeria figcaption{padding:12px 14px;font-size:14.5px;color:var(--lp-muted);}
-.lp-galeria figcaption b{color:var(--lp-ink);display:block;font-size:15.5px;}
-
-/* clube */
-.lp-clube{background:radial-gradient(120% 90% at 100% 0%,rgba(201,162,75,.16),transparent 60%),var(--lp-bg2);}
-.lp-lista{list-style:none;padding:0;margin:0 0 24px;display:grid;gap:10px;}
-.lp-lista li{display:flex;gap:10px;font-size:15.5px;}
-.lp-lista li::before{content:"✓";flex:0 0 24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  background:rgba(201,162,75,.16);color:var(--lp-gold-2);font-weight:700;font-size:13px;margin-top:1px;}
-.lp-clube-img{border-radius:16px;overflow:hidden;border:1px solid var(--lp-border);box-shadow:0 30px 60px -30px rgba(0,0,0,.9);margin-top:26px;}
-
-/* planos */
-.lp-planos{display:grid;gap:14px;}
-.lp-plano{position:relative;background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:18px;padding:24px;}
-.lp-plano.lp-destaque{border-color:rgba(201,162,75,.6);background:linear-gradient(170deg,#1b1810,var(--lp-panel) 55%);}
-.lp-plano .lp-selo{position:absolute;top:-12px;left:22px;}
-.lp-plano h3{font:600 24px/1.1 'Fraunces',serif;margin:6px 0 4px;}
-.lp-preco{font:700 30px/1.1 'Inter',sans-serif;margin:12px 0 2px;}
-.lp-preco small{font-size:15px;font-weight:500;color:var(--lp-muted);}
-.lp-plano .lp-lista{margin:16px 0 20px;}
-.lp-plano .lp-nao::before{content:"—";background:transparent;color:var(--lp-muted-2);}
-.lp-plano .lp-btn{width:100%;}
-.lp-obs{color:var(--lp-muted-2);font-size:13.5px;margin-top:16px;text-align:center;}
-.lp-preencher{color:#f0c36d;background:rgba(240,195,109,.1);border:1px dashed rgba(240,195,109,.5);padding:1px 6px;border-radius:6px;font-size:.8em;}
-
-/* FAQ */
-.lp-faq details{background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:14px;margin-bottom:10px;}
-.lp-faq summary{cursor:pointer;list-style:none;padding:17px 46px 17px 18px;font-weight:600;font-size:16px;position:relative;min-height:44px;}
-.lp-faq summary::-webkit-details-marker{display:none;}
-.lp-faq summary::after{content:"+";position:absolute;right:18px;top:50%;transform:translateY(-50%);color:var(--lp-gold-2);font-size:22px;font-weight:400;}
-.lp-faq details[open] summary::after{content:"−";}
-.lp-faq details p{margin:0;padding:0 18px 18px;color:var(--lp-muted);font-size:15px;}
-
-/* chamada final e rodapé */
-.lp-final{text-align:center;}
-.lp-final h2{max-width:720px;margin-left:auto;margin-right:auto;}
-.lp-final .lp-ctas{align-items:center;}
-.lp-rodape{border-top:1px solid var(--lp-border);padding:28px 0 110px;color:var(--lp-muted-2);font-size:14px;}
-.lp-rodape .lp-wrap{display:flex;flex-direction:column;gap:12px;}
-.lp-rodape nav{display:flex;flex-wrap:wrap;gap:8px 18px;}
-.lp-rodape a{color:var(--lp-muted) !important;}
-
-/* barra fixa do celular */
-.lp-barra{position:fixed;left:0;right:0;bottom:0;z-index:45;padding:10px 14px calc(10px + env(safe-area-inset-bottom));
-  background:rgba(10,11,13,.94);border-top:1px solid var(--lp-border);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
-.lp-barra .lp-btn{width:100%;}
-
-/* cartão de acesso (Entrar / Criar conta) */
-.lp-cartao{background:var(--lp-panel);border:1px solid var(--lp-border);border-radius:20px;padding:22px;box-shadow:0 30px 70px -30px rgba(0,0,0,.95);}
-.lp-cartao-topo{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
-.lp-cartao-topo b{font:600 20px/1.2 'Fraunces',serif;}
-.lp-fechar{display:none;min-width:44px;min-height:44px;border-radius:12px;border:1px solid var(--lp-border);background:transparent;color:var(--lp-ink);font-size:22px;cursor:pointer;}
-.lp-abas{display:grid;grid-template-columns:1fr 1fr;background:var(--lp-bg2);border:1px solid var(--lp-border);border-radius:12px;padding:4px;margin-bottom:16px;}
-.lp-abas button{min-height:42px;border:0;border-radius:9px;background:transparent;color:var(--lp-muted);font:600 14.5px/1 'Inter',sans-serif;cursor:pointer;}
-.lp-abas button[aria-selected="true"]{background:var(--lp-gold);color:#14110a;}
-.lp-campo{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
-.lp-campo label{font-size:13px;color:var(--lp-muted);font-weight:500;}
-.lp-campo input{min-height:48px;background:var(--lp-bg2);border:1px solid var(--lp-border);color:var(--lp-ink);border-radius:11px;padding:12px 14px;font-size:16px;}
-.lp-campo input:focus{border-color:var(--lp-gold);outline:none;box-shadow:0 0 0 3px rgba(201,162,75,.2);}
-.lp-cartao .lp-btn{width:100%;margin-top:4px;}
-.lp-cartao .lp-btn[disabled]{opacity:.7;cursor:wait;transform:none;}
-.lp-erro{background:rgba(207,107,92,.12);border:1px solid rgba(207,107,92,.45);color:#f0a597;border-radius:11px;padding:10px 12px;font-size:14px;margin-bottom:12px;}
-.lp-okmsg{background:rgba(95,169,111,.12);border:1px solid rgba(95,169,111,.45);color:#9fd8ab;border-radius:11px;padding:10px 12px;font-size:14px;margin-bottom:12px;}
-.lp-aceite{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--lp-muted);margin:4px 0 12px;cursor:pointer;}
+/* lado do formulário */
+.lp-form-lado{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px 40px;}
+.lp-logo-cel{display:flex;margin:0 auto 34px;color:var(--lp-tinta);}
+.lp-logo-cel img{background:#14161a;}
+#lp-auth-slot{width:100%;max-width:440px;}
+.lp-titulo{font:500 clamp(28px,7vw,38px)/1.15 'Fraunces',Georgia,serif;margin:0 0 8px;color:var(--lp-tinta);}
+.lp-sub{color:var(--lp-cinza);margin:0 0 28px;font-size:16px;}
+.lp-campo{margin-bottom:18px;}
+.lp-campo label{display:block;font-weight:600;font-size:15px;margin:0 0 8px;color:var(--lp-tinta);}
+.lp-campo input{width:100%;min-height:50px;border:1px solid var(--lp-borda);border-radius:10px;background:#fff;padding:12px 14px;font-size:16px;color:var(--lp-tinta);}
+.lp-campo input:focus{border-color:var(--lp-gold);outline:none;box-shadow:0 0 0 3px rgba(201,162,75,.22);}
+.lp-esqueci{display:flex;justify-content:flex-end;margin:-6px 0 18px;}
+.lp-link{background:none;border:0;padding:8px 2px;min-height:44px;color:var(--lp-gold-escuro);font:600 15px/1.3 'Inter',sans-serif;cursor:pointer;text-decoration:none;}
+.lp-link:hover{text-decoration:underline;text-underline-offset:3px;}
+.lp-btn{width:100%;min-height:54px;border:0;border-radius:10px;background:var(--lp-gold);color:#14110a;font:600 17px/1 'Inter',sans-serif;cursor:pointer;transition:background .15s;}
+.lp-btn:hover{background:#d4ae57;}
+.lp-btn[disabled]{opacity:.7;cursor:wait;}
+.lp-troca{text-align:center;margin-top:18px;color:var(--lp-cinza);font-size:15.5px;}
+.lp-troca .lp-link{color:var(--lp-tinta);font-weight:700;padding:8px 4px;}
+.lp-equipe{text-align:center;margin-top:10px;color:var(--lp-cinza-2);font-size:13.5px;}
+.lp-teste{display:inline-flex;margin:0 0 22px;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;color:var(--lp-gold-escuro);
+  background:rgba(201,162,75,.14);border:1px solid rgba(201,162,75,.35);}
+.lp-aceite{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--lp-cinza);margin:2px 0 18px;cursor:pointer;}
 .lp-aceite input{width:20px;height:20px;margin-top:1px;accent-color:var(--lp-gold);flex:0 0 20px;}
-.lp-links-cartao{display:flex;flex-direction:column;gap:4px;margin-top:14px;align-items:center;}
-.lp-link{background:none;border:0;color:var(--lp-gold-2);font:500 14px/1.4 'Inter',sans-serif;cursor:pointer;padding:8px;min-height:44px;text-decoration:underline;text-underline-offset:3px;}
-.lp-equipe{margin-top:14px;padding-top:14px;border-top:1px solid var(--lp-border);font-size:13px;color:var(--lp-muted-2);text-align:center;}
-.lp-teste-pill{text-align:center;margin:-4px 0 14px;}
+.lp-aceite a{color:var(--lp-gold-escuro);font-weight:600;}
+.lp-erro{background:#fbe9e7;border:1px solid #f0b4aa;color:#8f2a1f;border-radius:10px;padding:11px 13px;font-size:14.5px;margin-bottom:16px;}
+.lp-okmsg{background:#e8f2ea;border:1px solid #a9d1b2;color:#25602f;border-radius:10px;padding:11px 13px;font-size:14.5px;margin-bottom:16px;}
+.lp-rodape-cel{margin-top:30px;text-align:center;font-size:13px;color:var(--lp-cinza-2);}
+.lp-rodape-cel a{color:var(--lp-cinza);margin:0 6px;}
 
-/* celular: o cartão abre em tela cheia */
-html.lp-acesso-aberto{overflow:hidden;}
-html.lp-acesso-aberto .lp-acesso{display:block;position:fixed;inset:0;z-index:60;background:rgba(5,6,8,.97);overflow-y:auto;padding:16px 14px 40px;}
-html.lp-acesso-aberto .lp-fechar{display:inline-flex;align-items:center;justify-content:center;}
-html.lp-acesso-aberto .lp-barra{display:none;}
-
-/* ====== tablet ====== */
-@media (min-width:640px){
-  .lp-wrap{padding:0 28px;}
-  .lp-ctas{flex-direction:row;flex-wrap:wrap;}
-  .lp-cards{grid-template-columns:1fr 1fr;}
-  .lp-galeria figure{flex-basis:62%;}
-  .lp-planos{grid-template-columns:1fr 1fr;align-items:start;}
-  .lp-passos{grid-template-columns:repeat(3,1fr);}
-  .lp-passos li{flex-direction:column;}
+/* computador: tela dividida */
+@media (min-width:900px){
+  #landing{grid-template-columns:1fr 1fr;}
+  .lp-marca-painel{display:flex;}
+  .lp-logo-cel,.lp-rodape-cel{display:none;}
+  .lp-form-lado{padding:48px;}
 }
-/* ====== computador: 2 colunas (landing + cartão fixo) ====== */
-@media (min-width:1024px){
-  .lp-menu{display:flex;}
-  .lp-top .lp-wrap{max-width:1360px;}
-  .lp-grade{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:40px;max-width:1360px;margin:0 auto;padding:0 28px;}
-  .lp-grade .lp-wrap{padding:0;max-width:none;}
-  .lp-acesso{display:block;position:sticky;top:84px;align-self:start;margin:28px 0;}
-  html.lp-acesso-aberto{overflow:auto;}
-  html.lp-acesso-aberto .lp-acesso{position:sticky;inset:auto;background:none;padding:0;z-index:auto;}
-  html.lp-acesso-aberto .lp-fechar{display:none;}
-  .lp-barra{display:none;}
-  .lp-rodape{padding-bottom:36px;}
-  .lp-hero{display:block;padding:44px 0 56px;}
-  .lp-celular{width:100%;border-width:1px;border-color:#2c3038;border-radius:14px;aspect-ratio:16/10;box-shadow:0 50px 90px -40px rgba(0,0,0,.95),0 0 0 6px #15171b;}
-  .lp-celular img{object-position:top left;}
-  .lp-cards{grid-template-columns:repeat(3,1fr);}
-  .lp-cards.lp-dois{grid-template-columns:1fr 1fr;}
-  .lp-galeria{margin:0;padding:4px 0 16px;}
-  .lp-galeria figure{flex-basis:46%;}
-  .lp-clube-grid{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:center;}
-  .lp-clube-img{margin-top:0;}
-  .lp-rodape .lp-wrap{flex-direction:row;justify-content:space-between;align-items:center;}
-}
-@media (min-width:1280px){ .lp-grade{grid-template-columns:minmax(0,1fr) 400px;gap:56px;} }
+@media (min-width:900px) and (max-width:1100px){ .lp-marca-painel{padding:40px;} .lp-itens li{font-size:16px;} }
 
-/* aviso de cookies: acima da barra fixa no celular; no canto no computador */
-html.com-landing #pb-cookies{bottom:84px !important;background:#15171b !important;color:#f4f5f6 !important;border-color:#2c3038 !important;}
+/* aviso de cookies: no canto, escuro, sem cobrir o formulário */
+html.com-landing #pb-cookies{background:#15171b !important;color:#f4f5f6 !important;border-color:#2c3038 !important;}
 html.com-landing #pb-cookies .btn-ghost{color:#f4f5f6;border-color:#2c3038;background:transparent;}
-@media (min-width:1024px){ html.com-landing #pb-cookies{left:24px !important;right:auto !important;bottom:24px !important;margin:0 !important;max-width:440px !important;} }
-@media (prefers-reduced-motion:reduce){
-  #landing *{transition:none !important;scroll-behavior:auto !important;}
-}
+@media (min-width:900px){ html.com-landing #pb-cookies{left:24px !important;right:auto !important;bottom:24px !important;margin:0 !important;max-width:440px !important;} }
+
+@media (prefers-reduced-motion:reduce){ #landing *{transition:none !important;} }
 </style>
 </head>
 <body>
-<!-- ===================== LANDING (página de venda) =====================
-     HTML fixo: aparece antes do sistema carregar (rápido e bom para o Google).
-     O cartão Entrar/Criar conta é desenhado pelo sistema dentro de #lp-auth-slot. -->
+<!-- ===================== TELA DE ENTRADA (dividida) =====================
+     HTML fixo: aparece antes do sistema carregar. O formulário é desenhado
+     pelo sistema dentro de #lp-auth-slot. -->
 <div id="landing">
-  <header class="lp-top">
-    <div class="lp-wrap">
-      <a class="lp-marca" href="./" aria-label="Primer Barber — início"><img src="img/icon-192.png" alt="" width="34" height="34"><b>Primer Barber</b></a>
-      <nav class="lp-menu" aria-label="Seções">
-        <a href="#recursos">Recursos</a><a href="#clube">Clube</a><a href="#planos">Planos</a><a href="#duvidas">Dúvidas</a>
-      </nav>
-      <button class="lp-btn lp-btn-ghost" type="button" data-lp-abrir="login">Entrar</button>
+  <aside class="lp-marca-painel" aria-label="Primer Barber">
+    <a class="lp-logo" href="./"><img src="img/icon-192.png" alt="" width="42" height="42"><b>Primer Barber</b></a>
+    <div class="lp-meio">
+      <h1>Sua barbearia organizada e <em>lucrando mais</em>, sem planilha.</h1>
+      <ul class="lp-itens">
+        <li><span class="lp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span>Agenda online 24h: o cliente marca sozinho pelo seu link.</li>
+        <li><span class="lp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z"/></svg></span>Clube de assinatura com cobrança automática todo mês.</li>
+        <li><span class="lp-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg></span>Comissão e caixa calculados sozinhos, sem caderno.</li>
+      </ul>
+      <span class="lp-pill">✦ Teste grátis por 14 dias · sem cartão</span>
     </div>
-  </header>
+    <div class="lp-copy">© 2026 Primer Barber · <a href="?pagina=termos">Termos</a> · <a href="?pagina=privacidade">Privacidade</a></div>
+  </aside>
 
-  <div class="lp-grade">
-    <main id="lp-conteudo">
-      <!-- 1. HERO -->
-      <section class="lp-hero lp-wrap" aria-labelledby="lp-titulo">
-        <span class="lp-pill">✦ Sistema de gestão para barbearias</span>
-        <h1 id="lp-titulo" class="lp-serif">Agenda cheia, caixa batendo e <em>comissão calculada sozinha.</em></h1>
-        <p class="lp-lead">Agendamento online 24h, clube de assinatura com cobrança automática, caixa e comissões — tudo no celular, sem instalar nada. Seu cliente marca pelo link, sem baixar aplicativo.</p>
-        <div class="lp-ctas">
-          <button class="lp-btn lp-btn-gold" type="button" data-lp-abrir="signup">Testar grátis por 14 dias</button>
-          <button class="lp-btn lp-btn-ghost" type="button" data-lp-abrir="login">Já tenho conta — entrar</button>
-        </div>
-        <ul class="lp-garantias"><li>Sem cartão de crédito</li><li>Todos os recursos liberados no teste</li><li>Cancele quando quiser</li></ul>
-        <div class="lp-hero-visual">
-          <div class="lp-celular">
-            <picture>
-              <source media="(min-width:1024px)" srcset="img/landing/tela-dashboard-pc.webp" width="1600" height="1000">
-              <img src="img/landing/tela-dashboard-cel.webp" width="780" height="1688" alt="Painel do Primer Barber mostrando faturamento do dia, saldo do caixa, comissões e clube de assinatura" fetchpriority="high">
-            </picture>
-          </div>
-          <p class="lp-ilustrativo">Tela real do sistema, com dados ilustrativos.</p>
-        </div>
-      </section>
-
-      <!-- 2. DOR → SOLUÇÃO -->
-      <section class="lp-secao" aria-labelledby="lp-dores">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Se isso te soa familiar</p>
-          <h2 id="lp-dores">Você reconhece essas cenas na sua barbearia?</h2>
-          <p class="lp-sub">O Primer Barber nasceu dentro de uma barbearia, para resolver o dia a dia de verdade.</p>
-          <div class="lp-cards">
-            <div class="lp-card lp-dor"><div class="lp-ico" aria-hidden="true">📵</div><span class="lp-de">O cliente some</span><span class="lp-para">Ele marca sozinho pelo seu link, a qualquer hora, e recebe lembrete antes do horário.</span></div>
-            <div class="lp-card lp-dor"><div class="lp-ico" aria-hidden="true">📒</div><span class="lp-de">Comissão na caneta</span><span class="lp-para">A comissão de cada profissional é calculada sozinha, com vales e saques registrados.</span></div>
-            <div class="lp-card lp-dor"><div class="lp-ico" aria-hidden="true">📆</div><span class="lp-de">Mensalidade esquecida</span><span class="lp-para">O clube cobra automaticamente e mostra quem está em dia e quem está atrasado.</span></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 3. BENEFÍCIOS -->
-      <section class="lp-secao" id="recursos" aria-labelledby="lp-recursos">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Tudo num lugar só</p>
-          <h2 id="lp-recursos">O que o Primer Barber faz pela sua barbearia</h2>
-          <p class="lp-sub">Sem planilha, sem caderno, sem grupo de WhatsApp lotado.</p>
-          <div class="lp-cards">
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">📅</div><h3>Agenda online 24h</h3><p>Link próprio com a cara da sua barbearia. O cliente escolhe serviço, profissional e horário — e pode remarcar ou cancelar pelo link, se você permitir.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">⭐</div><h3>Clube de assinatura</h3><p>Planos mensais com cobrança automática (via Asaas), controle de uso e pote dos profissionais.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">💈</div><h3>Comissões e vales</h3><p>Comissão por profissional e por serviço, vales e pedidos de saque que o dono aprova.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">💵</div><h3>Caixa e despesas</h3><p>Abertura e fechamento de caixa por forma de pagamento, despesas e relatórios do mês.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">💬</div><h3>Lembretes automáticos <span class="lp-novo">NOVO</span></h3><p>Confirmação e lembrete por e-mail e, agora, pelo WhatsApp da própria barbearia.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">🎁</div><h3>Fidelidade</h3><p>Pontos por atendimento e programa de indicação para o cliente voltar sempre.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">🔐</div><h3>Equipe com PIN</h3><p>Cada profissional entra pelo celular com o próprio PIN e vê só o que precisa.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">📦</div><h3>Estoque e vendas</h3><p>Venda de produtos, baixa automática por serviço e alerta de estoque baixo.</p></div>
-            <div class="lp-card"><div class="lp-ico" aria-hidden="true">📲</div><h3>App na tela do celular</h3><p>Funciona no navegador e dá para instalar como aplicativo, com aviso de agendamento novo.</p></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 4. COMO FUNCIONA -->
-      <section class="lp-secao" aria-labelledby="lp-como">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Simples de começar</p>
-          <h2 id="lp-como">Como funciona</h2>
-          <p class="lp-sub">Em poucos minutos sua barbearia já está recebendo agendamento.</p>
-          <ol class="lp-passos">
-            <li><div><b>Crie sua conta grátis</b><span>Só e-mail, senha e o nome da barbearia. Sem cartão.</span></div></li>
-            <li><div><b>Cadastre serviços e equipe</b><span>Preços, duração, profissionais e horários de cada um.</span></div></li>
-            <li><div><b>Compartilhe seu link</b><span>Coloque no Instagram e no WhatsApp: o cliente marca sozinho.</span></div></li>
-          </ol>
-        </div>
-      </section>
-
-      <!-- 5. TELAS -->
-      <section class="lp-secao" aria-labelledby="lp-telas">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Por dentro do sistema</p>
-          <h2 id="lp-telas">Veja as telas de verdade</h2>
-          <p class="lp-sub">Arraste para o lado. Telas reais do Primer Barber, com dados ilustrativos.</p>
-          <div class="lp-galeria" tabindex="0" aria-label="Galeria de telas do sistema">
-            <figure><img src="img/landing/tela-agenda-pc.webp" loading="lazy" width="1600" height="1000" alt="Agenda da semana com horários de cada profissional"><figcaption><b>Agenda</b>Grade por profissional, encaixe, bloqueio de horário e lista de espera.</figcaption></figure>
-            <figure><img src="img/landing/tela-caixa-pc.webp" loading="lazy" width="1600" height="1000" alt="Caixa do dia separado por forma de pagamento"><figcaption><b>Caixa</b>Entradas e saídas por dinheiro, PIX e cartão, com fechamento do dia.</figcaption></figure>
-            <figure><img src="img/landing/tela-comissoes-pc.webp" loading="lazy" width="1600" height="1000" alt="Comissões a pagar por profissional"><figcaption><b>Comissões</b>Quanto cada profissional tem a receber, vales e pagamentos.</figcaption></figure>
-            <figure><img src="img/landing/tela-clientes-pc.webp" loading="lazy" width="1600" height="1000" alt="Lista de clientes com visitas e total gasto"><figcaption><b>Clientes</b>Histórico, visitas, total gasto, indicações e aniversário.</figcaption></figure>
-            <figure><img src="img/landing/tela-fidelidade-pc.webp" loading="lazy" width="1600" height="1000" alt="Programa de fidelidade com pontos"><figcaption><b>Fidelidade</b>Pontos por atendimento e recompensas para quem volta.</figcaption></figure>
-          </div>
-        </div>
-      </section>
-
-      <!-- 6. CLUBE -->
-      <section class="lp-secao lp-clube" id="clube" aria-labelledby="lp-clube">
-        <div class="lp-wrap lp-clube-grid">
-          <div>
-            <p class="lp-kicker">O maior diferencial</p>
-            <h2 id="lp-clube">Transforme cliente avulso em mensalidade todo mês</h2>
-            <p class="lp-sub">Venda planos mensais direto para os seus clientes e tenha receita garantida antes do mês começar.</p>
-            <ul class="lp-lista">
-              <li>Cobrança automática por PIX, boleto ou cartão (via Asaas)</li>
-              <li>Estrela na agenda: assinante em dia ou atrasado, na hora</li>
-              <li>Limite de uso por plano, pausa, troca de plano e cancelamento</li>
-              <li>Pote dos profissionais: o valor recebido é dividido de forma transparente</li>
-              <li>Página de planos própria para o cliente assinar sozinho</li>
-            </ul>
-            <button class="lp-btn lp-btn-gold" type="button" data-lp-abrir="signup">Quero testar o clube</button>
-          </div>
-          <div class="lp-clube-img"><img src="img/landing/tela-clube-pc.webp" loading="lazy" width="1600" height="1000" alt="Tela do Clube de Assinatura com receita recorrente e assinantes"></div>
-        </div>
-      </section>
-
-      <!-- 7. PLANOS -->
-      <section class="lp-secao" id="planos" aria-labelledby="lp-planos">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Planos</p>
-          <h2 id="lp-planos">Escolha o plano da sua barbearia</h2>
-          <p class="lp-sub">Comece com 14 dias grátis, com tudo liberado. Só escolha o plano quando o teste acabar.</p>
-          <div class="lp-planos">
-            <div class="lp-plano">
-              <h3>Basic</h3><span style="color:var(--lp-muted);font-size:14px;">Para equipes menores</span>
-              <div class="lp-preco" data-lp-preco="basic"><!-- [PREENCHER] preço em LP_PRECOS --><small style="font-size:15px;">Valor mostrado na hora de assinar</small></div>
-              <ul class="lp-lista">
-                <li>Até 4 profissionais</li><li>Agenda, caixa, comissões e relatórios</li><li>Página de agendamento online</li><li>Lembretes, fidelidade e estoque</li>
-                <li class="lp-nao">Clube de assinatura não incluso</li>
-              </ul>
-              <button class="lp-btn lp-btn-ghost" type="button" data-lp-abrir="signup">Começar teste grátis</button>
-            </div>
-            <div class="lp-plano lp-destaque">
-              <span class="lp-pill lp-selo">Mais completo</span>
-              <h3>Pro</h3><span style="color:var(--lp-muted);font-size:14px;">Para quem quer crescer</span>
-              <div class="lp-preco" data-lp-preco="pro"><!-- [PREENCHER] preço em LP_PRECOS --><small style="font-size:15px;">Valor mostrado na hora de assinar</small></div>
-              <ul class="lp-lista">
-                <li>Profissionais ilimitados</li><li>Tudo do Basic</li><li><span><b>Clube de assinatura</b> com cobrança automática</span></li><li>Pote dos profissionais e página de planos</li>
-              </ul>
-              <button class="lp-btn lp-btn-gold" type="button" data-lp-abrir="signup">Começar teste grátis</button>
-            </div>
-          </div>
-          <p class="lp-obs">Cobrança mensal pelo Stripe. Cancele quando quiser, sem multa.</p>
-        </div>
-      </section>
-
-      <!-- 8. DEPOIMENTOS — [PREENCHER] com depoimentos REAIS (nome, barbearia, cidade, autorização).
-           Enquanto não houver, a seção fica escondida (atributo hidden). -->
-      <section class="lp-secao" id="depoimentos" aria-labelledby="lp-depo" hidden>
-        <div class="lp-wrap">
-          <p class="lp-kicker">Quem usa</p>
-          <h2 id="lp-depo">O que dizem as barbearias</h2>
-          <div class="lp-cards lp-dois">
-            <blockquote class="lp-card"><p>[PREENCHER: depoimento real]</p><footer style="margin-top:10px;color:var(--lp-muted-2);font-size:14px;">[PREENCHER: nome — barbearia, cidade]</footer></blockquote>
-          </div>
-        </div>
-      </section>
-
-      <!-- 9. PERGUNTAS FREQUENTES -->
-      <section class="lp-secao lp-faq" id="duvidas" aria-labelledby="lp-faq">
-        <div class="lp-wrap">
-          <p class="lp-kicker">Dúvidas</p>
-          <h2 id="lp-faq">Perguntas frequentes</h2>
-          <details><summary>Preciso de cartão de crédito para testar?</summary><p>Não. Você cria a conta só com e-mail e senha e usa tudo por 14 dias. O plano só é escolhido quando o teste acaba.</p></details>
-          <details><summary>Preciso instalar alguma coisa?</summary><p>Não. Funciona no navegador do celular e do computador. Se quiser, dá para colocar o ícone na tela inicial do celular, como um aplicativo.</p></details>
-          <details><summary>Meu cliente precisa baixar aplicativo?</summary><p>Não. Ele marca pelo seu link, escolhendo serviço, profissional e horário, sem criar login.</p></details>
-          <details><summary>É seguro? E os meus dados?</summary><p>Cada barbearia só acessa os próprios dados, a conexão é criptografada (HTTPS) e o banco de dados tem cópias de segurança. Os dados são seus: você pode baixar uma cópia completa a qualquer momento em Configurações da Conta. Veja a <a href="?pagina=privacidade">Política de Privacidade</a>.</p></details>
-          <details><summary>Como funciona o WhatsApp automático?</summary><p>É novidade: você conecta o WhatsApp da barbearia lendo um QR code e o sistema manda confirmação e lembrete do horário. É uma conexão não oficial do WhatsApp, então recomendamos usar um número só da barbearia. Os lembretes por e-mail continuam funcionando junto.</p></details>
-          <details><summary>Posso cancelar quando quiser?</summary><p>Sim, a qualquer momento, sem multa. Se um dia quiser voltar, seus dados continuam guardados.</p></details>
-          <details><summary>Tenho suporte?</summary><p>Sim. Pelo e-mail <a href="mailto:primerbarbersuporte@gmail.com">primerbarbersuporte@gmail.com</a> e pelo botão de sugestões dentro do painel.</p></details>
-        </div>
-      </section>
-
-      <!-- 10. CHAMADA FINAL -->
-      <section class="lp-secao lp-final" aria-labelledby="lp-final">
-        <div class="lp-wrap">
-          <h2 id="lp-final">Sua barbearia organizada e lucrando mais, sem planilha.</h2>
-          <p class="lp-sub" style="margin-left:auto;margin-right:auto;">Teste tudo por 14 dias. Sem cartão, sem compromisso.</p>
-          <div class="lp-ctas"><button class="lp-btn lp-btn-gold" type="button" data-lp-abrir="signup">Testar grátis por 14 dias</button></div>
-        </div>
-      </section>
-
-      <!-- 11. RODAPÉ -->
-      <footer class="lp-rodape">
-        <div class="lp-wrap">
-          <span>© Primer Barber — sistema de gestão para barbearias</span>
-          <nav aria-label="Links do rodapé">
-            <a href="?pagina=termos">Termos de Uso</a>
-            <a href="?pagina=privacidade">Política de Privacidade</a>
-            <a href="mailto:primerbarbersuporte@gmail.com">primerbarbersuporte@gmail.com</a>
-            <!-- [PREENCHER] Instagram: <a href="https://instagram.com/SEU_ARROBA" rel="noopener" target="_blank">@SEU_ARROBA</a> -->
-          </nav>
-        </div>
-      </footer>
-    </main>
-
-    <!-- cartão Entrar / Criar conta: fixo à direita no computador, tela cheia no celular -->
-    <aside class="lp-acesso" id="lp-acesso" aria-label="Entrar ou criar conta">
-      <div id="lp-auth-slot"></div>
-    </aside>
-  </div>
-
-  <div class="lp-barra"><button class="lp-btn lp-btn-gold" type="button" data-lp-abrir="signup">Testar grátis por 14 dias</button></div>
+  <main class="lp-form-lado">
+    <a class="lp-logo lp-logo-cel" href="./"><img src="img/icon-192.png" alt="" width="42" height="42"><b>Primer Barber</b></a>
+    <div id="lp-auth-slot"></div>
+    <div class="lp-rodape-cel"><a href="?pagina=termos">Termos</a>·<a href="?pagina=privacidade">Privacidade</a>·<a href="mailto:primerbarbersuporte@gmail.com">Suporte</a></div>
+  </main>
 </div>
 <div id="app"></div>
 
@@ -11798,39 +11488,17 @@ function avisoPrivacidadeCliente(extra){
     <a href="${window.location.pathname}?pagina=privacidade" target="_blank" style="color:var(--gold-bright);">Política de privacidade</a></div>`;
 }
 
-/* ============ LANDING: cartão Entrar / Criar conta dentro da página de venda ============
-   A página de venda é HTML fixo (#landing). Aqui só: mostrar/esconder, abrir o
-   cartão (tela cheia no celular, fixo à direita no computador) e desenhar o
-   cartão. Login e cadastro usam EXATAMENTE as mesmas chamadas de sempre
-   (signInWithPassword / signUp + ensureShop). */
+/* ============ TELA DE ENTRADA: formulário dentro da tela dividida ============
+   A tela é HTML fixo (#landing). Aqui só: mostrar/esconder e desenhar o
+   formulário (Entrar / Criar conta / Esqueci minha senha). Login e cadastro
+   usam EXATAMENTE as mesmas chamadas de sempre (signInWithPassword / signUp + ensureShop). */
 function landingAtiva(){ return document.documentElement.classList.contains('com-landing') && !!document.getElementById('lp-auth-slot'); }
 function mostrarLanding(sim){
   const h = document.documentElement;
   if(!document.getElementById('landing')) sim = false;
   h.classList.toggle('com-landing', !!sim); h.classList.toggle('sem-landing', !sim);
-  if(!sim) h.classList.remove('lp-acesso-aberto');
 }
 function paginaPublicaNaUrl(){ return /[?&](agendar|planos|equipe|cliente|gerenciar|pagina|redefinir-senha)=/.test(location.search); }
-function abrirAcesso(modo){
-  renderAuthScreen(modo === 'signup' ? 'signup' : 'login');
-  document.documentElement.classList.add('lp-acesso-aberto');
-  setTimeout(()=>document.getElementById(modo === 'signup' ? 'au-shop' : 'au-email')?.focus(), 60);
-}
-function fecharAcesso(){ document.documentElement.classList.remove('lp-acesso-aberto'); }
-let lpBotoesLigados = false;
-function ligarBotoesLanding(){
-  if(lpBotoesLigados) return; lpBotoesLigados = true;
-  document.querySelectorAll('[data-lp-abrir]').forEach(b=>b.addEventListener('click', ()=>abrirAcesso(b.dataset.lpAbrir)));
-  document.addEventListener('keydown', e=>{ if(e.key === 'Escape') fecharAcesso(); });
-}
-// preços dos planos na landing (vazio = mostra [PREENCHER])
-const LP_PRECOS = { basic: '', pro: '' };
-function aplicarPrecosLanding(){
-  document.querySelectorAll('[data-lp-preco]').forEach(el=>{
-    const v = LP_PRECOS[el.dataset.lpPreco];
-    if(v) el.innerHTML = `${esc(v)} <small>/mês</small>`;
-  });
-}
 
 // mensagens do login em português (o servidor responde em inglês)
 function traduzirErroAuth(msg){
@@ -11848,38 +11516,31 @@ function traduzirErroAuth(msg){
 function cartaoAcessoLanding(mode, errorMsg, okMsg){
   const isLogin = mode !== 'signup';
   const slot = document.getElementById('lp-auth-slot');
-  // o que a pessoa já digitou não some ao trocar de aba ou ao mostrar um erro
+  // o que a pessoa já digitou não some ao trocar de tela ou ao mostrar um erro
   const antes = { email: slot.querySelector('#au-email')?.value || '', shop: slot.querySelector('#au-shop')?.value || '' };
   slot.innerHTML = `
-    <div class="lp-cartao">
-      <div class="lp-cartao-topo"><b>${isLogin ? 'Entrar no painel' : 'Crie sua barbearia'}</b>
-        <button type="button" class="lp-fechar" id="lp-fechar" aria-label="Fechar">×</button></div>
-      <div class="lp-abas" role="tablist">
-        <button type="button" role="tab" data-aba="login" aria-selected="${isLogin}">Entrar</button>
-        <button type="button" role="tab" data-aba="signup" aria-selected="${!isLogin}">Criar conta</button>
-      </div>
-      ${!isLogin ? `<div class="lp-teste-pill"><span class="lp-pill">★ ${TRIAL_DAYS} dias grátis · sem cartão</span></div>` : ''}
-      ${errorMsg ? `<div class="lp-erro" role="alert">${esc(errorMsg)}</div>` : ''}
-      ${okMsg ? `<div class="lp-okmsg" role="status">${esc(okMsg)}</div>` : ''}
-      <form id="au-form" novalidate>
-        ${!isLogin ? `<div class="lp-campo"><label for="au-shop">Nome da barbearia</label><input id="au-shop" autocomplete="organization" placeholder="Ex: Barbearia do Centro"></div>` : ''}
-        <div class="lp-campo"><label for="au-email">E-mail</label><input id="au-email" type="email" inputmode="email" autocomplete="email" placeholder="voce@email.com" required></div>
-        <div class="lp-campo"><label for="au-pass">Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" placeholder="Mínimo 6 caracteres" required></div>
-        ${!isLogin ? `<label class="lp-aceite"><input type="checkbox" id="au-aceite"> <span>Li e aceito os <a href="?pagina=termos" target="_blank">Termos de Uso</a> e a <a href="?pagina=privacidade" target="_blank">Política de Privacidade</a>.</span></label>` : ''}
-        <button class="lp-btn lp-btn-gold" id="au-submit" type="submit">${isLogin ? 'Entrar' : 'Criar conta grátis'}</button>
-      </form>
-      <div class="lp-links-cartao">
-        ${isLogin ? `<button type="button" class="lp-link" id="au-esqueci">Esqueci minha senha</button>` : ''}
-        <button type="button" class="lp-link" id="au-switch">${isLogin ? 'Não tem conta? Criar uma grátis' : 'Já tem conta? Entrar'}</button>
-      </div>
-      <div class="lp-equipe">É da equipe (barbeiro ou recepção)? Entre pelo <b>link com PIN</b> que o dono da barbearia te enviou.</div>
-    </div>`;
+    <h2 class="lp-titulo">${isLogin ? 'Que bom ter você de volta' : 'Crie sua barbearia'}</h2>
+    <p class="lp-sub">${isLogin ? 'Entre para acessar o painel da sua barbearia.' : 'Monte sua agenda, equipe e clube em minutos.'}</p>
+    ${!isLogin ? `<span class="lp-teste">★ ${TRIAL_DAYS} dias grátis · sem cartão</span>` : ''}
+    ${errorMsg ? `<div class="lp-erro" role="alert">${esc(errorMsg)}</div>` : ''}
+    ${okMsg ? `<div class="lp-okmsg" role="status">${esc(okMsg)}</div>` : ''}
+    <form id="au-form" novalidate>
+      ${!isLogin ? `<div class="lp-campo"><label for="au-shop">Nome da barbearia</label><input id="au-shop" autocomplete="organization" placeholder="Ex: Barbearia do Centro"></div>` : ''}
+      <div class="lp-campo"><label for="au-email">E-mail</label><input id="au-email" type="email" inputmode="email" autocomplete="email" required></div>
+      <div class="lp-campo"><label for="au-pass">Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" ${isLogin ? '' : 'placeholder="Mínimo 6 caracteres"'} required></div>
+      ${isLogin ? `<div class="lp-esqueci"><button type="button" class="lp-link" id="au-esqueci">Esqueci minha senha</button></div>` : ''}
+      ${!isLogin ? `<label class="lp-aceite"><input type="checkbox" id="au-aceite"> <span>Li e aceito os <a href="?pagina=termos" target="_blank">Termos de Uso</a> e a <a href="?pagina=privacidade" target="_blank">Política de Privacidade</a>.</span></label>` : ''}
+      <button class="lp-btn" id="au-submit" type="submit">${isLogin ? 'Entrar' : 'Criar conta grátis'}</button>
+    </form>
+    <p class="lp-troca">${isLogin ? 'Ainda não tem conta?' : 'Já tem conta?'} <button type="button" class="lp-link" id="au-switch">${isLogin ? `Teste grátis por ${TRIAL_DAYS} dias` : 'Entrar'}</button></p>
+    ${isLogin ? `<p class="lp-equipe">É da equipe? Entre pelo link com PIN que o dono te enviou.</p>` : ''}`;
   if(antes.email) slot.querySelector('#au-email').value = antes.email;
   if(antes.shop && slot.querySelector('#au-shop')) slot.querySelector('#au-shop').value = antes.shop;
-  slot.querySelectorAll('[data-aba]').forEach(b=>b.addEventListener('click', ()=>cartaoAcessoLanding(b.dataset.aba)));
-  slot.querySelector('#au-switch').addEventListener('click', ()=>cartaoAcessoLanding(isLogin ? 'signup' : 'login'));
+  slot.querySelector('#au-switch').addEventListener('click', ()=>{
+    cartaoAcessoLanding(isLogin ? 'signup' : 'login');
+    document.getElementById(isLogin ? 'au-shop' : 'au-email')?.focus();
+  });
   slot.querySelector('#au-esqueci')?.addEventListener('click', ()=>renderEsqueciSenha(slot.querySelector('#au-email').value.trim()));
-  slot.querySelector('#lp-fechar').addEventListener('click', fecharAcesso);
   slot.querySelector('#au-form').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const btn = slot.querySelector('#au-submit');
@@ -11908,21 +11569,18 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
 // ---------- Esqueci minha senha ----------
 function renderEsqueciSenha(emailInicial, errorMsg, okMsg){
   const html = `
-    <div class="lp-cartao">
-      <div class="lp-cartao-topo"><b>Esqueci minha senha</b><button type="button" class="lp-fechar" id="lp-fechar" aria-label="Fechar">×</button></div>
-      <p style="color:var(--lp-muted,#a2a8b0);font-size:14px;margin:0 0 14px;">Digite o e-mail da sua conta. Vamos mandar um link para você criar uma senha nova.</p>
-      ${errorMsg ? `<div class="lp-erro" role="alert">${esc(errorMsg)}</div>` : ''}
-      ${okMsg ? `<div class="lp-okmsg" role="status">${esc(okMsg)}</div>` : ''}
-      <form id="au-reset-form" novalidate>
-        <div class="lp-campo"><label for="au-reset-email">E-mail</label><input id="au-reset-email" type="email" inputmode="email" autocomplete="email" value="${esc(emailInicial || '')}" placeholder="voce@email.com"></div>
-        <button class="lp-btn lp-btn-gold" id="au-reset-enviar" type="submit">Enviar link</button>
-      </form>
-      <div class="lp-links-cartao"><button type="button" class="lp-link" id="au-voltar">Voltar para entrar</button></div>
-    </div>`;
+    <h2 class="lp-titulo">Esqueci minha senha</h2>
+    <p class="lp-sub">Digite o e-mail da sua conta. Vamos mandar um link para você criar uma senha nova.</p>
+    ${errorMsg ? `<div class="lp-erro" role="alert">${esc(errorMsg)}</div>` : ''}
+    ${okMsg ? `<div class="lp-okmsg" role="status">${esc(okMsg)}</div>` : ''}
+    <form id="au-reset-form" novalidate>
+      <div class="lp-campo"><label for="au-reset-email">E-mail</label><input id="au-reset-email" type="email" inputmode="email" autocomplete="email" value="${esc(emailInicial || '')}"></div>
+      <button class="lp-btn" id="au-reset-enviar" type="submit">Enviar link</button>
+    </form>
+    <p class="lp-troca"><button type="button" class="lp-link" id="au-voltar">Voltar para entrar</button></p>`;
   const slot = landingAtiva() ? document.getElementById('lp-auth-slot') : null;
   if(slot) slot.innerHTML = html; else authShell(`<div id="lp-auth-slot-solo">${html}</div>`);
   const raiz = slot || document.getElementById('lp-auth-slot-solo');
-  raiz.querySelector('#lp-fechar').addEventListener('click', ()=> slot ? fecharAcesso() : renderAuthScreen('login'));
   raiz.querySelector('#au-voltar').addEventListener('click', ()=>renderAuthScreen('login'));
   raiz.querySelector('#au-reset-form').addEventListener('submit', async (e)=>{
     e.preventDefault();
@@ -11952,7 +11610,7 @@ async function renderNovaSenha(errorMsg){
       <div class="auth-title font-display" style="font-weight:600;">Link expirado</div>
       <div class="auth-subtitle">Este link para criar senha nova expirou ou já foi usado. Peça um novo.</div>
       <button class="btn btn-gold auth-submit" id="au-novo-link">Pedir um link novo</button>`);
-    document.getElementById('au-novo-link').addEventListener('click', ()=>{ history.replaceState(null, '', location.pathname); mostrarLanding(true); renderEsqueciSenha(''); document.documentElement.classList.add('lp-acesso-aberto'); });
+    document.getElementById('au-novo-link').addEventListener('click', ()=>{ history.replaceState(null, '', location.pathname); mostrarLanding(true); renderEsqueciSenha(''); });
     return;
   }
   authShell(`
@@ -12285,10 +11943,9 @@ async function boot(){
   if(urlParams.get('redefinir-senha')==='1' || /type=recovery/.test(location.hash)){ await renderNovaSenha(); return; }
   const { data: { session } } = await supa.auth.getSession();
   if(!session){
-    mostrarLanding(true); ligarBotoesLanding(); aplicarPrecosLanding();
+    mostrarLanding(true);
     const querCadastro = urlParams.get('cadastro')==='1';
     renderAuthScreen(querCadastro ? 'signup' : 'login');
-    if(querCadastro) document.documentElement.classList.add('lp-acesso-aberto');
     return;
   }
   mostrarLanding(false);
