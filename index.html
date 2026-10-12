@@ -1046,6 +1046,8 @@ function assinantesOrfaos(){
 // estrela, alertas). Tolerância = dias depois do vencimento em que o plano
 // ainda vale (Clube → Regras do clube). Pausado/cancelado/arquivado: não vale.
 function clubeTolerancia(){ return Math.max(0, Math.min(30, Number(state.clubSettings?.diasTolerancia)||0)); }
+// quantos dias antes do vencimento o assinante é avisado (padrão 1) — o servidor usa o mesmo número
+function clubeDiasAviso(){ const n = Number(state.clubSettings?.diasAvisoVencimento); return n>=1 ? Math.min(7, Math.round(n)) : 1; }
 function membroVencido(m, dataISO){
   if(!m || !m.dueDate) return false;
   const limite = new Date(String(m.dueDate).slice(0,10)+'T12:00');
@@ -3699,10 +3701,13 @@ function openApptModal(pre){
 
     const atualizaNota = ()=>{
       const m = clubMemberForClient(inputCliente.value);
-      if(m && m.status==='atrasado'){
-        note.style.color = 'var(--bad)';
-        note.textContent = `⚠ ${m.name} está com o clube de assinatura em atraso — o serviço será cobrado em valor cheio, sem desconto/inclusão do plano.`;
-      } else if(m && m.status==='pago'){
+      const dataAg = root.querySelector('#f-date')?.value || todayISO();
+      note.removeAttribute('style'); note.style.fontSize = '12.5px';
+      if(m && (m.status==='pendente' || m.status==='atrasado') && !membroEmDia(m, dataAg)){
+        // FASE CLUBE: atrasado além da tolerância → aviso grande para a recepção cobrar
+        note.style.cssText = 'display:block;margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--bad);background:var(--bad-bg);color:var(--bad);font-size:13px;font-weight:600;line-height:1.5;';
+        note.textContent = `⚠ CLUBE ATRASADO — ${m.name} está com a mensalidade vencida desde ${m.dueDate ? new Date(String(m.dueDate).slice(0,10)+'T12:00').toLocaleDateString('pt-BR') : '—'}. Cobrar a renovação: enquanto não pagar, o serviço sai pelo valor normal.`;
+      } else if(m && membroEmDia(m, dataAg)){
         note.style.color = 'var(--ok)';
         note.textContent = `✓ ${m.name} é assinante do clube e está em dia.`;
       } else {
@@ -3836,11 +3841,12 @@ function openApptModal(pre){
       }
 
       let criados = 0;
-      update(s=>{
+      const idPrimeiro = uid();
+      const gravando = update(s=>{
         datas.forEach(d=>{
           if(conflitos.includes(d)) return;
           s.appointments.push({
-            id:uid(), date:d, time, client, professionalId,
+            id: d===datas.find(x=>!conflitos.includes(x)) ? idPrimeiro : uid(), date:d, time, client, professionalId,
             serviceId: serviceIds[0], serviceIds,
             status:'agendado', confirmed:false, manageToken: novaChaveGerenciar(),
             depositStatus: (dep>0 && d===date) ?'pendente':'nao_aplicavel', depositAmount: d===date?dep:0,
@@ -3852,6 +3858,10 @@ function openApptModal(pre){
         });
       });
       closeModal();
+      // avisa o barbeiro (WhatsApp, com o status do clube) — se não foi ele mesmo quem marcou
+      if(criados > 0 && currentShop && !(userSession.professionalId && userSession.professionalId===professionalId)){
+        gravando.then(r=>{ if(r==='ok') enviarEmailAgendamento({ tipo:'aviso-barbeiro', shopId: currentShop.id, appointmentId: idPrimeiro }); });
+      }
       showToast(recorrente
         ? `${criados} agendamento(s) criado(s) na série (a cada ${freqDias} dias).`
         : (dep>0 ? `Agendamento criado. Sinal de ${BRL(dep)} pendente.` : 'Agendamento criado.'));
@@ -5731,8 +5741,12 @@ function renderClube(view){
     </div>
     <div class="card" style="padding:14px 18px;margin-bottom:14px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
       <div style="flex:1;min-width:220px;">
-        <label>Tolerância de atraso (dias) — o plano ainda vale até X dias depois do vencimento</label>
+        <label>Tolerância de atraso (dias) — o plano ainda vale até X dias depois do vencimento. Depois disso, o assinante só agenda pelo valor normal até pagar.</label>
         <input id="f-tolerancia" type="number" min="0" max="30" value="${clubeTolerancia()}" style="width:100%;max-width:160px;">
+      </div>
+      <div style="flex:1;min-width:200px;">
+        <label>Avisar o assinante quantos dias antes do vencimento (WhatsApp e e-mail)</label>
+        <input id="f-aviso-venc" type="number" min="1" max="7" value="${clubeDiasAviso()}" style="width:100%;max-width:160px;">
       </div>
       <button class="btn btn-ghost" id="f-save-clube-regras">Salvar regra</button>
       ${state.subscriptionMembers.some(m=>m.arquivado) ? `<button class="btn btn-ghost" id="btn-ver-membros-arquivados">${verMembrosArquivados?'Voltar aos membros':'Ver arquivados ('+state.subscriptionMembers.filter(m=>m.arquivado).length+')'}</button>` : ''}
@@ -6103,8 +6117,10 @@ function renderClube(view){
   view.querySelector('#btn-ver-membros-arquivados')?.addEventListener('click', ()=>{ verMembrosArquivados = !verMembrosArquivados; renderClube(view); });
   view.querySelector('#f-save-clube-regras')?.addEventListener('click', ()=>{
     const dias = Math.max(0, Math.min(30, parseInt(view.querySelector('#f-tolerancia').value, 10) || 0));
-    update(s=>{ s.clubSettings = { ...(s.clubSettings||{}), diasTolerancia: dias }; registrarAuditoria(s, 'Mudou tolerância de atraso do clube', `${dias} dia(s)`); });
-    showToast(dias ? `Tolerância: o plano vale até ${dias} dia(s) depois do vencimento.` : 'Sem tolerância: venceu e não pagou, paga valor cheio.');
+    const aviso = Math.max(1, Math.min(7, parseInt(view.querySelector('#f-aviso-venc').value, 10) || 1));
+    update(s=>{ s.clubSettings = { ...(s.clubSettings||{}), diasTolerancia: dias, diasAvisoVencimento: aviso };
+      registrarAuditoria(s, 'Mudou regras do clube', `tolerância ${dias} dia(s) · aviso ${aviso} dia(s) antes`); });
+    showToast(`Salvo: o plano vale até ${dias} dia(s) depois do vencimento; aviso ${aviso} dia(s) antes.`);
     renderClube(view);
   });
   view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>{
@@ -9174,15 +9190,23 @@ function messageChannelRow(phone, text, onSend){
    remarcação/cancelamento, lembrete ~2h antes, avisos ao barbeiro e (se ligar)
    cobrança do clube. Conexão não oficial: o número pode ser banido — por
    isso o aviso, os limites e o intervalo entre mensagens. Só o dono mexe. */
-const WA_TIPOS = [
-  ['confirmacao', 'Confirmação, remarcação e cancelamento para o cliente', true],
-  ['lembrete', 'Lembrete ~2h antes do horário', true],
-  ['barbeiro', 'Avisos para o barbeiro (novo, remarcado, cancelado, lembrete)', true],
-  ['cobranca', 'Cobrança do clube (vencendo em 3 dias / em atraso, com link)', false],
+const WA_CATEGORIAS = [
+  { titulo:'📅 Agendamentos (para o cliente)', itens:[
+    ['confirmacao', 'Confirmação, remarcação e cancelamento'],
+    ['lembrete', 'Lembrete ~2h antes do horário'] ] },
+  { titulo:'💳 Cobranças do clube', itens:[
+    ['cobranca', 'Aviso antes de vencer (com link de pagamento)'],
+    ['cobrancaAtraso', 'Aviso de mensalidade atrasada (com link de pagamento)'] ] },
+  { titulo:'✂️ Avisos para o barbeiro', itens:[
+    ['barbeiro', 'Novo agendamento (pelo link ou pela recepção), remarcação, cancelamento e lembrete — mostra se o cliente está com o clube em dia'] ] },
 ];
 const WA_ESTADO = { open:['Conectado','pill-ok'], connecting:['Aguardando leitura do QR code','pill-warn'], close:['Desconectado','pill-bad'], inexistente:['Não conectado','pill-bad'] };
 let waPoll = null;
-function whatsAutoCfg(s){ return Object.assign({ ativo:false, confirmacao:true, lembrete:true, barbeiro:true, cobranca:false }, (s||state).whatsappAuto||{}); }
+function whatsAutoCfg(s){
+  const c = Object.assign({ ativo:false, confirmacao:true, lembrete:true, barbeiro:true, cobranca:false }, (s||state).whatsappAuto||{});
+  if(c.cobrancaAtraso === undefined) c.cobrancaAtraso = c.cobranca;   // quem já usava cobrança segue recebendo o aviso de atraso
+  return c;
+}
 async function chamarWhats(acao){
   try{
     const { data, error } = await supa.functions.invoke('whatsapp', { body:{ acao } });
@@ -9221,8 +9245,9 @@ async function montarWhatsAuto(caixa){
         <input type="checkbox" id="wa-ativo" ${cfg.ativo?'checked':''} style="width:auto;"> Enviar mensagens automáticas
       </label>
       <div style="display:flex;flex-direction:column;gap:6px;padding-left:24px;margin-bottom:14px;">
-        ${WA_TIPOS.map(([k, rot])=>`<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" data-wa-tipo="${k}" ${cfg[k]?'checked':''} style="width:auto;"> ${rot}</label>`).join('')}
+        ${WA_CATEGORIAS.map(cat=>`<div style="margin:6px 0 4px;font-size:12.5px;font-weight:700;color:var(--ink);">${cat.titulo}</div>
+          ${cat.itens.map(([k, rot])=>`<label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;cursor:pointer;padding-left:6px;">
+            <input type="checkbox" data-wa-tipo="${k}" ${cfg[k]?'checked':''} style="width:auto;margin-top:2px;"> <span>${rot}</span></label>`).join('')}`).join('')}
       </div>
       <details><summary style="font-size:12.5px;cursor:pointer;color:var(--muted);">Últimas mensagens enviadas</summary>
         <div id="wa-hist" style="margin-top:8px;font-size:12px;"></div></details>
@@ -10697,6 +10722,21 @@ document.addEventListener('click', function pbConfirmDelegate(e){
 });
 // Aviso na própria página, junto do botão: o alert() do navegador às vezes
 // não aparece no celular (e o cliente acha que o botão está travado).
+// aviso do clube atrasado no link (com botões) — o cliente decide seguir pelo valor normal ou pagar antes
+function pbAvisoClube(){
+  const el = document.getElementById('pb-msg');
+  if(!el) return;
+  el.style.display = 'block';
+  el.innerHTML = `<div style="border:1px solid var(--bad);background:var(--bad-bg);border-radius:10px;padding:12px 14px;color:var(--ink);">
+    <b style="color:var(--bad);">Sua assinatura do clube está vencida.</b><br>
+    Enquanto não pagar, os serviços do plano não valem: este horário será cobrado pelo <b>valor normal</b>.
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <a class="btn btn-gold" href="?cliente=${esc(pubBooking.slug)}" style="text-decoration:none;">Pagar minha assinatura</a>
+      <button class="btn btn-ghost" type="button" id="pb-clube-seguir">Agendar pelo valor normal</button>
+    </div></div>`;
+  el.querySelector('#pb-clube-seguir').addEventListener('click', ()=>{ el.style.display='none'; enviarAgendamentoPublico(); });
+  el.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
 function pbAviso(msg){
   const el = document.getElementById('pb-msg');
   if(!el){ alert(msg); return; }
@@ -10738,6 +10778,16 @@ async function submitPublicBooking(){
   }
   const service = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
   const prof = (pubBooking.info.professionals||[]).find(p=>p.id===pubBooking.professionalId);
+  // CLUBE: assinante com a mensalidade vencida além da tolerância agenda pelo
+  // valor normal — o plano só volta a valer depois de pagar. Avisamos ANTES.
+  if(pubBooking.clubeAvisoTel !== soDigitos(phone)){
+    let situacao = null;
+    try { const r = await supa.rpc('public_club_status', { p_shop_id: pubBooking.shopId, p_phone: phone }); situacao = r.data?.situacao || null; } catch(e){}
+    if(situacao === 'atrasado'){
+      pubBooking.clubeAvisoTel = soDigitos(phone);
+      pbAvisoClube(); return;
+    }
+  }
   // Se a barbearia aceita automaticamente, o horário já entra na agenda.
   // A função devolve auto=false quando a opção está desligada.
   const { data: auto, error: erroAuto } = await supa.rpc('create_booking_auto', {
@@ -11058,6 +11108,7 @@ function renderClientPortal(){
                 </div>
               </div>`:''}
             ${m.invoiceUrl?`<a href="${esc(m.invoiceUrl)}" target="_blank" class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:16px;text-decoration:none;">${ICON.link} Ver / pagar minha cobrança</a>`:''}
+            ${m.status==='atrasado'?`<div style="margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid var(--bad);background:var(--bad-bg);font-size:13px;line-height:1.5;"><b style="color:var(--bad);">Mensalidade atrasada.</b> Enquanto não pagar, os serviços do plano não valem e o agendamento sai pelo valor normal.</div>`:''}
             ${m.status!=='pago'?`<button class="btn btn-gold" id="cl-renew" style="width:100%;justify-content:center;margin-top:9px;">Pedir renovação</button>`:''}
           </div>
         ` : `
