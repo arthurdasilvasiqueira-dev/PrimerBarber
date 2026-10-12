@@ -230,6 +230,17 @@
   td{padding:12px;font-size:14px;border-top:1px solid var(--border);}
   tr:hover td{background:rgba(255,255,255,.015);}
 
+  /* ===== Menu novo: abas da área e barra do celular ===== */
+  .secao-abas{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:0 0 20px;overflow-x:auto;scrollbar-width:none;}
+  .secao-abas::-webkit-scrollbar{display:none;}
+  .secao-aba{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 15px;min-height:44px;
+    font:500 14px 'Inter',sans-serif;color:var(--muted);cursor:pointer;white-space:nowrap;}
+  .secao-aba:hover{color:var(--ink);}
+  .secao-aba.on{color:var(--ink);font-weight:600;border-bottom-color:var(--gold);}
+  .secao-aba:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;border-radius:6px;}
+  .nav-item-pequeno{font-size:13px;opacity:.85;}
+  .barra-cel{display:none;}
+
   /* ===== Adaptação para celular ===== */
   .mobile-topbar{display:none;}
   .mobile-drawer{display:none;}
@@ -258,7 +269,15 @@
       background:var(--side-bg); border-bottom:1px solid var(--side-border);
       padding:11px 14px; color:var(--side-ink);
     }
-    main{padding:18px 15px 90px !important; max-width:100% !important;}
+    main{padding:18px 15px 96px !important; max-width:100% !important;}
+    /* barra fixa embaixo com os atalhos mais usados (como Booksy, Fresha, Vagaro) */
+    .barra-cel{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:95;justify-content:space-around;
+      background:var(--side-bg);border-top:1px solid var(--side-border);padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
+    .barra-cel-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:58px;min-height:50px;
+      background:none;border:0;color:var(--side-muted);font:500 11px 'Inter',sans-serif;cursor:pointer;border-radius:10px;}
+    .barra-cel-item.on{color:#e3c078;}
+    .barra-cel-item svg{width:21px;height:21px;}
+    #btn-feedback{bottom:84px !important;width:46px !important;height:46px !important;}
     /* cartões e tabelas respiram melhor */
     .card{border-radius:12px;}
     table{display:block; overflow-x:auto; white-space:nowrap;}
@@ -1730,52 +1749,48 @@ function openModal(html, onMount){
 }
 function closeModal(){ if(modalRoot){ modalRoot.remove(); modalRoot=null; } }
 
-/* ============ NAV CONFIG (por categoria) ============ */
-const NAV_GROUPS = [
-  {label:'Visão geral', items:[
-    {id:'dashboard', label:'Painel', icon:ICON.dashboard},
-  ]},
-  {label:'Atendimento', items:[
-    {id:'agenda', label:'Agenda', icon:ICON.agenda},
-    {id:'espera', label:'Lista de Espera', icon:ICON.listPlus},
-    {id:'clientes', label:'Clientes', icon:ICON.team},
-    {id:'configuracoes', label:'Configurações da Página', icon:ICON.image},
-    {id:'agendamento-online', label:'Agendamento Online', icon:ICON.globe},
-  ]},
-  {label:'Comunicação', items:[
-    {id:'mensagens', label:'Mensagens Automáticas', icon:ICON.chat},
-  ]},
-  {label:'Financeiro', items:[
-    {id:'caixa', label:'Caixa', icon:ICON.cash},
-    {id:'comissoes', label:'Comissões', icon:ICON.percent},
-    {id:'despesas', label:'Despesas', icon:ICON.receipt},
-    {id:'central', label:'Central de Inteligência', icon:ICON.chart},
-    {id:'relatorios', label:'Relatórios', icon:ICON.chart},
-  ]},
-  {label:'Equipe & Catálogo', items:[
-    {id:'profissionais', label:'Profissionais', icon:ICON.team},
-    {id:'servicos', label:'Serviços', icon:ICON.scissors},
-    {id:'estoque', label:'Estoque', icon:ICON.box},
-  ]},
-  {label:'Crescimento', items:[
-    {id:'clube', label:'Clube de Assinatura', icon:ICON.club},
-    {id:'fidelidade', label:'Fidelidade', icon:ICON.heart},
-  ]},
-  {label:'Sistema', items:[
-    {id:'meus-links', label:'Meus Links', icon:ICON.link},
-    {id:'minha-assinatura', label:'Configurações da Conta', icon:ICON.shield},
-    {id:'config', label:'Integração Asaas', icon:ICON.gear},
-    {id:'notafiscal', label:'Notas Fiscais', icon:ICON.receipt},
-    {id:'auditoria', label:'Histórico de Ações', icon:ICON.clock},
-  ]},
-  {label:'Ajuda', items:[
-    {id:'ajuda', label:'Central de Ajuda', icon:ICON.help},
-  ]},
-  {label:'Primer Barber', items:[
-    {id:'plataforma', label:'Plataforma', icon:ICON.globe},
-  ]},
+/* ============ MENU (9 áreas, cada uma com abas) ============
+   Organização inspirada nos sistemas de barbearia mais usados (Trinks,
+   Fresha, Vagaro, Booksy): poucos itens principais e o detalhe em abas.
+   Cada aba é uma tela de sempre (mesmo id de rota) — nada muda por dentro.
+   Quem vê o quê continua decidido por navAllowedForSession(). */
+const MENU_SECOES = [
+  {id:'inicio', label:'Início', icon:ICON.dashboard, abas:[{id:'dashboard', label:'Painel de hoje'}]},
+  {id:'agenda', label:'Agenda', icon:ICON.agenda, abas:[{id:'agenda', label:'Agenda'}, {id:'espera', label:'Lista de espera'}]},
+  {id:'clientes', label:'Clientes', icon:ICON.team, abas:[{id:'clientes', label:'Clientes'}, {id:'fidelidade', label:'Fidelidade'}]},
+  {id:'financeiro', label:'Financeiro', icon:ICON.cash, abas:[{id:'caixa', label:'Caixa'}, {id:'comissoes', label:'Comissões'}, {id:'despesas', label:'Despesas'}, {id:'notafiscal', label:'Notas fiscais'}]},
+  {id:'clube', label:'Clube de Assinatura', icon:ICON.club, abas:[{id:'clube', label:'Assinantes e planos'}, {id:'config', label:'Cobrança (Asaas)'}]},
+  {id:'equipe', label:'Equipe e Serviços', icon:ICON.scissors, abas:[{id:'profissionais', label:'Profissionais'}, {id:'servicos', label:'Serviços'}, {id:'estoque', label:'Estoque'}]},
+  {id:'divulgacao', label:'Divulgação', icon:ICON.globe, abas:[{id:'configuracoes', label:'Minha página'}, {id:'agendamento-online', label:'Agendamento online'}, {id:'meus-links', label:'Meus links'}, {id:'mensagens', label:'Mensagens automáticas'}]},
+  {id:'relatorios', label:'Relatórios', icon:ICON.chart, abas:[{id:'relatorios', label:'Relatórios'}, {id:'central', label:'Central de Inteligência'}]},
+  {id:'ajustes', label:'Configurações', icon:ICON.gear, abas:[{id:'minha-assinatura', label:'Minha conta'}, {id:'auditoria', label:'Histórico de ações'}]},
 ];
-const NAV = NAV_GROUPS.flatMap(g=>g.items);
+// no rodapé do menu (pequenos)
+const MENU_RODAPE = [
+  {id:'ajuda', label:'Central de Ajuda', icon:ICON.help},
+  {id:'plataforma', label:'Plataforma', icon:ICON.globe},
+];
+const NAV = [...MENU_SECOES.flatMap(sec=>sec.abas.map(a=>({ ...a, icon: sec.icon }))), ...MENU_RODAPE];
+function secaoDaRota(r){ return MENU_SECOES.find(sec=>sec.abas.some(a=>a.id===r)) || null; }
+function abasPermitidas(sec){ const ok = navAllowedForSession(); return sec.abas.filter(a=>ok.includes(a.id)); }
+// nome no menu: o da área; se o perfil só vê UMA tela de uma área maior, o nome dessa tela (ex.: barbeiro → "Comissões")
+function rotuloSecao(sec){ const abas = abasPermitidas(sec); return (abas.length===1 && sec.abas.length>1) ? abas[0].label : sec.label; }
+// atalhos da barra de baixo no celular (os 4 primeiros que o perfil pode ver)
+function atalhosCelular(){
+  const ok = navAllowedForSession();
+  return [['dashboard','Início',ICON.dashboard], ['agenda','Agenda',ICON.agenda], ['clientes','Clientes',ICON.team],
+          ['caixa','Caixa',ICON.cash], ['comissoes','Comissões',ICON.percent]].filter(([id])=>ok.includes(id)).slice(0, 4);
+}
+function desenharAbasSecao(){
+  const el = document.getElementById('secao-abas');
+  if(!el) return;
+  const sec = secaoDaRota(route);
+  const abas = sec ? abasPermitidas(sec) : [];
+  if(!sec || abas.length < 2){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="secao-abas" role="tablist" aria-label="${esc(sec.label)}">${abas.map(a=>
+    `<button type="button" role="tab" class="secao-aba ${a.id===route?'on':''}" aria-selected="${a.id===route}" data-aba-rota="${a.id}">${a.label}</button>`).join('')}</div>`;
+  el.querySelectorAll('[data-aba-rota]').forEach(b=>b.addEventListener('click', ()=>{ route = b.dataset.abaRota; render(); window.scrollTo(0, 0); }));
+}
 // FASE 8: o servidor decide quem é administrador da plataforma (tabela
 // platform_admins). Aqui só esconde/mostra o menu — as funções admin_* do
 // banco recusam qualquer outra pessoa.
@@ -1807,25 +1822,22 @@ function render(){
             <div style="font-size:10.5px;color:var(--side-muted-2);letter-spacing:.08em;text-transform:uppercase;margin-top:2px;">Gestão de barbearia</div>
           </div>
         </div>
-        <nav style="display:flex;flex-direction:column;gap:14px;flex:1;">
-          ${NAV_GROUPS.map(g=>{
-            const items = g.items.filter(n=>navAllowedForSession().includes(n.id));
-            if(items.length===0) return '';
-            return `<div>
-              <div style="font-size:10.5px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.08em;padding:0 10px;margin-bottom:5px;">${g.label}</div>
-              <div style="display:flex;flex-direction:column;gap:3px;">
-                ${items.map(n=>{
-                  // contador de saques pendentes no menu Comissões
-                  const pend = (n.id==='comissoes' && isOwnerLevel())
-                    ? (state?.withdrawalRequests||[]).filter(w=>w.status==='pendente').length : 0;
-                  return `<div class="nav-item ${route===n.id?'active':''}" data-route="${n.id}">
-                    ${n.icon}<span style="flex:1;">${n.label}</span>
-                    ${pend>0?`<span style="background:var(--bad);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:17px;height:17px;display:flex;align-items:center;justify-content:center;padding:0 5px;">${pend}</span>`:''}
-                  </div>`;
-                }).join('')}
-              </div>
+        <nav style="display:flex;flex-direction:column;gap:3px;flex:1;">
+          ${MENU_SECOES.map(sec=>{
+            const abas = abasPermitidas(sec);
+            if(abas.length===0) return '';
+            const ativo = sec.abas.some(a=>a.id===route);
+            // contador de saques pendentes (área com Comissões)
+            const pend = (abas.some(a=>a.id==='comissoes') && isOwnerLevel())
+              ? (state?.withdrawalRequests||[]).filter(w=>w.status==='pendente').length : 0;
+            return `<div class="nav-item ${ativo?'active':''}" data-route="${ativo ? route : abas[0].id}">
+              ${sec.icon}<span style="flex:1;">${rotuloSecao(sec)}</span>
+              ${pend>0?`<span style="background:var(--bad);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:17px;height:17px;display:flex;align-items:center;justify-content:center;padding:0 5px;">${pend}</span>`:''}
             </div>`;
           }).join('')}
+          <div style="margin-top:auto;padding-top:10px;display:flex;flex-direction:column;gap:2px;">
+            ${MENU_RODAPE.filter(n=>navAllowedForSession().includes(n.id)).map(n=>`<div class="nav-item nav-item-pequeno ${route===n.id?'active':''}" data-route="${n.id}">${n.icon}<span style="flex:1;">${n.label}</span></div>`).join('')}
+          </div>
         </nav>
         <div class="divider-blade" style="margin:16px 6px;"></div>
         <div style="padding:0 8px;margin-bottom:12px;">
@@ -1863,10 +1875,15 @@ function render(){
           <button class="btn btn-ghost" id="btn-notif-bell" style="position:relative;padding:9px 11px;">${ICON.bell}</button>
           <div id="notif-dropdown" style="display:${notifState.open?'block':'none'};position:absolute;top:44px;right:0;width:320px;max-height:420px;overflow-y:auto;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);z-index:80;">${notifState.open?notifDropdownContent():''}</div>
         </div>
+        <div id="secao-abas"></div>
         <div id="view"></div>
       </main>
       </div>
     </div>
+    <nav class="barra-cel" aria-label="Atalhos">
+      ${atalhosCelular().map(([id, rot, ic])=>`<button type="button" class="barra-cel-item ${secaoDaRota(route)?.id===secaoDaRota(id)?.id?'on':''}" data-route="${id}">${ic}<span>${rot}</span></button>`).join('')}
+      <button type="button" class="barra-cel-item" id="btn-mais"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Mais</span></button>
+    </nav>
     <button id="btn-feedback" title="O que podemos melhorar?" style="
       position:fixed;right:18px;bottom:18px;z-index:80;
       width:52px;height:52px;border-radius:50%;border:1px solid var(--gold);
@@ -1882,6 +1899,7 @@ function render(){
   });
   const fecharGaveta = ()=>document.body.classList.remove('drawer-open');
   app.querySelector('#btn-open-menu')?.addEventListener('click', ()=>document.body.classList.add('drawer-open'));
+  app.querySelector('#btn-mais')?.addEventListener('click', ()=>document.body.classList.add('drawer-open'));
   app.querySelector('#drawer-back')?.addEventListener('click', fecharGaveta);
   // ao escolher uma tela no menu, a gaveta fecha sozinha
   app.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click', fecharGaveta));
@@ -1982,8 +2000,10 @@ function renderView(){
   // volta pro painel (evita acesso direto a telas restritas).
   if(!navAllowedForSession().includes(route)){
     route = 'dashboard';
+    desenharAbasSecao();
     return view.innerHTML = viewDashboard();
   }
+  desenharAbasSecao();
   if(route==='dashboard') return view.innerHTML = viewDashboard();
   if(route==='agenda') return renderAgenda(view);
   if(route==='caixa') return renderCaixa(view);
