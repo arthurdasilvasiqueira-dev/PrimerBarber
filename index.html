@@ -240,6 +240,10 @@
   .secao-aba:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;border-radius:6px;}
   .nav-item-pequeno{font-size:13px;opacity:.85;}
   .barra-cel{display:none;}
+  /* agenda: horário que dá para segurar e arrastar */
+  .appt-block.arrastavel{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  .appt-block.arrastando{z-index:30 !important;cursor:grabbing !important;box-shadow:0 14px 30px -8px rgba(0,0,0,.55) !important;
+    outline:2px solid var(--gold);transform:scale(1.03);opacity:.95;transition:none !important;}
 
   /* ===== Adaptação para celular ===== */
   .mobile-topbar{display:none;}
@@ -724,7 +728,6 @@ function migrateState(){
   state.messageTemplates.waitlistOpen = state.messageTemplates.waitlistOpen || 'Boa notícia, {cliente}! Abriu um horário em {data} às {hora} com {profissional}. Quer confirmar? Responda rápido que é por ordem de chegada.';
   state.messageTemplates.reviewRequest = state.messageTemplates.reviewRequest || 'Oi {cliente}! Como foi seu atendimento hoje na Primer Barber? Dá uma nota de 1 a 5 pra gente por aqui, sua opinião ajuda muito. ⭐';
   (state.professionals||[]).forEach(p=>{
-    if(!p.pin) p.pin = String(1000+Math.floor(Math.random()*9000));
     if(!p.workDays) p.workDays = [1,2,3,4,5,6];
     if(!p.workStart) p.workStart = '09:00';
     if(!p.workEnd) p.workEnd = '19:00';
@@ -819,17 +822,9 @@ async function persist(){   // devolve 'ok' | 'conflito' | 'erro'
   setTimeout(()=>{ salvandoAgora = false; }, 1500);
   try{
     if(teamSession){
-      // Equipe logada por PIN — o servidor revalida o PIN e decide o que o
-      // nível de acesso desta pessoa pode alterar.
-      const args = {
-        p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId,
-        p_pin: teamSession.pin, p_data: state
-      };
-      let { data: res, error } = await supa.rpc('team_save', { ...args, p_expected_version: versaoRemota });
-      if(error && /could not find the function|PGRST202/i.test((error.message||'')+(error.code||''))){
-        // banco ainda na versão antiga (sem controle de versão)
-        ({ data: res, error } = await supa.rpc('team_save', args));
-      }
+      // Equipe com login próprio (e-mail e senha) — o servidor confere quem é
+      // e decide o que o nível de acesso desta pessoa pode alterar.
+      const { data: res, error } = await supa.rpc('member_save', { p_data: state, p_expected_version: versaoRemota });
       if(res?.conflict) return 'conflito';
       if(error && bloqueioDoServidor(error)) return 'erro';
       if(error || res?.error){ avisarFalhaAoSalvar(error || res.error); return 'erro'; }
@@ -884,9 +879,7 @@ async function buscarEstadoRemoto(){
   if(!supa || !currentShop) return null;
   try{
     if(teamSession){
-      const { data: res, error } = await supa.rpc('team_login', {
-        p_shop_id: teamSession.shopId, p_prof_id: teamSession.profId, p_pin: teamSession.pin
-      });
+      const { data: res, error } = await supa.rpc('member_login');
       if(error || !res?.ok) return null;
       versaoRemota = (res.version != null) ? res.version : null;
       return res.data;
@@ -1854,7 +1847,6 @@ function render(){
         <div style="padding:10px 8px 0;border-top:1px solid var(--side-border);">
           <div style="font-size:11px;color:var(--side-muted-2);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 6px;">${ICON.shield} Perfil ativo</div>
           <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${userSession.role==='dono' ? 'Dono / Gerente' : (activeProf?.name || 'Profissional') + (userSession.role==='admin'?' · Admin':userSession.role==='recepcionista'?' · Recepcionista':'')}</div>
-          <button class="btn btn-ghost" id="btn-switch-profile" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;margin-bottom:6px;">Trocar perfil</button>
           <button class="btn btn-ghost" id="btn-logout" style="width:100%;justify-content:center;padding:7px;font-size:12.5px;">Sair</button>
         </div>
       </aside>
@@ -1907,15 +1899,10 @@ function render(){
     e.stopPropagation(); notifState.open = !notifState.open; render();
   });
   app.querySelector('#btn-feedback')?.addEventListener('click', feedbackModal);
-  app.querySelector('#btn-switch-profile').addEventListener('click', openProfileSwitchModal);
   app.querySelector('#btn-logout').addEventListener('click', async ()=>{
     if(notifState.channel){ supa.removeChannel(notifState.channel); notifState.channel=null; }
     notifState.items = []; notifState.open = false;
-    if(teamSession){
-      const slug = state?.onlineBooking?.slug;
-      teamSession = null; currentShop = null; state = null;
-      if(slug){ renderTeamLogin(slug); return; }
-    }
+    teamSession = null; userSession = {role:'dono', professionalId:null};
     await supa.auth.signOut(); currentShop=null; state=null; boot();
   });
   app.querySelectorAll('.theme-toggle-btn').forEach(b=>b.addEventListener('click', ()=>{
@@ -1951,47 +1938,6 @@ function render(){
     }, 0);
   }
   renderView();
-}
-function openProfileSwitchModal(){
-  openModal(`
-    <div style="padding:22px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <div class="font-display" style="font-size:19px;font-weight:600;">${ICON.shield} Trocar perfil</div>
-        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
-      </div>
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Cada profissional entra com um PIN e vê apenas sua própria agenda, clientes e comissões. O dono vê tudo. Este é um controle de visualização simples — para autenticação real e segura, é necessário um backend.</div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-        <button class="btn ${userSession.role==='dono'?'btn-gold':'btn-ghost'}" style="justify-content:center;" data-set-role="dono">Entrar como Dono / Gerente</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Ou entrar como profissional</div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        ${state.professionals.slice().sort(byName).map(p=>`
-          <div style="display:flex;gap:8px;align-items:center;">
-            <div style="flex:1;font-size:13.5px;">${esc(p.name)} <span style="font-size:11px;color:var(--muted-2);">— ${roleLabel(p.accessRole)}</span></div>
-            <input type="password" maxlength="8" inputmode="numeric" placeholder="PIN" data-pin-for="${p.id}" style="width:84px;text-align:center;">
-            <button class="btn btn-ghost" style="padding:8px 10px;" data-login-prof="${p.id}">Entrar</button>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `, root=>{
-    root.querySelector('#m-close').addEventListener('click', closeModal);
-    root.querySelector('[data-set-role="dono"]').addEventListener('click', ()=>{
-      userSession = {role:'dono', professionalId:null};
-      closeModal(); render();
-    });
-    root.querySelectorAll('[data-login-prof]').forEach(b=>b.addEventListener('click', ()=>{
-      const profId = b.dataset.loginProf;
-      const prof = state.professionals.find(p=>p.id===profId);
-      const pin = root.querySelector(`[data-pin-for="${profId}"]`).value;
-      if(pin !== prof.pin){ showToast('PIN incorreto.'); return; }
-      const accessRole = prof.accessRole || 'profissional';
-      userSession = {role: accessRole, professionalId: profId};
-      route = 'dashboard';
-      closeModal(); render();
-      showToast(`Logado como ${prof.name}.`);
-    }));
-  });
 }
 
 function renderView(){
@@ -2219,7 +2165,7 @@ function agendaGridView(dateISO, profList){
   };
 
   return `
-    <div class="card" style="padding:0;overflow-x:auto;margin-bottom:20px;">
+    <div class="card agenda-grade" data-min-h="${minH}" data-max-h="${maxH}" data-slot-h="${SLOT_H}" data-date="${dateISO}" style="padding:0;overflow-x:auto;margin-bottom:20px;">
       <div style="min-width:${120 + profList.length*170}px;">
         <div style="display:flex;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:2;">
           <div style="width:60px;flex-shrink:0;"></div>
@@ -2242,7 +2188,7 @@ function agendaGridView(dateISO, profList){
             </div>`).join('')}
           </div>
           ${profList.map(p=>`
-            <div style="flex:1;min-width:170px;position:relative;border-left:1px solid var(--border);background:${isProfessionalWorking(p, dateISO)?'transparent':'repeating-linear-gradient(45deg, transparent, transparent 8px, var(--panel-2) 8px, var(--panel-2) 16px)'};">
+            <div class="agenda-col" data-col-prof="${p.id}" style="flex:1;min-width:170px;position:relative;border-left:1px solid var(--border);background:${isProfessionalWorking(p, dateISO)?'transparent':'repeating-linear-gradient(45deg, transparent, transparent 8px, var(--panel-2) 8px, var(--panel-2) 16px)'};">
               ${hours.map(h=>`
                 <div style="height:${SLOT_H}px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;${foraDoExpediente(h)?'background:var(--panel-2);opacity:.55;':''}">
                   <div class="grid-slot" data-prof="${p.id}" data-time="${String(h).padStart(2,'0')}:00" ${foraDoExpediente(h)?'data-fora="1"':''} style="flex:1;cursor:pointer;"></div>
@@ -2257,6 +2203,146 @@ function agendaGridView(dateISO, profList){
       </div>
     </div>
   `;
+}
+
+/* ============ AGENDA: segurar e arrastar o horário ============
+   Segura (mouse ou dedo) ~0,3 s em cima do horário e arrasta: para cima/baixo
+   muda a hora (de 15 em 15 min); para outra coluna muda o profissional.
+   Ao soltar, CONFIRMA antes de salvar (com a opção de avisar o cliente) e usa
+   as mesmas regras do "Reagendar": choque vira encaixe só se confirmar,
+   bloqueio/folga avisam, lembrete de 2h é refeito.
+   Quem pode: dono e recepção movem qualquer horário; barbeiro só os dele,
+   sem passar para outro profissional. */
+let arrastoAcabouDeTerminar = false;
+let agendaArrastando = false;
+function podeArrastarHorario(a){
+  if(!a || ['concluido','cancelado','faltou'].includes(a.status)) return false;
+  if(isOwnerLevel() || userSession.role==='recepcionista') return true;
+  return !!userSession.professionalId && a.professionalId===userSession.professionalId;
+}
+function podeTrocarProfissionalArrastando(){ return isOwnerLevel() || userSession.role==='recepcionista'; }
+const minParaHora = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+// impede a tela de rolar enquanto o dedo arrasta um horário (celular)
+document.addEventListener('touchmove', e=>{ if(agendaArrastando) e.preventDefault(); }, { passive:false });
+
+function ligarArrastarAgenda(view){
+  const grade = view.querySelector('.agenda-grade');
+  if(!grade) return;
+  const minH = Number(grade.dataset.minH), maxH = Number(grade.dataset.maxH), SLOT = Number(grade.dataset.slotH), dia = grade.dataset.date;
+  grade.querySelectorAll('.appt-block').forEach(bloco=>{
+    const a = state.appointments.find(x=>x.id===bloco.dataset.appt);
+    if(!podeArrastarHorario(a)) return;
+    bloco.classList.add('arrastavel');
+    let timer = null, ativo = false, inicio = null, colOriginal = null, topoOriginal = 0, deslocY = 0, destino = null;
+    const dur = appointmentDuration(a);
+    const cancelar = ()=>{ clearTimeout(timer); timer = null; };
+    bloco.addEventListener('pointerdown', e=>{
+      if(e.button !== undefined && e.button !== 0) return;
+      inicio = { x:e.clientX, y:e.clientY, id:e.pointerId };
+      cancelar();
+      timer = setTimeout(()=>{
+        // segurou: começa a arrastar
+        ativo = true; agendaArrastando = true;
+        colOriginal = bloco.parentElement; topoOriginal = bloco.offsetTop;
+        deslocY = inicio.y - bloco.getBoundingClientRect().top;
+        try { bloco.setPointerCapture(inicio.id); } catch(err){}
+        bloco.classList.add('arrastando');
+        if(navigator.vibrate) try { navigator.vibrate(15); } catch(err){}
+      }, 300);
+    });
+    bloco.addEventListener('pointermove', e=>{
+      if(!ativo){
+        // mexeu antes de completar o "segurar": é rolagem/clique normal
+        if(inicio && Math.hypot(e.clientX-inicio.x, e.clientY-inicio.y) > 8) cancelar();
+        return;
+      }
+      e.preventDefault();
+      // coluna embaixo do dedo/mouse
+      bloco.style.pointerEvents = 'none';
+      const embaixo = document.elementFromPoint(e.clientX, e.clientY);
+      bloco.style.pointerEvents = '';
+      let col = embaixo && embaixo.closest ? embaixo.closest('.agenda-col') : null;
+      if(!col || !grade.contains(col)) col = bloco.parentElement;
+      if(!podeTrocarProfissionalArrastando()) col = colOriginal;
+      if(col !== bloco.parentElement) col.appendChild(bloco);
+      // hora pelo ponto onde o horário está, encaixando de 15 em 15 minutos
+      const y = e.clientY - col.getBoundingClientRect().top - deslocY;
+      let min = Math.round(((y / SLOT) * 60 + minH * 60) / 15) * 15;
+      min = Math.max(minH * 60, Math.min((maxH + 1) * 60 - dur, min));
+      bloco.style.top = (((min / 60) - minH) * SLOT) + 'px';
+      destino = { prof: col.dataset.colProf, hora: minParaHora(min) };
+      const rot = bloco.querySelector('.font-mono');
+      if(rot) rot.firstChild.nodeValue = destino.hora;
+    });
+    const terminar = ()=>{
+      cancelar();
+      if(!ativo){ inicio = null; return; }
+      ativo = false; agendaArrastando = false; inicio = null;
+      bloco.classList.remove('arrastando');
+      arrastoAcabouDeTerminar = true; setTimeout(()=>{ arrastoAcabouDeTerminar = false; }, 400);
+      const voltar = ()=>{ if(bloco.parentElement !== colOriginal) colOriginal.appendChild(bloco); bloco.style.top = topoOriginal + 'px'; renderAgenda(view); };
+      if(!destino || (destino.prof===a.professionalId && destino.hora===a.time)){ voltar(); return; }
+      confirmarArrasto(a, dia, destino, view, voltar);
+      destino = null;
+    };
+    bloco.addEventListener('pointerup', terminar);
+    bloco.addEventListener('pointercancel', terminar);
+    bloco.addEventListener('contextmenu', e=>{ if(ativo || timer) e.preventDefault(); });
+  });
+}
+
+function confirmarArrasto(a, dia, destino, view, voltar){
+  const prof = state.professionals.find(p=>p.id===destino.prof);
+  const dur = appointmentDuration(a);
+  const choque = state.appointments.some(x=>x.id!==a.id && x.professionalId===destino.prof && x.date===dia &&
+    x.status!=='cancelado' && x.status!=='faltou' && timesOverlap(x.time, appointmentDuration(x), destino.hora, dur));
+  const bloqueado = blocksForDay(destino.prof, dia).some(b=> destino.hora >= b.start && destino.hora < b.end);
+  const folga = prof && !isProfessionalWorking(prof, dia);
+  const trocouProf = destino.prof !== a.professionalId;
+  const de = { hora: a.time, prof: profName(a.professionalId) };   // guardado antes de salvar (o objeto muda ao gravar)
+  const aviso = choque ? '⚠ Já existe outro agendamento nesse horário — vai ficar como encaixe.'
+              : bloqueado ? '⚠ Esse horário está bloqueado (folga ou almoço).'
+              : folga ? '⚠ Esse profissional não trabalha neste dia.' : '';
+  let salvou = false;
+  openModal(`
+    <div style="padding:22px;">
+      <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:10px;">Mover horário?</div>
+      <div style="font-size:14px;line-height:1.6;margin-bottom:12px;">
+        <b>${esc(a.client)}</b><br>
+        <span style="color:var(--muted);">De:</span> ${a.time} com ${esc(profName(a.professionalId))}<br>
+        <span style="color:var(--muted);">Para:</span> <b>${destino.hora}</b> com <b>${esc(prof?.name || '—')}</b>${trocouProf ? ' <span class="pill pill-warn" style="font-size:10.5px;">outro profissional</span>' : ''}
+      </div>
+      ${aviso ? `<div style="font-size:12.5px;color:${choque||bloqueado?'var(--bad)':'var(--warn)'};margin-bottom:12px;">${aviso}</div>` : ''}
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;margin-bottom:16px;">
+        <input type="checkbox" id="arr-avisar" checked style="width:auto;"> Avisar o cliente da mudança (WhatsApp/e-mail)
+      </label>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-ghost" id="arr-cancelar">Cancelar</button>
+        <button class="btn btn-gold" id="arr-ok">Mover</button>
+      </div>
+    </div>`, root=>{
+    const fechar = ()=>{ closeModal(); if(!salvou) voltar(); };
+    root.querySelector('#arr-cancelar').addEventListener('click', fechar);
+    root.addEventListener('click', e=>{ if(e.target===root) fechar(); });
+    root.querySelector('#arr-ok').addEventListener('click', ()=>{
+      salvou = true;
+      const avisar = root.querySelector('#arr-avisar').checked;
+      const gravando = update(s=>{
+        const x = s.appointments.find(y=>y.id===a.id);
+        if(!x) return;
+        x.professionalId = destino.prof; x.time = destino.hora;
+        x.encaixe = choque || undefined;
+        x.confirmed = false;
+        x.reminderSent = false;   // horário novo: o lembrete de 2h vale para o novo horário
+        if(x.status==='confirmado') x.status = 'agendado';
+        registrarAuditoria(s, 'Moveu horário (arrastando)', `${a.client}: ${de.hora} ${de.prof} → ${destino.hora} ${prof?.name||''}`);
+      });
+      if(avisar && currentShop) gravando.then(r=>{ if(r==='ok') enviarEmailAgendamento({ tipo:'reagendamento', shopId: currentShop.id, appointmentId: a.id }); });
+      closeModal();
+      showToast(`Movido para ${destino.hora} com ${prof?.name || ''}.`);
+      renderAgenda(view);
+    });
+  });
 }
 
 function weeklyByProfessionalTable(){
@@ -2479,8 +2565,10 @@ function renderAgenda(view){
   view.querySelectorAll('[data-ir-dia]').forEach(el=>el.addEventListener('click', ()=>{ agendaDate = el.dataset.irDia; renderAgenda(view); }));
   view.querySelectorAll('.appt-block').forEach(el=>el.addEventListener('click', (e)=>{
     e.stopPropagation();
+    if(arrastoAcabouDeTerminar) return;   // soltou um arrasto: não abre as opções
     apptActionsModal(el.dataset.appt, view);
   }));
+  ligarArrastarAgenda(view);
   view.querySelector('#btn-estender')?.addEventListener('click', ()=>{
     agendaEstendida = !agendaEstendida;
     renderAgenda(view);
@@ -4983,16 +5071,10 @@ function renderProfissionais(view){
   view.innerHTML = `
     ${pageHeader('Profissionais', state.professionals.length+' cadastrado(s)'+(limits.maxProfessionals!==Infinity?` de ${limits.maxProfessionals} (plano ${limits.label})`:''), `<button class="btn btn-gold" id="btn-new-prof" ${atLimit?'disabled title="Limite do plano Basic atingido"':''}>${ICON.plus} Novo profissional</button>`)}
     ${atLimit ? `<div class="pill pill-warn" style="display:block;margin-bottom:14px;padding:10px 14px;">Você atingiu o limite de ${limits.maxProfessionals} profissionais do plano Basic. <a href="#" id="lnk-upgrade-prof" style="color:var(--gold-bright);text-decoration:underline;">Assine o plano Pro</a> para cadastrar profissionais ilimitados.</div>` : ''}
-    ${isOwnerLevel() && state.onlineBooking?.slug ? `
-      <div class="card" style="padding:16px 18px;margin-bottom:18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-          <div style="min-width:0;">
-            <div style="font-size:12px;color:var(--muted-2);margin-bottom:5px;">Link de acesso da equipe — cada profissional entra pelo próprio celular usando o PIN dele</div>
-            <div class="font-mono" style="font-size:12.5px;color:var(--gold-bright);word-break:break-all;">${window.location.origin}${window.location.pathname}?equipe=${esc(state.onlineBooking.slug)}</div>
-          </div>
-          <button class="btn btn-ghost" id="btn-copy-team-link" style="flex-shrink:0;">${ICON.copy} Copiar link</button>
-        </div>
-        <div style="font-size:11px;color:var(--muted-2);margin-top:10px;">Use PINs de 6 a 8 dígitos e evite sequências óbvias — quem tiver o link e o PIN entra na visão daquele profissional.</div>
+    ${podeGerenciarAcessos() ? `
+      <div class="card" style="padding:14px 18px;margin-bottom:18px;font-size:12.5px;color:var(--muted);line-height:1.6;">
+        ${ICON.shield} <b style="color:var(--ink);">Acesso da equipe:</b> cada pessoa entra em <b style="color:var(--ink);">${esc(location.host || 'primerbarber.com.br')}</b> com o próprio e-mail e senha.
+        Para criar, clique em <b style="color:var(--ink);">Editar</b> no profissional → <b style="color:var(--ink);">Acesso ao sistema</b>.
       </div>
     ` : ''}
     ${state.professionals.length===0 ? emptyState('Nenhum profissional cadastrado.') : `
@@ -5015,7 +5097,7 @@ function renderProfissionais(view){
             </div>
             <div style="font-size:11.5px;color:var(--muted-2);margin-top:10px;">${p.workDays.map(d=>WEEKDAY_LABELS[d]).join(' ')} · ${p.workStart}–${p.workEnd}</div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
-              <div style="font-size:11.5px;color:var(--muted-2);">${ICON.shield} PIN ${p.pin}</div>
+              ${podeGerenciarAcessos() ? `<div style="font-size:11.5px;color:${acessosEquipe?.[p.id] ? 'var(--ok)' : 'var(--muted-2)'};">${ICON.shield} ${acessosEquipe==null ? 'Acesso: carregando…' : acessosEquipe[p.id] ? 'Tem acesso ao sistema' : 'Sem acesso ao sistema'}</div>` : '<div></div>'}
               ${rt.count>0 ? `<div style="font-size:12px;color:var(--gold-bright);display:flex;align-items:center;gap:3px;">${ICON.star} ${rt.avg.toFixed(1)} (${rt.count})</div>` : ''}
             </div>
             <div style="display:flex;gap:6px;margin-top:14px;">
@@ -5032,11 +5114,10 @@ function renderProfissionais(view){
     profModal();
   });
   view.querySelector('#lnk-upgrade-prof')?.addEventListener('click', (e)=>{ e.preventDefault(); renderPaywallUpgrade('profissionais'); });
-  view.querySelector('#btn-copy-team-link')?.addEventListener('click', ()=>{
-    const link = `${window.location.origin}${window.location.pathname}?equipe=${state.onlineBooking.slug}`;
-    navigator.clipboard?.writeText(link);
-    showToast('Link da equipe copiado.');
-  });
+  // quem já tem login (carrega uma vez e redesenha)
+  if(podeGerenciarAcessos() && acessosEquipe==null && !carregarAcessosEquipe._indo){
+    carregarAcessosEquipe().then(()=>{ if(route==='profissionais' && acessosEquipe) renderView(); });
+  }
   view.querySelectorAll('[data-edit-prof]').forEach(b=>b.addEventListener('click', ()=>profModal(state.professionals.find(p=>p.id===b.dataset.editProf))));
   view.querySelectorAll('[data-del-prof]').forEach(b=>b.addEventListener('click', ()=>{
     const p = state.professionals.find(x=>x.id===b.dataset.delProf);
@@ -5051,8 +5132,121 @@ function renderProfissionais(view){
       s.professionals = s.professionals.filter(x=>x.id!==p.id);
       registrarAuditoria(s, 'Excluiu profissional', `${p.name} (${atend} atendimentos no histórico)`);
     });
+    // apaga também o login dele (o servidor já não deixava entrar sem o cadastro)
+    if(acessosEquipe?.[p.id]) acaoAcessoEquipe({ acao:'remover', professionalId: p.id }).then(r=>{ if(r.ok){ delete acessosEquipe[p.id]; } });
   }));
 }
+/* ============ ACESSO DA EQUIPE (login próprio: e-mail + senha) ============
+   Substituiu o PIN. Só o DONO cria, troca a senha e remove o login de cada
+   pessoa (Edge Function equipe-acesso). A pessoa entra na tela de entrada
+   normal e, no 1º acesso, cria a própria senha. */
+let acessosEquipe = null;   // { idDoProfissional: email } — quem já tem login
+function podeGerenciarAcessos(){ return userSession.role==='dono' && !teamSession && !!currentShop; }
+async function acaoAcessoEquipe(corpo){
+  if(!supa) return { error:'Sem conexão com o servidor.' };
+  try{
+    const { data, error } = await supa.functions.invoke('equipe-acesso', { body: corpo });
+    if(error) return { error:'Sem conexão com o servidor. Tente de novo.' };
+    return data || { error:'Sem resposta do servidor. Tente de novo.' };
+  }catch(e){ return { error:'Sem conexão com o servidor. Tente de novo.' }; }
+}
+async function carregarAcessosEquipe(){
+  if(!podeGerenciarAcessos()) return;
+  carregarAcessosEquipe._indo = true;
+  const r = await acaoAcessoEquipe({ acao:'listar' });
+  carregarAcessosEquipe._indo = false;
+  if(r.ok) acessosEquipe = Object.fromEntries((r.membros||[]).map(m=>[m.professionalId, m.email]));
+}
+function sugerirSenhaProvisoria(){
+  const letras = 'abcdefghjkmnpqrstuvwxyz';
+  const n = (max)=>{ try { return crypto.getRandomValues(new Uint32Array(1))[0] % max; } catch(e){ return Math.floor(Math.random()*max); } };
+  let s = ''; for(let i=0;i<5;i++) s += letras[n(letras.length)];
+  return s + String(100 + n(900));
+}
+function validarAcessoNovo(email, senha){
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email||'').trim())) return 'Digite um e-mail válido para o acesso.';
+  if(String(senha||'').length < 8 || !/[A-Za-z]/.test(senha) || !/\d/.test(senha)) return 'A senha provisória precisa ter pelo menos 8 caracteres, com letras e números.';
+  return '';
+}
+function htmlAcessoProf(existing){
+  const tem = existing && acessosEquipe?.[existing.id];
+  const caixa = (dentro)=>`<div style="border:1px solid var(--border);border-radius:9px;padding:12px 14px;">
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${ICON.shield} Acesso ao sistema</div>${dentro}</div>`;
+  if(existing && acessosEquipe==null) return caixa(`<div style="font-size:12.5px;color:var(--muted);">Carregando...</div>`);
+  if(tem) return caixa(`
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Entra em <b style="color:var(--ink);">${esc(location.host || 'primerbarber.com.br')}</b> com: <b style="color:var(--ink);">${esc(tem)}</b></div>
+    <div id="ac-nova-senha-box" style="display:none;gap:8px;align-items:center;margin-bottom:10px;">
+      <input id="ac-nova-senha" value="${sugerirSenhaProvisoria()}" style="flex:1;min-width:0;" aria-label="Senha provisória nova">
+      <button class="btn btn-gold" type="button" id="ac-nova-senha-ok" style="padding:8px 12px;">Salvar</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-ghost" type="button" id="ac-nova-senha-btn" style="padding:7px 11px;font-size:12.5px;">Nova senha provisória</button>
+      <button class="btn btn-ghost" type="button" id="ac-remover" style="padding:7px 11px;font-size:12.5px;color:var(--bad);border-color:var(--bad);">Remover acesso</button>
+    </div>`);
+  return caixa(`
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Opcional. Crie um login para esta pessoa entrar no sistema pelo próprio celular. Ela vê só o que o nível de acesso acima permite.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:180px;"><label for="f-acesso-email">E-mail de acesso</label><input id="f-acesso-email" type="email" autocomplete="off" value="${esc(existing?.email || '')}" placeholder="email@exemplo.com" style="width:100%;"></div>
+      <div style="flex:1;min-width:150px;"><label for="f-acesso-senha">Senha provisória</label><input id="f-acesso-senha" autocomplete="off" value="${sugerirSenhaProvisoria()}" style="width:100%;"></div>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted-2);margin-top:6px;">O acesso é criado ao clicar em Salvar. Passe o e-mail e a senha para a pessoa: no primeiro acesso ela cria a própria senha.</div>`);
+}
+function ligarAcessoProf(root, existing){
+  const box = root.querySelector('#f-acesso');
+  if(!box || !existing) return;
+  const redesenhar = ()=>{ box.innerHTML = htmlAcessoProf(existing); ligarAcessoProf(root, existing); };
+  if(acessosEquipe==null){ carregarAcessosEquipe().then(()=>{ if(acessosEquipe && root.isConnected) redesenhar(); }); return; }
+  root.querySelector('#ac-nova-senha-btn')?.addEventListener('click', ()=>{ root.querySelector('#ac-nova-senha-box').style.display = 'flex'; root.querySelector('#ac-nova-senha').select(); });
+  root.querySelector('#ac-nova-senha-ok')?.addEventListener('click', async (e)=>{
+    const senha = root.querySelector('#ac-nova-senha').value;
+    const erro = validarAcessoNovo(acessosEquipe[existing.id], senha);
+    if(erro){ showToast(erro); return; }
+    e.currentTarget.disabled = true;
+    const r = await acaoAcessoEquipe({ acao:'senha', professionalId: existing.id, senha });
+    if(!r.ok){ e.currentTarget.disabled = false; showToast(r.error || 'Não deu para trocar a senha.'); return; }
+    mostrarAcessoCriado(existing.name, acessosEquipe[existing.id], senha, true);
+  });
+  root.querySelector('#ac-remover')?.addEventListener('click', async (e)=>{
+    if(!confirm(`Remover o acesso de ${existing.name}? Ele não vai conseguir mais entrar no sistema (o cadastro e o histórico continuam).`)) return;
+    e.currentTarget.disabled = true;
+    const r = await acaoAcessoEquipe({ acao:'remover', professionalId: existing.id });
+    if(!r.ok){ e.currentTarget.disabled = false; showToast(r.error || 'Não deu para remover agora.'); return; }
+    delete acessosEquipe[existing.id];
+    update(s=>registrarAuditoria(s, 'Removeu o acesso ao sistema', existing.name));
+    showToast(`Acesso de ${existing.name} removido.`);
+    redesenhar();
+  });
+}
+async function criarAcessoEquipe(profId, nome, email, senha){
+  const r = await acaoAcessoEquipe({ acao:'criar', professionalId: profId, email, senha });
+  if(!r.ok){ showToast(r.error || 'Não deu para criar o acesso.'); return; }
+  acessosEquipe = { ...(acessosEquipe||{}), [profId]: r.email };
+  update(s=>registrarAuditoria(s, 'Criou acesso ao sistema', `${nome} (${r.email})`));
+  if(route==='profissionais') renderView();
+  mostrarAcessoCriado(nome, r.email, senha, false);
+}
+// mostra para o dono o que passar para a pessoa (a senha só aparece aqui, uma vez)
+function mostrarAcessoCriado(nome, email, senha, troca){
+  const site = location.host || 'primerbarber.com.br';
+  const texto = `Seu acesso ao sistema da barbearia:\nSite: ${site}\nE-mail: ${email}\nSenha provisória: ${senha}\nNo primeiro acesso você vai criar a sua própria senha.`;
+  openModal(`
+    <div style="padding:22px;">
+      <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:8px;">${troca ? 'Senha provisória trocada' : 'Acesso criado!'}</div>
+      <div style="font-size:13.5px;color:var(--muted);margin-bottom:12px;">Passe para <b style="color:var(--ink);">${esc(nome)}</b>:</div>
+      <div class="font-mono" style="font-size:13px;line-height:1.8;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin-bottom:12px;word-break:break-all;">
+        Site: ${esc(site)}<br>E-mail: ${esc(email)}<br>Senha provisória: ${esc(senha)}
+      </div>
+      <div style="font-size:12px;color:var(--muted-2);margin-bottom:16px;">No primeiro acesso, ${esc(nome)} vai criar a própria senha. Esta senha provisória não aparece de novo.</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="ac-copiar">${ICON.copy} Copiar</button>
+        <button class="btn btn-gold" id="ac-ok">Pronto</button>
+      </div>
+    </div>`, root=>{
+    root.querySelector('#ac-copiar').addEventListener('click', ()=>{ navigator.clipboard?.writeText(texto); showToast('Copiado. Cole no WhatsApp dele.'); });
+    root.querySelector('#ac-ok').addEventListener('click', closeModal);
+  });
+}
+
 function profModal(existing){
   const isEdit = !!existing;
   const workDays = existing?.workDays || [1,2,3,4,5,6];
@@ -5088,6 +5282,7 @@ function profModal(existing){
             <option value="admin" ${existing?.accessRole==='admin'?'selected':''}>Dono / Admin — acesso completo ao sistema</option>
           </select>
         </div>
+        ${podeGerenciarAcessos() ? `<div id="f-acesso">${htmlAcessoProf(existing)}</div>` : ''}
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:9px;">
           <input type="checkbox" id="f-serves" ${existing ? (existing.servesClients!==false?'checked':'') : 'checked'} style="width:auto;">
           <span>Atende clientes (aparece na agenda e no agendamento online)</span>
@@ -5095,7 +5290,6 @@ function profModal(existing){
         <div style="font-size:11px;color:var(--muted-2);margin-top:-6px;">Desmarque para quem trabalha na barbearia mas não corta — recepção, gerente, etc. Quem está desmarcado não aparece como opção de barbeiro, nem nas comissões e no pote do clube.</div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>Comissão base (%)</label><input id="f-comm" type="number" min="0" max="100" value="${existing?.commission ?? 40}" style="width:100%;"></div>
-          <div style="flex:1;"><label>PIN de login (6 a 8 números)</label><input id="f-pin" maxlength="8" inputmode="numeric" value="${esc(existing?.pin) || String(100000+Math.floor(Math.random()*900000))}" style="width:100%;"><div style="font-size:10.5px;color:var(--muted-2);margin-top:4px;">Usado no link de acesso da equipe. Após 5 erros o acesso trava por 15 minutos.</div></div>
         </div>
 
         <label>Dias de trabalho</label>
@@ -5171,18 +5365,18 @@ function profModal(existing){
       chip.style.cursor='pointer';
       chip.addEventListener('click', ()=>{ currentTimeOff = currentTimeOff.filter(x=>x!==chip.dataset.timeoffChip); chip.remove(); });
     });
+    ligarAcessoProf(root, existing);
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
       const phone = root.querySelector('#f-phone').value.trim();
       const accessRole = root.querySelector('#f-access-role').value;
       const commission = parseFloat(root.querySelector('#f-comm').value)||0;
-      const pin = root.querySelector('#f-pin').value.trim();
-      // PIN novo ou alterado: 6 a 8 números. (PIN antigo de 4 dígitos continua
-      // valendo para entrar; só não dá mais para criar um fraco.)
-      if(pin !== (existing?.pin||'') && !/^\d{6,8}$/.test(pin)){
-        showToast('O PIN precisa ter de 6 a 8 números.');
-        root.querySelector('#f-pin').focus();
-        return;
+      // login novo para esta pessoa (opcional): confere antes de salvar
+      const acEmail = root.querySelector('#f-acesso-email')?.value.trim() || '';
+      const acSenha = root.querySelector('#f-acesso-senha')?.value || '';
+      if(acEmail){
+        const erroAc = validarAcessoNovo(acEmail, acSenha);
+        if(erroAc){ showToast(erroAc); return; }
       }
       const selectedDays = [...root.querySelectorAll('[data-workday]:checked')].map(el=>parseInt(el.dataset.workday));
       const workStart = root.querySelector('#f-start').value;
@@ -5194,21 +5388,26 @@ function profModal(existing){
       if(!name){ showToast('Informe o nome.'); return; }
       const servesClients = root.querySelector('#f-serves').checked;
       const email = root.querySelector('#f-email').value.trim();
-      const data = {name, phone, email, accessRole, commission, pin, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
-      update(s=>{
+      const data = {name, phone, email, accessRole, commission, servesClients, photoDataUrl: currentPhoto, workDays:selectedDays, workStart, workEnd, timeOff:currentTimeOff, serviceOverrides};
+      const profIdFinal = isEdit ? existing.id : uid();
+      const gravando = update(s=>{
         if(isEdit){
           const alvo = s.professionals.find(x=>x.id===existing.id);
           if(alvo){
-            const antes = {c:alvo.commission, r:alvo.accessRole, pin:alvo.pin};
+            const antes = {c:alvo.commission, r:alvo.accessRole};
             Object.assign(alvo, data);
             if(antes.c !== alvo.commission) registrarAuditoria(s, 'Alterou a comissão', `${alvo.name}: ${antes.c}% → ${alvo.commission}%`);
             if(antes.r !== alvo.accessRole) registrarAuditoria(s, 'Alterou o nível de acesso', `${alvo.name}: ${antes.r||'—'} → ${alvo.accessRole}`);
-            if(antes.pin !== alvo.pin) registrarAuditoria(s, 'Trocou o PIN de acesso', alvo.name);
           }
         }
-        else{ s.professionals.push({id:uid(), ...data}); registrarAuditoria(s, 'Cadastrou profissional', data.name); }
+        else if(!s.professionals.some(x=>x.id===profIdFinal)){ s.professionals.push({id:profIdFinal, ...data}); registrarAuditoria(s, 'Cadastrou profissional', data.name); }
       });
       closeModal();
+      // cria o login DEPOIS que o profissional está salvo no servidor
+      if(acEmail) gravando.then(r=>{
+        if(r!=='ok'){ showToast('Profissional salvo, mas o acesso não foi criado. Abra Editar e tente de novo.'); return; }
+        criarAcessoEquipe(profIdFinal, name, acEmail, acSenha);
+      });
     });
   });
 }
@@ -6667,9 +6866,6 @@ function renderMeusLinks(view){
     { id:'planos', titulo:'Página de planos', icone:ICON.club,
       desc:'Mostra seus planos do clube com preços e benefícios, para atrair novos assinantes.',
       url:`${base}?planos=${slug}` },
-    { id:'equipe', titulo:'Acesso da equipe', icone:ICON.team,
-      desc:'Somente para seus profissionais. Cada um entra pelo celular com o PIN dele. Não divulgue para clientes.',
-      url:`${base}?equipe=${slug}`, restrito:true },
   ];
 
   view.innerHTML = `
@@ -9835,7 +10031,7 @@ function baixarBackup(){
 /* ============ HISTÓRICO DE AÇÕES (auditoria) ============ */
 // Histórico do servidor (Fase 2B): tabela audit_events, que ninguém apaga,
 // com quem estava logado de verdade. Se não der para ler (equipe/admin
-// pelo PIN, ou banco ainda sem a tabela), mostra o histórico salvo nos dados.
+// com login próprio, ou banco ainda sem a tabela), mostra o histórico salvo nos dados.
 async function carregarHistoricoServidor(){
   if(!supa || !currentShop || teamSession) return null;
   try{
@@ -10160,12 +10356,12 @@ const GUIAS_AJUDA = [
     { titulo:'Exportando a lista', texto:'Clique em "Exportar CSV" pra baixar todos os clientes cadastrados numa planilha.', imagem:null },
   ] },
   { id:'profissionais', titulo:'Profissionais', papeis:['dono'], imagemGeral:'ajuda/ajuda-profissionais.png', passos:[
-    { titulo:'Cadastrando um profissional', texto:'Clique em "+ Novo profissional", preencha nome e telefone, defina o PIN de acesso dele (usado pra entrar pelo celular) e o nível de acesso: Dono/Admin, Recepcionista ou Profissional.', imagem:null },
+    { titulo:'Cadastrando um profissional', texto:'Clique em "+ Novo profissional", preencha nome e telefone e escolha o nível de acesso: Dono/Admin, Recepcionista ou Profissional. Se ele for usar o sistema, preencha também o "Acesso ao sistema" (e-mail e senha provisória).', imagem:null },
     { titulo:'Configurando a comissão', texto:'Defina o percentual padrão de comissão dele. Se quiser um percentual diferente pra um serviço específico (ex: ele ganha mais em coloração), use os ajustes por serviço dentro do próprio cadastro.', imagem:null },
     { titulo:'Dias e horário de trabalho', texto:'Marque em quais dias da semana ele atende e o horário de início e fim do expediente. Isso é usado pra calcular os horários disponíveis na agenda e na página pública.', imagem:null },
     { titulo:'A caixinha "Atende clientes"', texto:'Desmarque essa opção pra quem trabalha na barbearia mas não corta cabelo (recepcionista, por exemplo). Quem está desmarcado não aparece como opção de barbeiro na agenda nem na página pública, mas continua com acesso normal ao sistema.', imagem:null },
     { titulo:'Foto do profissional', texto:'Adicione uma foto pra ele aparecer identificado na agenda em grade e na página pública de agendamento.', imagem:null },
-    { titulo:'Acesso da equipe pelo celular', texto:'Cada profissional pode entrar direto pelo celular dele usando o link de equipe (em "Meus Links") e o PIN cadastrado — sem precisar do login e senha do dono.', imagem:null },
+    { titulo:'Acesso da equipe pelo celular', texto:'Cada pessoa da equipe tem o próprio login: em Editar → "Acesso ao sistema", você cria o e-mail e uma senha provisória. Ela entra na mesma tela de entrada do Primer Barber e, no primeiro acesso, cria a própria senha. Esqueceu? Use "Nova senha provisória". Saiu da barbearia? "Remover acesso".', imagem:null },
   ] },
   { id:'servicos', titulo:'Serviços', papeis:['dono','recepcionista'], imagemGeral:'ajuda/ajuda-servicos.png', passos:[
     { titulo:'Cadastrando um serviço', texto:'Clique em "+ Novo serviço" e preencha nome, preço e duração em minutos. A duração é usada pra calcular o tamanho do bloco na agenda e evitar choque de horário.', imagem:null },
@@ -10223,10 +10419,10 @@ const FAQ_AJUDA = [
   { pergunta:'Como faço backup dos meus dados?', resposta:'Em Configurações da Conta, role até "Seus dados" e clique em "Baixar backup dos meus dados". Guarde o arquivo em local seguro.', papeis:['dono'] },
   { pergunta:'Errei o pagamento de um mês fechado. E agora?', resposta:'Em Comissões, vá até o mês e clique em "Reabrir fechamento". O sistema registra um estorno (nada é apagado) e você pode fechar de novo. Se já entregou o dinheiro, o acerto com o profissional é por fora.', papeis:['dono'] },
   { pergunta:'Alguém mexeu num valor. Como descubro quem foi?', resposta:'Abra "Histórico de Ações" no menu: ele mostra quem fez cada operação de dinheiro, comissão ou exclusão, e quando.', papeis:['dono'] },
-  { pergunta:'Meu profissional errou o PIN várias vezes e não consegue entrar.', resposta:'Depois de 5 erros o acesso trava por 15 minutos, por segurança. É só esperar e tentar de novo com o PIN certo.', papeis:['dono'] },
+  { pergunta:'Meu profissional esqueceu a senha e não consegue entrar.', resposta:'Ele mesmo pode clicar em "Esqueci minha senha" na tela de entrada. Ou você abre Profissionais → Editar → "Nova senha provisória" e passa a senha nova para ele.', papeis:['dono'] },
   // { pergunta, resposta, papeis:[...] }
   { pergunta:'Esqueci minha senha, como faço?', resposta:'Na tela de login, clique em "Esqueci minha senha" e siga as instruções enviadas por e-mail.', papeis:['dono','recepcionista','profissional'] },
-  { pergunta:'Como meu profissional acessa o sistema pelo celular dele?', resposta:'Cadastre-o na tela de Profissionais com um PIN de acesso, e envie o link de equipe (disponível em "Meus Links"). Ele entra direto pelo celular, sem precisar do seu login e senha.', papeis:['dono'] },
+  { pergunta:'Como meu profissional acessa o sistema pelo celular dele?', resposta:'Em Profissionais, clique em Editar no cadastro dele e preencha "Acesso ao sistema" (e-mail e senha provisória). Ele entra em primerbarber.com.br com esse e-mail, cria a própria senha no primeiro acesso e vê só o que o nível de acesso dele permite.', papeis:['dono'] },
   { pergunta:'Por que um cliente assinante está sendo cobrado valor cheio?', resposta:'Confira três coisas: se o serviço realmente está marcado como incluso no plano dele (em Clube de Assinatura, ao editar o plano), se a mensalidade dele está em dia, e se hoje é um dos dias em que o plano vale.', papeis:['dono'] },
   { pergunta:'A estrelinha do cliente não aparece na agenda, o que fazer?', resposta:'Isso acontece quando o nome cadastrado no clube não bate exatamente com o nome na lista de Clientes. Vá em Clube de Assinatura — se houver assinantes sem vínculo, aparece um aviso com um botão pra resolver isso manualmente.', papeis:['dono'] },
   { pergunta:'Posso agendar mais de um serviço no mesmo horário?', resposta:'Sim. Ao criar o agendamento, marque quantas caixinhas de serviço quiser — o sistema soma a duração e o valor de todos automaticamente.', papeis:['dono','recepcionista','profissional'] },
@@ -11423,7 +11619,7 @@ function publicSubscribeModal(plan){
 }
 
 /* ============ ACESSO DA EQUIPE (link ?equipe) ============ */
-let teamSession = null; // {shopId, profId, pin} — quando a equipe entra sem o login do dono
+let teamSession = null; // {shopId, profId} — quem entrou é da EQUIPE (login próprio), não o dono
 let agendaDate = null; // dia visível na agenda (não é salvo no banco)
 let agendaMode = 'grade'; // 'grade' (quadro de horários) ou 'lista'
 // FASE 3: filtros do modo lista (busca por cliente também procura em outros dias)
@@ -11437,57 +11633,62 @@ function filtrarAgenda(lista){
 }
 let agendaEstendida = false; // mostra horas antes/depois do expediente
 
-async function renderTeamLogin(slug, errorMsg){
-  const app = document.getElementById('app');
-  app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13px;">Carregando...</div></div></div>`;
-  const { data, error } = await supa.rpc('get_shop_team', { p_slug: slug });
-  if(error || !data || !data.shop_id){
-    app.innerHTML = `<div class="auth-bg"><div class="auth-card"><div class="auth-inner" style="text-align:center;color:var(--muted);font-size:13.5px;">Link de acesso não encontrado.</div></div></div>`;
-    return;
+// O link antigo "?equipe=" (com PIN) foi desativado: cada um tem login próprio.
+function renderTeamLogin(){
+  authShell(`
+    <div class="auth-title font-display" style="font-weight:600;font-size:22px;">O acesso da equipe mudou</div>
+    <div class="auth-subtitle">Agora cada profissional entra com o <b style="color:var(--ink);">próprio e-mail e senha</b>, na tela de entrada do Primer Barber. Se você ainda não tem, peça ao dono da barbearia para criar o seu acesso.</div>
+    <button class="btn btn-gold auth-submit" id="eq-ir">Ir para a tela de entrada</button>`);
+  document.getElementById('eq-ir').addEventListener('click', ()=>{ location.href = location.pathname; });
+}
+
+// Quem entrou com e-mail e senha é da EQUIPE de alguma barbearia? Se for, abre
+// a barbearia dela com o nível de acesso dela. Devolve 'feito' ou 'nao' (é dono).
+async function entrarComoEquipe(session){
+  let res = null;
+  try { ({ data: res } = await supa.rpc('member_login')); } catch(e){ res = null; }
+  if(!res || res.nao_membro) return 'nao';
+  if(res.error){
+    await supa.auth.signOut();
+    mostrarLanding(true); renderAuthScreen('login', res.error);
+    return 'feito';
   }
-  const team = data.team || [];
-  app.innerHTML = `
-    <div class="auth-bg">
-      <div class="auth-card">
-        <div class="auth-inner">
-          ${data.logo ? `<img src="${data.logo}" style="width:56px;height:56px;object-fit:contain;display:block;margin:0 auto 14px;">` : ''}
-          <div class="auth-eyebrow">Acesso da equipe</div>
-          <div class="auth-title font-display" style="font-weight:600;font-size:22px;">${esc(data.shop_name||'Barbearia')}</div>
-          <div class="auth-subtitle">Escolha seu nome e digite seu PIN.</div>
-          ${errorMsg?`<div class="auth-error">${esc(errorMsg)}</div>`:''}
-          ${team.length===0 ? `<div style="text-align:center;color:var(--muted);font-size:13px;">Nenhum profissional cadastrado ainda.</div>` : `
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              ${team.map(p=>`
-                <div style="display:flex;gap:8px;align-items:center;">
-                  <div style="flex:1;min-width:0;">
-                    <div style="font-size:13.5px;font-weight:500;">${esc(p.name)}</div>
-                    <div style="font-size:11px;color:var(--muted-2);">${roleLabel(p.accessRole)}</div>
-                  </div>
-                  <input type="password" inputmode="numeric" maxlength="8" placeholder="PIN" data-team-pin="${p.id}" style="width:84px;text-align:center;">
-                  <button class="btn btn-gold" style="padding:9px 12px;" data-team-login="${p.id}">Entrar</button>
-                </div>
-              `).join('')}
-            </div>
-          `}
-        </div>
-      </div>
-    </div>
-  `;
-  app.querySelectorAll('[data-team-login]').forEach(b=>b.addEventListener('click', async ()=>{
-    const profId = b.dataset.teamLogin;
-    const pin = app.querySelector(`[data-team-pin="${profId}"]`).value.trim();
-    if(!pin){ renderTeamLogin(slug, 'Digite seu PIN.'); return; }
-    b.disabled = true; b.textContent = '...';
-    const { data: res, error: err } = await supa.rpc('team_login', { p_shop_id: data.shop_id, p_prof_id: profId, p_pin: pin });
-    b.disabled = false; b.textContent = 'Entrar';
-    if(err || !res || res.error){ renderTeamLogin(slug, res?.error || 'Não foi possível entrar.'); return; }
-    teamSession = { shopId: data.shop_id, profId, pin };
-    currentShop = { id: data.shop_id, data: res.data, plan: 'pro', subscription_status: 'active', email: '' };
-    const prof = (res.data.professionals||[]).find(p=>p.id===profId);
-    userSession = { role: prof?.accessRole || 'profissional', professionalId: profId };
-    route = 'dashboard';
-    await loadState();
-  }));
+  if(session?.user?.user_metadata?.must_change_password){ renderTrocarSenhaEquipe(); return 'feito'; }
+  teamSession = { shopId: res.shop_id, profId: res.prof_id };
+  versaoRemota = (res.version != null) ? res.version : null;
+  currentShop = { id: res.shop_id, data: res.data, plan: 'pro', subscription_status: 'active', email: '', booking_slug: res.booking_slug };
+  userSession = { role: res.role || 'profissional', professionalId: res.prof_id };
+  souAdminPlataforma = false;
+  route = 'dashboard';
+  fecharAvisoCookies();
+  await loadState();
+  return 'feito';
+}
+
+// 1º acesso da equipe: troca a senha provisória (que o dono criou) por uma só sua
+function renderTrocarSenhaEquipe(errorMsg){
+  authShell(`
+    <div class="auth-title font-display" style="font-weight:600;">Crie sua senha</div>
+    <div class="auth-subtitle">Primeiro acesso: troque a senha provisória que o dono da barbearia te passou por uma senha só sua.</div>
+    ${errorMsg ? `<div class="auth-error">${esc(errorMsg)}</div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="auth-field"><label for="eq-senha">Senha nova</label><input id="eq-senha" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres"></div>
+      <div class="auth-field"><label for="eq-senha2">Repita a senha nova</label><input id="eq-senha2" type="password" autocomplete="new-password"></div>
+      <button class="btn btn-gold auth-submit" id="eq-salvar">Salvar e entrar</button>
+      <button class="btn btn-ghost auth-switch" id="eq-sair" style="color:var(--muted);">Sair</button>
+    </div>`);
+  document.getElementById('eq-sair').addEventListener('click', async ()=>{ await supa.auth.signOut(); boot(); });
+  document.getElementById('eq-salvar').addEventListener('click', async (e)=>{
+    const btn = e.currentTarget; if(btn.disabled) return;
+    const s1 = document.getElementById('eq-senha').value, s2 = document.getElementById('eq-senha2').value;
+    if(s1.length < 8) return renderTrocarSenhaEquipe('A senha precisa ter pelo menos 8 caracteres.');
+    if(s1 !== s2) return renderTrocarSenhaEquipe('As duas senhas não são iguais.');
+    btn.disabled = true; btn.textContent = 'Salvando...';
+    const { error } = await supa.auth.updateUser({ password: s1, data: { must_change_password: false } });
+    if(error) return renderTrocarSenhaEquipe(traduzirErroAuth(error.message));
+    showToast('Senha criada! Bem-vindo.');
+    boot();
+  });
 }
 
 function authShell(inner){
@@ -11604,7 +11805,7 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
       <button class="lp-btn" id="au-submit" type="submit">${isLogin ? 'Entrar' : 'Criar conta grátis'}</button>
     </form>
     <p class="lp-troca">${isLogin ? 'Ainda não tem conta?' : 'Já tem conta?'} <button type="button" class="lp-link" id="au-switch">${isLogin ? `Teste grátis por ${TRIAL_DAYS} dias` : 'Entrar'}</button></p>
-    ${isLogin ? `<p class="lp-equipe">É da equipe? Entre pelo link com PIN que o dono te enviou.</p>` : ''}`;
+    ${isLogin ? `<p class="lp-equipe">É da equipe? Entre aqui com o e-mail e a senha que o dono da barbearia criou para você.</p>` : ''}`;
   if(antes.email) slot.querySelector('#au-email').value = antes.email;
   if(antes.shop && slot.querySelector('#au-shop')) slot.querySelector('#au-shop').value = antes.shop;
   slot.querySelector('#au-switch').addEventListener('click', ()=>{
@@ -11930,7 +12131,7 @@ function renderLegalPage(type){
       <li>Dados de pagamento (processados diretamente pelo Stripe — não armazenamos números de cartão)</li>
       <li>Nome da barbearia, endereço, telefone e redes sociais (se preenchidos)</li>
     </ul>
-    <p><b>Da equipe da barbearia:</b> nome, telefone, e-mail (se preenchido), PIN de acesso e dados de comissão.</p>
+    <p><b>Da equipe da barbearia:</b> nome, telefone, e-mail (se preenchido), e-mail de acesso ao sistema e dados de comissão.</p>
     <p><b>Dos clientes finais da barbearia</b> (inseridos pela barbearia ou pelo próprio cliente no link de agendamento, na página de planos ou na área do cliente):</p>
     <ul>
       <li>Nome, telefone e e-mail; aniversário e observações, se a barbearia preencher</li>
@@ -12005,7 +12206,7 @@ async function boot(){
   const bookSlug = urlParams.get('agendar');
   if(bookSlug){ await renderPublicBooking(bookSlug); return; }
   const teamSlug = urlParams.get('equipe');
-  if(teamSlug){ await renderTeamLogin(teamSlug); return; }
+  if(teamSlug){ renderTeamLogin(); return; }
   const plansSlug = urlParams.get('planos');
   if(plansSlug){ await renderPublicPlans(plansSlug); return; }
   const clientSlug = urlParams.get('cliente');
@@ -12020,6 +12221,9 @@ async function boot(){
     return;
   }
   mostrarLanding(false);
+  // login da EQUIPE (e-mail e senha que o dono criou): entra na barbearia dele
+  if(await entrarComoEquipe(session) === 'feito') return;
+  teamSession = null; userSession = {role:'dono', professionalId:null};
   let shop = await ensureShop();
   if(!shop){
     // fallback: pode já existir mas a criação acima não rodou (ex: login direto)
