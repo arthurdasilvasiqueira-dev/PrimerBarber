@@ -730,6 +730,9 @@ function migrateState(){
   if(state.messageSettings.depositExpireMinutes==null) state.messageSettings.depositExpireMinutes = 30;
   state.messageTemplates = state.messageTemplates || {};
   state.messageTemplates.waitlistOpen = state.messageTemplates.waitlistOpen || 'Boa notícia, {cliente}! Abriu um horário em {data} às {hora} com {profissional}. Quer confirmar? Responda rápido que é por ordem de chegada.';
+  state.messageTemplates.feedbackPrimeira = state.messageTemplates.feedbackPrimeira || 'Oi {cliente}! Obrigado por vir à {loja} pela primeira vez. 😊 Como foi seu atendimento com {profissional}? Dá uma nota de 1 a 5 aqui, sua opinião ajuda muito!';
+  state.messageTemplates.winback2 = state.messageTemplates.winback2 || 'Oi {cliente}, tudo bem? Faz {dias} dias que você não aparece na {loja}. Bora dar aquele trato no visual? É só responder aqui que a gente marca seu horário. 💈';
+  if(!(state.messageSettings.winback2Days > state.messageSettings.winbackDays)) state.messageSettings.winback2Days = Math.max(45, (state.messageSettings.winbackDays||23) + 7);
   state.messageTemplates.reviewRequest = state.messageTemplates.reviewRequest || 'Oi {cliente}! Como foi seu atendimento hoje na Primer Barber? Dá uma nota de 1 a 5 pra gente por aqui, sua opinião ajuda muito. ⭐';
   (state.professionals||[]).forEach(p=>{
     if(!p.workDays) p.workDays = [1,2,3,4,5,6];
@@ -3974,9 +3977,11 @@ function openApptModal(pre){
         });
       });
       closeModal();
-      // avisa o barbeiro (WhatsApp, com o status do clube) — se não foi ele mesmo quem marcou
-      if(criados > 0 && currentShop && !(userSession.professionalId && userSession.professionalId===professionalId)){
-        gravando.then(r=>{ if(r==='ok') enviarEmailAgendamento({ tipo:'aviso-barbeiro', shopId: currentShop.id, appointmentId: idPrimeiro }); });
+      // confirmação para o CLIENTE (WhatsApp/e-mail) e aviso ao barbeiro (com o status do clube) —
+      // o barbeiro não é avisado quando foi ele mesmo quem marcou
+      if(criados > 0 && currentShop){
+        const semBarbeiro = !!(userSession.professionalId && userSession.professionalId===professionalId);
+        gravando.then(r=>{ if(r==='ok') enviarEmailAgendamento({ tipo:'confirmacao', shopId: currentShop.id, appointmentId: idPrimeiro, semBarbeiro }); });
       }
       showToast(recorrente
         ? `${criados} agendamento(s) criado(s) na série (a cada ${freqDias} dias).`
@@ -9421,13 +9426,16 @@ const WA_CATEGORIAS = [
   { titulo:'💳 Cobranças do clube', itens:[
     ['cobranca', 'Aviso antes de vencer (com link de pagamento)'],
     ['cobrancaAtraso', 'Aviso de mensalidade atrasada (com link de pagamento)'] ] },
+  { titulo:'⭐ Depois do atendimento (para o cliente)', itens:[
+    ['feedback', 'Pedido de avaliação 3h depois do atendimento marcado como concluído — 1ª visita: boas-vindas + avaliação; cliente de sempre: no máximo 1 vez por mês'],
+    ['ausente', 'Cliente sumido: chama de volta com 23 dias e de novo com 45 dias sem vir (não manda para quem já tem horário marcado; até 20 por dia)'] ] },
   { titulo:'✂️ Avisos para o barbeiro', itens:[
     ['barbeiro', 'Novo agendamento (pelo link ou pela recepção), remarcação, cancelamento e lembrete — mostra se o cliente está com o clube em dia'] ] },
 ];
 const WA_ESTADO = { open:['Conectado','pill-ok'], connecting:['Aguardando leitura do QR code','pill-warn'], close:['Desconectado','pill-bad'], inexistente:['Não conectado','pill-bad'] };
 let waPoll = null;
 function whatsAutoCfg(s){
-  const c = Object.assign({ ativo:false, confirmacao:true, lembrete:true, barbeiro:true, cobranca:false }, (s||state).whatsappAuto||{});
+  const c = Object.assign({ ativo:false, confirmacao:true, lembrete:true, barbeiro:true, cobranca:false, feedback:false, ausente:false }, (s||state).whatsappAuto||{});
   if(c.cobrancaAtraso === undefined) c.cobrancaAtraso = c.cobranca;   // quem já usava cobrança segue recebendo o aviso de atraso
   return c;
 }
@@ -9455,7 +9463,7 @@ async function montarWhatsAuto(caixa){
       </div>
       <div class="pill pill-warn" style="display:block;padding:10px 12px;font-size:12px;line-height:1.55;margin-bottom:14px;">
         ⚠ Esta conexão não é oficial do WhatsApp: existe risco de o número ser <b>bloqueado</b>. Recomendamos usar um número
-        só da barbearia (não o pessoal). O sistema manda só para quem tem horário ou assinatura aqui, no máximo 40 por hora,
+        só da barbearia (não o pessoal). O sistema manda só para clientes da barbearia (com horário, assinatura ou atendimento aqui), no máximo 40 por hora,
         com intervalo entre as mensagens.
       </div>
       <div id="wa-qr" style="display:none;text-align:center;margin-bottom:14px;"></div>
@@ -9617,6 +9625,7 @@ function renderMensagens(view){
     <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">3 · Cliente ausente — chamar de volta</div>
     <div style="font-size:12px;color:var(--muted-2);margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       Considerar ausente após <input id="f-winback-days" type="number" min="1" max="180" value="${MS.winbackDays}" style="width:60px;padding:5px 8px;display:inline-block;"> dias sem visita.
+      2ª mensagem (WhatsApp automático) com <input id="f-winback2-days" type="number" min="2" max="365" value="${MS.winback2Days||45}" style="width:60px;padding:5px 8px;display:inline-block;"> dias.
       <button class="btn btn-ghost" id="btn-save-winback-days" style="padding:5px 10px;">Salvar</button>
     </div>
     ${absent.length===0 ? emptyState('Nenhum cliente ausente pelo critério configurado.') : `
@@ -9657,7 +9666,10 @@ function renderMensagens(view){
       ${[
         ['confirmation','Confirmação de horário','{cliente} {servico} {data} {hora} {profissional}'],
         ['reminder','Lembrete antes do horário','{cliente} {servico} {hora} {profissional}'],
-        ['winback','Cliente ausente','{cliente} {dias}'],
+        ['winback','Cliente ausente — 1ª mensagem','{cliente} {dias}'],
+        ['winback2','Cliente ausente — 2ª mensagem (automática)','{cliente} {dias} {loja}'],
+        ['feedbackPrimeira','Avaliação — 1ª visita (automática)','{cliente} {loja} {profissional}'],
+        ['reviewRequest','Avaliação — cliente de sempre','{cliente} {loja} {profissional}'],
         ['upsellServices','Sugestão de serviço','{cliente} {sugestao}'],
         ['upsellProducts','Sugestão de produto','{cliente} {sugestao}'],
       ].map(([key,label,tokens])=>`
@@ -9698,7 +9710,9 @@ function renderMensagens(view){
   });
   view.querySelector('#btn-save-winback-days').addEventListener('click', ()=>{
     const v = parseInt(view.querySelector('#f-winback-days').value)||23;
-    update(s=>{ s.messageSettings.winbackDays = v; });
+    let v2 = parseInt(view.querySelector('#f-winback2-days').value)||45;
+    if(v2 <= v){ v2 = v + 7; view.querySelector('#f-winback2-days').value = v2; showToast('A 2ª mensagem precisa ser depois da 1ª: ajustei para ' + v2 + ' dias.'); }
+    update(s=>{ s.messageSettings.winbackDays = v; s.messageSettings.winback2Days = v2; });
     showToast('Configuração de ausência salva.');
   });
   view.querySelector('#btn-save-templates').addEventListener('click', ()=>{
