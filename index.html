@@ -7519,11 +7519,21 @@ function renomearClienteEmTudo(s, nomeAntigo, nomeNovo){
   (s.subscriptionMembers||[]).forEach(m=>{ if(m.linkedClientName && era(m.linkedClientName)) m.linkedClientName = nomeNovo; });
   (s.clients||[]).forEach(c=>{ if(c.referredBy && era(c.referredBy)) c.referredBy = nomeNovo; });
 }
+// busca da tela Clientes: nome (sem acento) ou telefone (só os números)
+let buscaClientes = '';
+function textoBuscaCliente(c){ return normBusca(c.name) + ' ' + String(c.phone||'').replace(/\D/g,''); }
+function clienteCasaBusca(c, termo){
+  const t = normBusca(termo);
+  if(!t) return true;
+  const dig = t.replace(/\D/g,'');
+  const alvo = textoBuscaCliente(c);
+  return t.split(/\s+/).every(p=>alvo.includes(p)) || (dig.length >= 3 && alvo.includes(dig));
+}
 function renderClientes(view){
   const duplicados = encontrarClientesDuplicados();
   // FASE 3: arquivados ficam fora da lista (e dá para ver/restaurar)
   const arquivados = state.clients.filter(c=>c.arquivado);
-  const lista = state.clients.filter(c=>verArquivados ? c.arquivado : !c.arquivado);
+  const lista = state.clients.filter(c=>verArquivados ? c.arquivado : !c.arquivado).slice().sort(byName);
   view.innerHTML = `
     ${pageHeader('Clientes', (state.clients.length-arquivados.length)+' cadastrado(s)'+(arquivados.length?` · ${arquivados.length} arquivado(s)`:''), `
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -7547,13 +7557,19 @@ function renderClientes(view){
     ` : ''}
     <div style="font-size:12px;color:var(--muted-2);margin:-12px 0 18px;">Aceita Excel (.xlsx) ou CSV. Colunas esperadas, nesta ordem: Nome, Telefone, Aniversario(DD/MM), Pontos, Observacoes.</div>
     ${lista.length===0 ? emptyState(verArquivados ? 'Nenhum cliente arquivado.' : 'Nenhum cliente cadastrado ainda.') : `
-      <table>
+      <div style="position:relative;margin-bottom:14px;max-width:460px;">
+        <input id="f-busca-cliente" type="search" autocomplete="off" placeholder="Pesquisar cliente por nome ou telefone" value="${esc(buscaClientes)}"
+          aria-label="Pesquisar cliente" style="width:100%;padding-left:38px;">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted-2);display:flex;pointer-events:none;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+      </div>
+      <div id="busca-cliente-vazio" style="display:none;" class="card"><div style="padding:18px;text-align:center;font-size:13px;color:var(--muted);">Nenhum cliente encontrado com essa pesquisa.</div></div>
+      <table id="tabela-clientes">
         <thead><tr><th>Cliente</th><th>Contato</th><th>Indicações</th><th>Visitas</th><th>Total gasto</th><th>Última visita</th><th></th></tr></thead>
         <tbody>
         ${lista.map(c=>{
           const st = clientStats(c.name);
           const referrals = state.clients.filter(x=>x.referredBy && x.referredBy.trim().toLowerCase()===c.name.trim().toLowerCase()).length;
-          return `<tr>
+          return `<tr data-cliente-linha="${c.id}">
             <td style="font-weight:500;">${esc(c.name)} ${clubStarBadge(c.name)}${c.referredBy?`<div style="font-size:11px;color:var(--muted-2);font-weight:400;">${ICON.gift} indicado por ${esc(c.referredBy)}</div>`:''}${c.notes?`<div style="font-size:11.5px;color:var(--muted-2);font-weight:400;max-width:220px;">${esc(c.notes)}</div>`:''}</td>
             <td class="font-mono" style="color:var(--muted);">${esc(c.phone)||'—'}</td>
             <td class="font-mono" style="color:${referrals>0?'var(--gold-bright)':'var(--muted-2)'};">${referrals>0?referrals+' indicado(s)':'—'}</td>
@@ -7573,6 +7589,25 @@ function renderClientes(view){
     `}
   `;
   view.querySelector('#btn-new-client').addEventListener('click', ()=>clientModal());
+  // pesquisa: filtra as linhas enquanto digita (sem redesenhar a tela, o teclado não fecha)
+  const campoBusca = view.querySelector('#f-busca-cliente');
+  const filtrarClientes = ()=>{
+    buscaClientes = campoBusca ? campoBusca.value : '';
+    let vistos = 0;
+    lista.forEach(c=>{
+      const tr = view.querySelector(`[data-cliente-linha="${c.id}"]`);
+      const ok = clienteCasaBusca(c, buscaClientes);
+      if(tr) tr.style.display = ok ? '' : 'none';
+      if(ok) vistos++;
+    });
+    const vazio = view.querySelector('#busca-cliente-vazio'), tab = view.querySelector('#tabela-clientes');
+    if(vazio) vazio.style.display = vistos ? 'none' : 'block';
+    if(tab) tab.style.display = vistos ? '' : 'none';
+  };
+  if(campoBusca){
+    campoBusca.addEventListener('input', filtrarClientes);
+    if(buscaClientes) filtrarClientes();
+  }
   view.querySelector('#btn-ver-arquivados')?.addEventListener('click', ()=>{ verArquivados = !verArquivados; renderClientes(view); });
   view.querySelectorAll('[data-restaurar-client]').forEach(b=>b.addEventListener('click', ()=>{
     update(s=>{ const x = s.clients.find(x=>x.id===b.dataset.restaurarClient); if(x){ delete x.arquivado; delete x.arquivadoEm; registrarAuditoria(s, 'Restaurou cliente', x.name); } });
