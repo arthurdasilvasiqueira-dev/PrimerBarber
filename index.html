@@ -2116,6 +2116,33 @@ function agendaRow(a){
 /* ============ AGENDA ============ */
 /* Agenda em grade: horas na lateral, profissionais em colunas — como um
    quadro de horários de verdade. */
+// Horários que se sobrepõem (ex.: encaixe às 17:40 dentro do 17:00–18:00) ficam LADO A LADO na
+// coluna do profissional, em vez de um esconder o outro. Devolve { id: {faixa, total} }.
+function faixasSobrepostas(lista){
+  const itens = lista.map(a=>{
+    const [h,m] = String(a.time||'0:0').split(':').map(Number);
+    const ini = h*60 + m;
+    return { id:a.id, ini, fim: ini + Math.max(1, appointmentDuration(a)) };
+  }).sort((x,y)=>x.ini-y.ini || y.fim-x.fim);
+  const res = {};
+  let grupo = [], fimGrupo = -1;
+  const fechar = ()=>{
+    const fins = [];                       // fim de cada faixa já usada no grupo
+    grupo.forEach(it=>{
+      let f = fins.findIndex(fimFaixa=>fimFaixa <= it.ini);
+      if(f < 0){ f = fins.length; fins.push(0); }
+      fins[f] = it.fim; res[it.id] = { faixa:f };
+    });
+    grupo.forEach(it=>{ res[it.id].total = fins.length; });
+    grupo = []; fimGrupo = -1;
+  };
+  itens.forEach(it=>{
+    if(grupo.length && it.ini >= fimGrupo) fechar();
+    grupo.push(it); fimGrupo = Math.max(fimGrupo, it.fim);
+  });
+  if(grupo.length) fechar();
+  return res;
+}
 function agendaGridView(dateISO, profList){
   const appts = state.appointments.filter(a=>a.date===dateISO && a.status!=='cancelado');
   // Faixa de horários: cobre a jornada de todos os profissionais do dia
@@ -2158,7 +2185,10 @@ function agendaGridView(dateISO, profList){
   };
   const colFor = (prof)=>{
     const list = appts.filter(a=>a.professionalId===prof.id);
+    const faixas = faixasSobrepostas(list);
     return list.map(a=>{
+      const fx = faixas[a.id] || { faixa:0, total:1 };
+      const lado = fx.total > 1 ? `left:calc(${(fx.faixa*100/fx.total).toFixed(3)}% + 2px);width:calc(${(100/fx.total).toFixed(3)}% - 4px);` : 'left:3px;right:3px;';
       const [h,m] = a.time.split(':').map(Number);
       const svcs = appointmentServices(a);
       const dur = appointmentDuration(a);
@@ -2167,9 +2197,11 @@ function agendaGridView(dateISO, profList){
       const height = Math.max(26, (dur/60) * SLOT_H - 3);
       const done = a.status==='concluido';
       const veioDoLink = a.origem==='online';
-      return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}${veioDoLink?' (agendado pelo próprio cliente)':''}" style="position:absolute;left:3px;right:3px;top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${veioDoLink?'#4a9fd8':(done?'var(--ok)':'var(--gold)')};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
+      return `<div class="appt-block" data-appt="${a.id}" title="Clique para ver as opções — ${esc(a.client)}${veioDoLink?' (agendado pelo próprio cliente)':''}" style="position:absolute;${lado}top:${top}px;height:${height}px;background:${done?'var(--ok-bg)':'var(--panel-2)'};border:1px solid ${done?'var(--ok)':'var(--gold)'};border-left:3px solid ${veioDoLink?'#4a9fd8':(done?'var(--ok)':'var(--gold)')};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;z-index:3;transition:filter .12s;" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter='none'">
+        ${(height < 40 || fx.total > 1) ? `
+        <div style="font-size:11.5px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span class="font-mono" style="font-size:10px;color:var(--muted-2);">${a.time}</span> <b>${esc(a.client)}</b>${veioDoLink?` <span style="color:#4a9fd8;">${ICON.globe}</span>`:''}</div>` : `
         <div class="font-mono" style="font-size:10px;color:var(--muted-2);display:flex;align-items:center;gap:4px;">${a.time}${svcs.length?` · ${dur}min`:''}${veioDoLink?` <span style="color:#4a9fd8;" title="Agendado pelo próprio cliente, pelo link">${ICON.globe}</span>`:''}</div>
-        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.client)} ${clubStarBadge(a.client)}</div>`}
         ${height>44 && svcs.length?`<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(nomesServicos)}</div>`:''}
       </div>`;
     }).join('');
