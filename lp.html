@@ -136,6 +136,21 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 .celular .conteudo{display:grid;gap:36px;align-items:center;}
 .celular-img{max-width:300px;margin:0 auto;border-radius:34px;border:8px solid #1b1e23;box-shadow:0 30px 70px rgba(0,0,0,.6);background:#000;}
 
+/* preços */
+.planos{display:grid;gap:18px;grid-template-columns:1fr;max-width:860px;margin:0 auto;}
+.plano{background:var(--cartao);border:1px solid var(--borda);border-radius:18px;padding:30px 28px;display:flex;flex-direction:column;}
+.plano.destaque{border-color:rgba(227,192,120,.55);background:linear-gradient(160deg,#1a1c20,#15171b);box-shadow:0 20px 60px rgba(201,162,75,.12);position:relative;}
+.plano .etiqueta{position:absolute;top:-13px;left:28px;background:var(--ouro);color:#14110a;font-size:12.5px;font-weight:700;padding:5px 12px;border-radius:999px;}
+.plano h3{font-size:26px;margin-bottom:6px;}
+.plano .para{color:var(--suave);font-size:15.5px;margin:0 0 18px;}
+.plano .preco{font:600 46px/1 'Fraunces',serif;margin-bottom:4px;}
+.plano .preco small{font:500 16px/1 'Inter',sans-serif;color:var(--suave);}
+.plano .marcadores{margin:22px 0 26px;flex:1;}
+.plano .btn{width:100%;}
+.plano .btn.contorno{background:transparent;color:var(--texto);border:1px solid #3a3f47;box-shadow:none;}
+.plano .btn.contorno:hover{background:#1f2227;}
+.obs-planos{text-align:center;color:var(--suave);font-size:15px;margin-top:22px;}
+
 /* perguntas */
 .faq{max-width:780px;margin:0 auto;}
 .faq details{border-bottom:1px solid var(--borda);}
@@ -173,6 +188,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 
 @media (max-width:420px){ .topo-entrar{display:none;} }
 @media (min-width:720px){
+  .planos{grid-template-columns:1fr 1fr;}
   .dores-grade{grid-template-columns:1fr 1fr;}
   .cartoes{grid-template-columns:repeat(3,1fr);}
   .passos{grid-template-columns:repeat(3,1fr);}
@@ -289,7 +305,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
       <div class="recurso">
         <div>
           <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z"/></svg></div>
-          <h3>Clube de assinatura com cobrança automática</h3>
+          <h3>Clube de assinatura com cobrança automática <span style="font:600 14px/1 'Inter',sans-serif;color:var(--ouro-2);vertical-align:middle;border:1px solid rgba(227,192,120,.4);border-radius:999px;padding:5px 10px;">plano Pro</span></h3>
           <p>Crie seus planos mensais e deixe a cobrança no automático: o cliente paga por Pix, boleto ou cartão e o sistema mostra quem está em dia e quem atrasou.</p>
           <ul class="marcadores">
             <li>Página de planos pronta para o cliente assinar</li>
@@ -382,11 +398,53 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
     </div>
   </section>
 
-  <!-- 7. PERGUNTAS -->
+  <!-- 7. PREÇOS -->
+  <section class="secao" id="precos" style="padding-top:20px" aria-labelledby="t-precos">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Preços</span>
+        <h2 id="t-precos">Comece grátis. Depois, um valor fixo por mês.</h2>
+        <p>Os 14 dias de teste liberam tudo do plano Pro. No fim, você escolhe o plano.</p>
+      </div>
+      <div class="planos">
+        <div class="plano">
+          <h3>Basic</h3>
+          <p class="para">Para barbearia com até 4 profissionais</p>
+          <div class="preco">R$ 49,90 <small>/mês</small></div>
+          <ul class="marcadores">
+            <li>Até 4 profissionais</li>
+            <li>Agenda online com link próprio</li>
+            <li>WhatsApp automático: confirmação e lembrete</li>
+            <li>Caixa, comissões e relatórios</li>
+            <li>Login para cada barbeiro</li>
+          </ul>
+          <a class="btn contorno" href="./?cadastro=1" data-cta="plano-basic">Testar grátis</a>
+        </div>
+        <div class="plano destaque">
+          <span class="etiqueta">Mais completo</span>
+          <h3>Pro</h3>
+          <p class="para">Para quem quer crescer com clube de assinatura</p>
+          <div class="preco">R$ 109,90 <small>/mês</small></div>
+          <ul class="marcadores">
+            <li>Profissionais ilimitados</li>
+            <li>Tudo do Basic</li>
+            <li>Clube de assinatura com cobrança automática</li>
+            <li>Página de planos para o cliente assinar</li>
+            <li>Aviso de mensalidade vencendo e atrasada</li>
+          </ul>
+          <a class="btn" href="./?cadastro=1" data-cta="plano-pro">Testar grátis</a>
+        </div>
+      </div>
+      <p class="obs-planos">Sem fidelidade e sem taxa de adesão. O teste não pede cartão.</p>
+    </div>
+  </section>
+
+  <!-- 8. PERGUNTAS -->
   <section class="secao" style="padding-top:20px" aria-labelledby="t-faq">
     <div class="conteudo">
       <div class="secao-titulo"><h2 id="t-faq">Perguntas frequentes</h2></div>
       <div class="faq">
+        <details><summary>Quanto custa depois do teste?</summary><p>O plano Basic custa R$ 49,90 por mês (até 4 profissionais). O Pro custa R$ 109,90 por mês, com profissionais ilimitados e clube de assinatura. Você só escolhe e paga se quiser continuar depois dos 14 dias grátis.</p></details>
         <details><summary>Preciso cadastrar cartão para testar?</summary><p>Não. Você cria a conta só com e-mail e senha e usa tudo por 14 dias. Nada é cobrado no teste.</p></details>
         <details><summary>Preciso instalar algum programa?</summary><p>Não. O Primer Barber funciona no navegador do celular ou do computador. Se quiser, dá para adicionar na tela de início do celular, como um aplicativo.</p></details>
         <details><summary>Serve para barbearia pequena, com um barbeiro só?</summary><p>Serve. Você pode usar sozinho e, quando a equipe crescer, criar o acesso de cada barbeiro.</p></details>
@@ -397,7 +455,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
     </div>
   </section>
 
-  <!-- 8. CHAMADA FINAL -->
+  <!-- 9. CHAMADA FINAL -->
   <section class="final" aria-labelledby="t-final">
     <div class="conteudo">
       <h2 id="t-final">Sua barbearia organizada <em class="ouro">a partir de hoje</em></h2>

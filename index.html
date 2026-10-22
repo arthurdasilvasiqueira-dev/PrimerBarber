@@ -244,6 +244,8 @@
   .barra-cel{display:none;}
   /* agenda: horário que dá para segurar e arrastar */
   .appt-block.arrastavel{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  .so-toque{display:none;}
+  @media (hover:none) and (pointer:coarse){ .so-mouse{display:none;} .so-toque{display:inline;} }
   .appt-block.arrastando{z-index:30 !important;cursor:grabbing !important;box-shadow:0 14px 30px -8px rgba(0,0,0,.55) !important;
     outline:2px solid var(--gold);transform:scale(1.03);opacity:.95;transition:none !important;}
 
@@ -496,8 +498,9 @@ const APP_LOGO_FULL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAjAAAAGhCAY
 
 // Limites de cada plano
 const PLAN_LIMITS = {
-  basic: { maxProfessionals: 4, club: false, label: 'Basic' },
-  pro:   { maxProfessionals: Infinity, club: true, label: 'Pro' },
+  // preço mensal: o MESMO dos links do Stripe (a cobrança de verdade é feita lá)
+  basic: { maxProfessionals: 4, club: false, label: 'Basic', preco: '49,90' },
+  pro:   { maxProfessionals: Infinity, club: true, label: 'Pro', preco: '109,90' },
 };
 function planOf(shop){
   // Durante o período de teste grátis, libera tudo (nível Pro) — a pessoa
@@ -2016,8 +2019,8 @@ function viewDashboard(){
   const faturamentoServicos = done.reduce((a,ap)=>a+valorRealAtendimento(ap),0);
   const atendimentosClube = done.filter(ap=>valorRealAtendimento(ap) <= 0).length;
   const commissionsPending = isProfView
-    ? commissionOwed(myId).owed
-    : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed,0);
+    ? commissionOwed(myId).owed + bonusProdutos(myId).owed
+    : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed+bonusProdutos(p.id).owed,0);
   const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
   const overdueMembers = assinantesEmAtraso().length;
   const met = metricasClube(todayISO().slice(0,7));
@@ -2145,6 +2148,7 @@ function faixasSobrepostas(lista){
 }
 function agendaGridView(dateISO, profList){
   const appts = state.appointments.filter(a=>a.date===dateISO && a.status!=='cancelado');
+  const podeArrastarAlgum = appts.some(podeArrastarHorario);
   // Faixa de horários: cobre a jornada de todos os profissionais do dia
   let minH = 23, maxH = 1;
   profList.forEach(p=>{
@@ -2208,6 +2212,7 @@ function agendaGridView(dateISO, profList){
   };
 
   return `
+    ${podeArrastarAlgum ? `<div style="font-size:12px;color:var(--muted-2);margin:-8px 0 8px;">Dica: para mudar a hora ou o barbeiro, <span class="so-mouse">clique e arraste o horário</span><span class="so-toque">segure o horário por um instante e arraste</span>.</div>` : ''}
     <div class="card agenda-grade" data-min-h="${minH}" data-max-h="${maxH}" data-slot-h="${SLOT_H}" data-date="${dateISO}" style="padding:0;overflow-x:auto;margin-bottom:20px;">
       <div style="min-width:${120 + profList.length*170}px;">
         <div style="display:flex;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:2;">
@@ -2279,25 +2284,33 @@ function ligarArrastarAgenda(view){
     let timer = null, ativo = false, inicio = null, colOriginal = null, topoOriginal = 0, deslocY = 0, destino = null;
     const dur = appointmentDuration(a);
     const cancelar = ()=>{ clearTimeout(timer); timer = null; };
+    const comecar = ()=>{
+      timer = null;
+      ativo = true; agendaArrastando = true;
+      colOriginal = bloco.parentElement; topoOriginal = bloco.offsetTop;
+      deslocY = inicio.y - bloco.getBoundingClientRect().top;
+      try { bloco.setPointerCapture(inicio.id); } catch(err){}
+      bloco.classList.add('arrastando');
+      if(inicio.toque && navigator.vibrate) try { navigator.vibrate(15); } catch(err){}
+    };
     bloco.addEventListener('pointerdown', e=>{
       if(e.button !== undefined && e.button !== 0) return;
-      inicio = { x:e.clientX, y:e.clientY, id:e.pointerId };
+      inicio = { x:e.clientX, y:e.clientY, id:e.pointerId, toque: e.pointerType === 'touch' };
       cancelar();
-      timer = setTimeout(()=>{
-        // segurou: começa a arrastar
-        ativo = true; agendaArrastando = true;
-        colOriginal = bloco.parentElement; topoOriginal = bloco.offsetTop;
-        deslocY = inicio.y - bloco.getBoundingClientRect().top;
-        try { bloco.setPointerCapture(inicio.id); } catch(err){}
-        bloco.classList.add('arrastando');
-        if(navigator.vibrate) try { navigator.vibrate(15); } catch(err){}
-      }, 300);
+      // dedo: segura um instante (arrastar rápido continua rolando a tela)
+      if(inicio.toque) timer = setTimeout(comecar, 250);
+      // mouse: segue o ponteiro mesmo se ele sair de cima do horário logo no começo
+      else try { bloco.setPointerCapture(e.pointerId); } catch(err){}
     });
     bloco.addEventListener('pointermove', e=>{
       if(!ativo){
-        // mexeu antes de completar o "segurar": é rolagem/clique normal
-        if(inicio && Math.hypot(e.clientX-inicio.x, e.clientY-inicio.y) > 8) cancelar();
-        return;
+        if(!inicio) return;
+        const andou = Math.hypot(e.clientX-inicio.x, e.clientY-inicio.y);
+        // mouse: clicou e arrastou, já começa (sem precisar segurar parado)
+        if(!inicio.toque && (e.buttons & 1) && andou > 5) comecar();
+        // dedo: mexeu antes de completar o "segurar" = rolagem normal (tolera tremidinha)
+        else if(inicio.toque && andou > 14) cancelar();
+        if(!ativo) return;
       }
       e.preventDefault();
       // coluna embaixo do dedo/mouse
@@ -3038,6 +3051,9 @@ function concludeAppt(id){
     showToast(lista.length>1
       ? `Atendimento concluído — ${BRL(total)} em ${lista.length} formas de pagamento.`
       : `Atendimento concluído — ${BRL(total)} em ${methodLabelPay(lista[0].method)}.`);
+    // vendeu pomada, shampoo...? registra já, ligado ao barbeiro do atendimento (gera o bônus dele)
+    if((state.products||[]).some(p=>!p.arquivado && Number(p.price)>0 && Number(p.stock)>0))
+      setTimeout(()=>venderProdutosModal({ apptId:id, professionalId:appt.professionalId, cliente:appt.client, posAtendimento:true }), 250);
   };
 
   const planoNome = member ? (state.subscriptionPlans.find(p=>p.id===member.planId)?.name || '') : '';
@@ -4470,7 +4486,7 @@ function renderComissoes(view){
   const pendingWithdrawals = state.withdrawalRequests.filter(w=>w.status==='pendente').slice().reverse();
 
   view.innerHTML = `
-    ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · pote do clube pago no fechamento mensal')}
+    ${pageHeader('Comissões', 'Serviços avulsos pagos a qualquer momento · bônus de produtos pago à parte · pote do clube pago no fechamento mensal')}
     ${periodSelectorHTML}
     ${(!isCurrentMonth && !closed && isOwnerLevel()) ? `
     <div class="card" style="padding:12px 16px;margin-bottom:16px;border-color:var(--warn);font-size:12px;color:var(--muted);line-height:1.6;">
@@ -4589,6 +4605,15 @@ function renderComissoes(view){
                 <span style="font-size:11px;color:var(--muted-2);">${closed?'já fechado':'incluído no fechamento mensal'}</span>
               </div>
             </div>
+            ${(()=>{ const bp = bonusProdutos(p.id); if(bp.earned<=0 && bp.paid<=0) return '';
+              return `<div style="flex:1;min-width:240px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+              <div>
+                <div style="font-size:11.5px;color:var(--muted-2);">Bônus de produtos</div>
+                <div class="font-mono" style="font-size:15px;color:${bp.owed<0?'var(--bad)':(bp.owed>0?'var(--warn)':'var(--muted)')};">${BRL(bp.owed)} <span style="font-size:11px;color:var(--muted-2);">${bp.owed<0?'pago a mais (venda estornada)':'a pagar'}</span></div>
+                <div style="font-size:11px;color:var(--muted-2);margin-top:3px;">${BRL(bp.earned)} em vendas${bp.paid>0?` − ${BRL(bp.paid)} já pago`:''}</div>
+              </div>
+              ${isOwnerLevel() ? `<button class="btn btn-gold" style="padding:8px 12px;" ${bp.owed<=0?'disabled':''} data-pay-produto="${p.id}">Pagar bônus</button>` : ''}
+            </div>`; })()}
           </div>
         </div>`;
       }).join('')}
@@ -4722,6 +4747,19 @@ function renderComissoes(view){
       </table>
     `}
 
+    ${state.commissionPayments.some(c=>c.source==='produto') ? `
+      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Histórico de pagamentos de bônus de produtos</div>
+      <table style="margin-bottom:26px;">
+        <thead><tr><th>Data</th><th>Profissional</th><th>Valor pago</th></tr></thead>
+        <tbody>
+          ${state.commissionPayments.filter(c=>c.source==='produto' && (isOwnerLevel() || c.professionalId===userSession.professionalId)).slice().reverse().map(c=>`<tr>
+            <td>${new Date(c.date).toLocaleDateString('pt-BR')}</td>
+            <td>${profName(c.professionalId)}</td>
+            <td class="font-mono">${BRL(c.amount)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : ''}
+
     <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Histórico de fechamentos do pote</div>
     ${state.commissionPayments.filter(c=>c.source==='pote').length===0 ? emptyState('Nenhum fechamento mensal do clube realizado ainda.') : `
       <table>
@@ -4739,6 +4777,7 @@ function renderComissoes(view){
   `;
   view.querySelector('#btn-congelar')?.addEventListener('click', ()=>congelarValoresAntigos(view));
   view.querySelectorAll('[data-pay-service]').forEach(b=>b.addEventListener('click', ()=>payServiceCommission(b.dataset.payService)));
+  view.querySelectorAll('[data-pay-produto]').forEach(b=>b.addEventListener('click', ()=>payProdutoBonus(b.dataset.payProduto)));
   view.querySelectorAll('[data-vale]').forEach(b=>b.addEventListener('click', ()=>valeModal(b.dataset.vale, view)));
   view.querySelector('#btn-close-month')?.addEventListener('click', closeClubMonthModal);
   view.querySelector('#btn-reopen-month')?.addEventListener('click', reopenClubMonthModal);
@@ -7991,7 +8030,7 @@ function renderEstoque(view){
     <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${aba('produtos','Produtos')}${aba('vendas','Vendas ('+(state.sales||[]).length+')')}${aba('movimentos','Movimentações')}</div>
     ${estoqueVer==='produtos' ? (produtos.length===0 ? emptyState('Nenhum produto cadastrado.') : `
       <table>
-        <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th></th></tr></thead>
+        <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th>Bônus</th><th></th></tr></thead>
         <tbody>
         ${produtos.map(p=>`<tr>
           <td style="font-weight:500;">${esc(p.name)}</td>
@@ -7999,6 +8038,7 @@ function renderEstoque(view){
           <td class="font-mono" style="color:var(--muted);">${p.minStock}</td>
           <td class="font-mono" style="color:var(--muted);">${BRL(p.cost)}</td>
           <td class="font-mono">${p.price>0?BRL(p.price):'—'}</td>
+          <td class="font-mono" style="color:var(--muted);">${Number(p.comissaoPct)>0?`${p.comissaoPct}%`:'—'}</td>
           <td style="text-align:right;white-space:nowrap;">
             ${p.price>0 && p.stock>0 ? `<button class="btn btn-gold" style="padding:6px 10px;font-size:12px;" data-sell-product="${p.id}">${ICON.cash} Vender</button>` : ''}
             <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" data-mov-product="${p.id}">Movimentar</button>
@@ -8010,12 +8050,13 @@ function renderEstoque(view){
       </table>`) : ''}
     ${estoqueVer==='vendas' ? (vendas.length===0 ? emptyState('Nenhuma venda registrada ainda.') : `
       <table>
-        <thead><tr><th>Quando</th><th>Itens</th><th>Cliente</th><th>Total</th><th>Pagamento</th><th></th></tr></thead>
+        <thead><tr><th>Quando</th><th>Itens</th><th>Cliente</th><th>Vendeu</th><th>Total</th><th>Pagamento</th><th></th></tr></thead>
         <tbody>
         ${vendas.map(v=>`<tr style="${v.status==='estornada'?'opacity:.55;':''}">
           <td class="font-mono" style="font-size:12px;">${new Date(v.at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
           <td>${(v.itens||[]).map(i=>`${i.qtd}× ${esc(i.nome)}`).join(', ')}</td>
           <td>${esc(v.cliente||'—')}</td>
+          <td>${v.professionalId ? `${esc(profName(v.professionalId))}${Number(v.bonus)>0?`<div style="font-size:11px;color:var(--muted-2);">bônus ${BRL(v.bonus)}</div>`:''}` : '—'}</td>
           <td class="font-mono">${BRL(v.total)}</td>
           <td>${esc(methodLabelPay(v.method))}</td>
           <td style="text-align:right;">${v.status==='estornada' ? '<span class="pill pill-muted">Estornada</span>'
@@ -8052,24 +8093,72 @@ function renderEstoque(view){
   }));
 }
 
-function sellProductModal(prod){
-  if(!prod) return;
+/* ============ VENDA DE PRODUTO + BÔNUS DO BARBEIRO ============
+   Uma venda pode ter vários produtos e, se tiver "quem vendeu", gera o bônus
+   do barbeiro: % do produto sobre o valor vendido (o desconto é dividido entre
+   os produtos na proporção). As MESMAS contas são refeitas no servidor quando
+   quem grava é o barbeiro (_team_merge_vendas) — não mude uma sem a outra. */
+const r2 = v => Math.round((Number(v)||0)*100)/100;
+function montarItensVenda(itens, descontoPedido){
+  const linhas = itens.map(i=>({ ...i, bruto: r2(i.precoUnit * i.qtd) }));
+  const bruto = r2(linhas.reduce((t,i)=>t+i.bruto, 0));
+  const desconto = r2(Math.max(0, Math.min(Number(descontoPedido)||0, bruto)));
+  const total = r2(bruto - desconto);
+  let acum = 0, bonus = 0;
+  const saida = linhas.map((i, idx)=>{
+    const valor = idx===linhas.length-1 ? r2(total - acum) : (bruto>0 ? r2(i.bruto/bruto*total) : 0);
+    acum += valor;
+    const b = r2(valor * (Number(i.comissaoPct)||0) / 100);
+    bonus += b;
+    const { bruto:_, ...resto } = i;
+    return { ...resto, valor, bonus: b };
+  });
+  return { itens: saida, bruto, desconto, total, bonus: r2(bonus) };
+}
+// bônus de produtos do barbeiro: o que ganhou nas vendas (estornadas não contam) − o que já foi pago
+function bonusProdutos(profId){
+  const earned = r2((state.sales||[]).filter(v=>v.status==='ok' && v.professionalId===profId).reduce((t,v)=>t+(Number(v.bonus)||0), 0));
+  const paid = r2((state.commissionPayments||[]).filter(c=>c.source==='produto' && c.professionalId===profId).reduce((t,c)=>t+(Number(c.amount)||0), 0));
+  return { earned, paid, owed: r2(earned - paid) };
+}
+
+function sellProductModal(prod){ if(prod) venderProdutosModal({ produtoId: prod.id }); }
+
+// opts: { produtoId, apptId, professionalId, cliente, posAtendimento }
+function venderProdutosModal(opts = {}){
   if(!openSession()){ showToast('Abra o caixa antes de registrar vendas.'); route='caixa'; render(); return; }
   const vendaId = uid();   // identidade desta venda: dois toques não vendem duas vezes
+  const disponiveis = ()=>(state.products||[]).filter(p=>!p.arquivado && Number(p.price)>0 && Number(p.stock)>0);
+  if(!disponiveis().length){ if(!opts.posAtendimento) showToast('Nenhum produto com estoque para vender.'); return; }
+  const souBarbeiro = !isOwnerLevel() && userSession.role!=='recepcionista';
+  const vendedorFixo = souBarbeiro ? userSession.professionalId : null;
   const clientes = state.clients.filter(c=>!c.arquivado).slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const carrinho = [];   // { productId, qtd }
+  if(opts.produtoId) carrinho.push({ productId: opts.produtoId, qtd: 1 });
+  const titulo = opts.posAtendimento ? `Vendeu algum produto${opts.cliente?` para ${esc(opts.cliente)}`:''}?` : 'Vender produto';
   openModal(`
     <div style="padding:22px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div class="font-display" style="font-size:19px;font-weight:600;">Vender produto</div>
+        <div class="font-display" style="font-size:19px;font-weight:600;">${titulo}</div>
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">${esc(prod.name)} · ${prod.stock} em estoque</div>
+      ${opts.posAtendimento ? `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;">Atendimento concluído. Se vendeu pomada, shampoo etc., registre aqui: entra no caixa e no bônus do barbeiro.</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label>Quantidade</label><input id="sp-qty" type="number" min="1" max="${prod.stock}" value="1" style="width:100%;"></div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="flex:3;"><label>Produto</label><select id="sp-prod" style="width:100%;">${disponiveis().map(p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)} (${p.stock} em estoque)</option>`).join('')}</select></div>
+          <div style="flex:1;"><label>Qtd</label><input id="sp-qty" type="number" min="1" value="1" style="width:100%;"></div>
+          <button class="btn btn-ghost" id="sp-add" type="button" style="padding:10px 12px;">${ICON.plus}</button>
+        </div>
+        <div id="sp-itens" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <div><label>Quem vendeu (ganha o bônus do produto)</label>
+          ${vendedorFixo ? `<div style="font-size:14px;padding:6px 0;"><b>${esc(profName(vendedorFixo))}</b> (você)</div>`
+            : `<select id="sp-vendedor" style="width:100%;"><option value="">Ninguém — venda do balcão, sem bônus</option>
+                ${state.professionals.map(p=>`<option value="${p.id}" ${opts.professionalId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`}
+        </div>
         <div><label>Cliente (opcional — para aplicar desconto do clube)</label>
           <select id="sp-client" style="width:100%;">
             <option value="">Sem cliente identificado</option>
-            ${clientes.map(cl=>`<option value="${esc(cl.name)}">${esc(cl.name)}</option>`).join('')}
+            ${clientes.map(cl=>`<option value="${esc(cl.name)}" ${opts.cliente && cl.name.trim().toLowerCase()===opts.cliente.trim().toLowerCase()?'selected':''}>${esc(cl.name)}</option>`).join('')}
           </select>
         </div>
         <div id="sp-total" class="card" style="padding:14px 16px;background:var(--panel-2);"></div>
@@ -8077,14 +8166,19 @@ function sellProductModal(prod){
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           ${PAYMENT_METHODS.map(m=>`<button class="btn btn-ghost sp-pay" data-method="${m.id}" style="justify-content:center;padding:13px 10px;font-size:13px;">${m.label}</button>`).join('')}
         </div>
+        ${opts.posAtendimento ? `<button class="btn btn-ghost" id="sp-nao" style="justify-content:center;">Não vendeu nada</button>` : ''}
       </div>
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#sp-nao')?.addEventListener('click', closeModal);
     const calc = ()=>{
-      const qty = Math.max(1, Math.min(prod.stock, parseInt(root.querySelector('#sp-qty').value)||1));
       const nome = root.querySelector('#sp-client').value;
-      const bruto = prod.price * qty;
+      const vendedor = vendedorFixo || root.querySelector('#sp-vendedor')?.value || '';
+      const itens = carrinho.map(c=>{ const p = state.products.find(x=>x.id===c.productId);
+        return p ? { productId:p.id, nome:p.name, qtd:c.qtd, precoUnit:Number(p.price)||0, custoUnit:Number(p.cost)||0,
+                     comissaoPct: vendedor ? Math.max(0, Math.min(100, Number(p.comissaoPct)||0)) : 0 } : null; }).filter(Boolean);
+      const brutoPrevio = r2(itens.reduce((t,i)=>t+r2(i.precoUnit*i.qtd),0));
       let desconto = 0, nota = '';
       const m = nome ? clubMemberForClient(nome) : null;
       // FASE 6: mesma regra de "em dia" do resto do sistema (com tolerância)
@@ -8093,54 +8187,114 @@ function sellProductModal(prod){
         if(plan && !planValidOnDate(plan, todayISO())){
           nota = `${planDaysLabel(plan.validDays)} — hoje o desconto não vale.`;
         } else if(plan && plan.discountPercent>0){
-          desconto = Math.round(bruto * (plan.discountPercent/100) * 100)/100;
+          desconto = r2(brutoPrevio * (plan.discountPercent/100));
           nota = `Desconto de assinante: ${plan.discountPercent}% (${esc(plan.name)})`;
         }
       } else if(m){
         nota = m.status==='pausado' ? 'Assinatura pausada — sem desconto.' : 'Assinante em atraso — sem desconto.';
       }
-      const total = Math.round((bruto - desconto)*100)/100;
+      const venda = montarItensVenda(itens, desconto);
+      root.querySelector('#sp-itens').innerHTML = carrinho.map((c,idx)=>{ const p = state.products.find(x=>x.id===c.productId);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13.5px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+          <span>${c.qtd}× ${esc(p?.name||'')}</span>
+          <span style="display:flex;align-items:center;gap:8px;"><span class="font-mono">${BRL(r2((Number(p?.price)||0)*c.qtd))}</span>
+          <button class="btn btn-ghost sp-del" data-idx="${idx}" type="button" style="padding:4px 6px;">${ICON.x}</button></span></div>`; }).join('')
+        || `<div style="font-size:12.5px;color:var(--muted-2);">Escolha o produto e toque em + para adicionar.</div>`;
+      root.querySelectorAll('.sp-del').forEach(b=>b.onclick = ()=>{ carrinho.splice(Number(b.dataset.idx),1); calc(); });
       root.querySelector('#sp-total').innerHTML = `
-        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);"><span>${qty}× ${esc(prod.name)}</span><span class="font-mono">${BRL(bruto)}</span></div>
-        ${desconto>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto</span><span class="font-mono">− ${BRL(desconto)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);"><span>Produtos</span><span class="font-mono">${BRL(venda.bruto)}</span></div>
+        ${venda.desconto>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto</span><span class="font-mono">− ${BRL(venda.desconto)}</span></div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
           <span style="font-size:13px;font-weight:600;">Total</span>
-          <span class="font-mono" style="font-size:21px;color:var(--gold-bright);">${BRL(total)}</span>
+          <span class="font-mono" style="font-size:21px;color:var(--gold-bright);">${BRL(venda.total)}</span>
         </div>
-        ${nota?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:8px;">${nota}</div>`:''}
-      `;
-      return {qty, total, nome, desconto, bruto};
+        ${vendedor && venda.bonus>0 ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">Bônus de ${esc(profName(vendedor))}: <b class="font-mono">${BRL(venda.bonus)}</b></div>` : ''}
+        ${nota?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:8px;">${nota}</div>`:''}`;
+      root.querySelectorAll('.sp-pay').forEach(b=>b.disabled = !carrinho.length);
+      return { venda, nome, vendedor };
     };
-    root.querySelector('#sp-qty').addEventListener('input', calc);
+    root.querySelector('#sp-add').addEventListener('click', ()=>{
+      const pid = root.querySelector('#sp-prod').value;
+      const p = state.products.find(x=>x.id===pid); if(!p) return;
+      const qtd = Math.max(1, Math.min(50, parseInt(root.querySelector('#sp-qty').value)||1));
+      const ja = carrinho.find(c=>c.productId===pid);
+      const noCarrinho = ja ? ja.qtd : 0;
+      if(noCarrinho + qtd > (Number(p.stock)||0)){ showToast(`Só tem ${p.stock} de ${p.name} em estoque.`); return; }
+      if(ja) ja.qtd += qtd; else carrinho.push({ productId: pid, qtd });
+      root.querySelector('#sp-qty').value = 1;
+      calc();
+    });
     root.querySelector('#sp-client').addEventListener('change', calc);
+    root.querySelector('#sp-vendedor')?.addEventListener('change', calc);
     calc();
     root.querySelectorAll('.sp-pay').forEach(b=>b.addEventListener('click', async ()=>{
-      const {qty, total, nome, desconto, bruto} = calc();
+      const { venda, nome, vendedor } = calc();
+      if(!venda.itens.length) return;
       const method = b.dataset.method;
       root.querySelectorAll('.sp-pay').forEach(x=>x.disabled = true);
       let semEstoque = false;
       const r = await update(s=>{
         semEstoque = false;
         if((s.sales||[]).some(v=>v.id===vendaId)) return;           // já registrada
-        const p = s.products.find(x=>x.id===prod.id);
         const sess = s.cashSessions.find(x=>x.status==='aberto');
-        if(!p || !sess) return;
-        if((Number(p.stock)||0) < qty){ semEstoque = true; return; }  // outro aparelho vendeu antes
+        if(!sess) return;
+        for(const i of venda.itens){
+          const p = s.products.find(x=>x.id===i.productId);
+          if(!p || (Number(p.stock)||0) < i.qtd){ semEstoque = true; return; }  // outro aparelho vendeu antes
+        }
         const entryId = uid();
-        movimentarEstoque(s, p.id, -qty, 'venda', { vendaId });
+        venda.itens.forEach(i=>movimentarEstoque(s, i.productId, -i.qtd, 'venda', { vendaId }));
+        const nomes = venda.itens.map(i=>`${i.qtd}× ${i.nome}`).join(', ');
         sess.entries.push({
           id:entryId, type:'entrada', method, vendaId,
-          desc:`${qty}× ${prod.name}${nome?' — '+nome:''}${desconto>0?' (com desconto do clube)':''}`,
-          amount: total, time:new Date().toTimeString().slice(0,5), auto:false,
+          desc:`${nomes}${nome?' — '+nome:''}${venda.desconto>0?' (com desconto do clube)':''}`,
+          amount: venda.total, time:new Date().toTimeString().slice(0,5), auto:false,
         });
         if(!Array.isArray(s.sales)) s.sales = [];
-        s.sales.push({ id:vendaId, at:new Date().toISOString(), itens:[{ productId:p.id, nome:p.name, qtd:qty, precoUnit:Number(p.price)||0, custoUnit:Number(p.cost)||0 }],
-          bruto, desconto, total, method, cliente:nome||'', caixaId:sess.id, caixaEntryId:entryId, status:'ok', por:quemEstaLogado() });
+        s.sales.push({ id:vendaId, at:new Date().toISOString(), itens:venda.itens, bruto:venda.bruto, desconto:venda.desconto,
+          total:venda.total, bonus:venda.bonus, method, cliente:nome||'', professionalId: vendedor || null, apptId: opts.apptId || null,
+          caixaId:sess.id, caixaEntryId:entryId, status:'ok', por:quemEstaLogado() });
       });
       closeModal();
       if(semEstoque){ showToast('Estoque insuficiente: outro aparelho vendeu antes. Nada foi registrado.'); return; }
-      if(r==='ok') showToast(`Venda registrada — ${BRL(total)} em ${methodLabelPay(method)}.`);
+      if(r==='ok') showToast(`Venda registrada — ${BRL(venda.total)} em ${methodLabelPay(method)}.`);
     }));
+  });
+}
+
+function payProdutoBonus(profId){
+  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode pagar o bônus.'); return; }
+  const b = bonusProdutos(profId);
+  if(b.owed<=0){ showToast('Não há bônus de produtos pendente para este profissional.'); return; }
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Pagar bônus de produtos</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:13.5px;color:var(--muted);margin-bottom:6px;">${profName(profId)} · pendente <span class="font-mono" style="color:var(--warn);">${BRL(b.owed)}</span></div>
+      <div style="font-size:12px;color:var(--muted-2);margin-bottom:14px;">Separado da comissão de serviços e do pote do clube.</div>
+      <label>Valor a pagar agora</label>
+      <input id="f-amount" type="number" step="0.01" min="0" max="${b.owed}" value="${b.owed.toFixed(2)}" style="width:100%;margin-bottom:16px;">
+      <button class="btn btn-gold" id="f-submit" style="width:100%;justify-content:center;">Confirmar pagamento</button>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#f-submit').addEventListener('click', ()=>{
+      const amount = r2(parseFloat(root.querySelector('#f-amount').value));
+      if(!(amount>0)){ showToast('Informe um valor válido.'); return; }
+      if(amount > b.owed + 0.001){ showToast(`O máximo pendente é ${BRL(b.owed)}.`); return; }
+      root.querySelector('#f-submit').disabled = true;
+      // a chave é o "retrato" do que já estava pago quando a tela abriu: segundo toque ou outro aparelho é recusado
+      const chave = `produto:${profId}:${Math.round(b.paid*100)}`;
+      update(s=>{
+        if(s.commissionPayments.some(x=>x.chave===chave)) return;
+        s.commissionPayments.push({id:uid(), chave, professionalId:profId, amount, date:new Date().toISOString(), source:'produto', period:mesReal()});
+        registrarAuditoria(s, 'Pagou bônus de produtos', `${profName(profId)} — ${BRL(amount)}`);
+      });
+      closeModal();
+      showToast('Bônus de produtos pago.');
+    });
   });
 }
 
@@ -8242,6 +8396,8 @@ function productModal(existing){
           <div style="flex:1;"><label>Custo (R$)</label><input id="f-cost" type="number" step="0.01" min="0" value="${existing?.cost??0}" style="width:100%;"></div>
           <div style="flex:1;"><label>Preço de venda (R$)</label><input id="f-price" type="number" step="0.01" min="0" value="${existing?.price??0}" style="width:100%;"></div>
         </div>
+        <div><label>Bônus do barbeiro na venda (%)</label><input id="f-comissao-pct" type="number" step="0.5" min="0" max="100" value="${existing?.comissaoPct??0}" style="width:100%;">
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Ex.: 10% — pomada vendida por R$ 40 dá R$ 4 de bônus para quem vendeu. Pago separado da comissão de serviços.</div></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
       </div>
     </div>
@@ -8253,6 +8409,7 @@ function productModal(existing){
       const data = {
         name, minStock: parseInt(root.querySelector('#f-min').value)||0,
         cost: parseFloat(root.querySelector('#f-cost').value)||0, price: parseFloat(root.querySelector('#f-price').value)||0,
+        comissaoPct: Math.max(0, Math.min(100, parseFloat(root.querySelector('#f-comissao-pct').value)||0)),
       };
       const inicial = isEdit ? 0 : Math.max(0, parseInt(root.querySelector('#f-stock').value)||0);
       const novoId = uid();
@@ -8655,6 +8812,7 @@ function resumoPeriodo(de, ate){
   const vendas = (state.sales||[]).filter(v=>v.status==='ok' && dentro(v.at));
   const produtos = vendas.reduce((t,v)=>t+(Number(v.total)||0),0);
   const custoProdutos = vendas.reduce((t,v)=>t+(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
+  const bonusProdutosPeriodo = vendas.reduce((t,v)=>t+(Number(v.bonus)||0),0);
   const faltas = (state.appointments||[]).filter(a=>a.status==='faltou' && dentro(a.date)).length;
   const porProf = state.professionals.map(p=>{
     const aps = concl.filter(a=>a.professionalId===p.id);
@@ -8673,8 +8831,8 @@ function resumoPeriodo(de, ate){
     pags.forEach(pg=>{ const n = methodLabelPay(pg.method); porForma[n] = (porForma[n]||0) + (Number(pg.amount)||0); });
   });
   return { de, ate, atendimentos:concl.length, servicos, ticket: concl.length ? servicos/concl.length : 0,
-           clube, comissoes, despesas, faltas, produtos, custoProdutos, margemProdutos: produtos - custoProdutos,
-           resultado: servicos + clube + produtos - custoProdutos - comissoes - despesas,
+           clube, comissoes, despesas, faltas, produtos, custoProdutos, margemProdutos: produtos - custoProdutos - bonusProdutosPeriodo, bonusProdutos: bonusProdutosPeriodo,
+           resultado: servicos + clube + produtos - custoProdutos - bonusProdutosPeriodo - comissoes - despesas,
            porProf, porServico:Object.values(porServico).sort((a,b)=>b.valor-a.valor),
            porForma:Object.entries(porForma).map(([nome,valor])=>({nome,valor})).sort((a,b)=>b.valor-a.valor) };
 }
@@ -8693,7 +8851,7 @@ function compararMeses(ymA, ymB){
 function csvDoPeriodo(r){
   const L = [['Relatório Primer Barber', `${r.de} a ${r.ate}`], [],
     ['Resumo','Valor'], ['Atendimentos concluídos', r.atendimentos], ['Faturamento de serviços', r.servicos.toFixed(2)], ['Ticket médio', r.ticket.toFixed(2)],
-    ['Clube (recebido)', r.clube.toFixed(2)], ['Produtos vendidos', r.produtos.toFixed(2)], ['Custo dos produtos vendidos', r.custoProdutos.toFixed(2)], ['Comissões geradas', r.comissoes.toFixed(2)], ['Despesas pagas', r.despesas.toFixed(2)], ['Resultado', r.resultado.toFixed(2)], ['Faltas', r.faltas], [],
+    ['Clube (recebido)', r.clube.toFixed(2)], ['Produtos vendidos', r.produtos.toFixed(2)], ['Custo dos produtos vendidos', r.custoProdutos.toFixed(2)], ['Bônus de produtos (barbeiros)', r.bonusProdutos.toFixed(2)], ['Comissões geradas', r.comissoes.toFixed(2)], ['Despesas pagas', r.despesas.toFixed(2)], ['Resultado', r.resultado.toFixed(2)], ['Faltas', r.faltas], [],
     ['Profissional','Atendimentos','Faturamento','Comissão'], ...r.porProf.map(x=>[x.nome, x.qtd, x.bruto.toFixed(2), x.comissao.toFixed(2)]), [],
     ['Serviço','Quantidade','Valor'], ...r.porServico.map(x=>[x.nome, x.qtd, x.valor.toFixed(2)]), [],
     ['Forma de pagamento','Valor'], ...r.porForma.map(x=>[x.nome, x.valor.toFixed(2)])];
@@ -8733,7 +8891,7 @@ function blocoComparativo(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
         ${statCard('Faturamento', BRL(r.servicos), r.atendimentos+' atendimento(s)', 'ok')}
         ${statCard('Clube (recebido)', BRL(r.clube), 'no período', 'ok')}
-        ${statCard('Produtos', BRL(r.produtos), 'margem '+BRL(r.margemProdutos), 'ok')}
+        ${statCard('Produtos', BRL(r.produtos), 'margem '+BRL(r.margemProdutos)+(r.bonusProdutos>0?' (já sem o bônus de '+BRL(r.bonusProdutos)+')':''), 'ok')}
         ${statCard('Comissões', BRL(r.comissoes), 'geradas no período', 'warn')}
         ${statCard('Despesas', BRL(r.despesas), 'pagas no período', 'warn')}
         ${statCard('Resultado', BRL(r.resultado), 'serviços + clube + margem de produtos − comissões − despesas', r.resultado>=0?'ok':'bad')}
@@ -9922,7 +10080,8 @@ function resultadoDoMes(ym){
     .reduce((t,e)=>t+Number(e.amount),0);
   // FASE 6: margem das vendas de produto do mês (venda − custo; estornadas não contam)
   const vendasMes = (state.sales||[]).filter(v=>v.status==='ok' && String(v.at||'').startsWith(ym));
-  const margemProdutos = vendasMes.reduce((t,v)=>t+(Number(v.total)||0)-(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
+  // margem já sem o bônus do barbeiro que vendeu
+  const margemProdutos = vendasMes.reduce((t,v)=>t+(Number(v.total)||0)-(Number(v.bonus)||0)-(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
   return { receitaServicos, receitaClube, comissoes, despesas, margemProdutos,
            resultado: receitaServicos + receitaClube + margemProdutos - comissoes - despesas };
 }
@@ -12135,7 +12294,8 @@ function planPickerHtml(shop){
     return `
       <div class="card" style="padding:18px 20px;margin-bottom:12px;${isPro?'border-color:rgba(201,162,75,.4);background:linear-gradient(160deg, var(--panel), var(--panel-2));':''}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <div class="font-display" style="font-size:17px;font-weight:600;">${limits.label}</div>
+          <div><span class="font-display" style="font-size:17px;font-weight:600;">${limits.label}</span>
+            <span style="margin-left:8px;font-size:15px;font-weight:700;">R$ ${limits.preco}<span style="font-size:12px;font-weight:500;color:var(--muted);">/mês</span></span></div>
           ${shop.plan===planKey && shop.subscription_status==='active' ? `<span class="pill pill-ok">Plano atual</span>` : isPro ? `<span class="pill" style="background:rgba(201,162,75,.14);color:var(--gold-bright);border-color:rgba(201,162,75,.3);">Mais popular</span>` : ''}
         </div>
         <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.5;">
