@@ -11874,11 +11874,26 @@ function traduzirErroAuth(msg){
   return 'Não foi possível concluir agora. Tente de novo em instantes.';
 }
 
+// Cadastro do DONO. Guarda o nome da barbearia até ela ser criada: se o Supabase pedir
+// confirmação por e-mail, a barbearia nasce no 1º login com o nome certo (e não "Minha barbearia").
+const CHAVE_NOME_NOVA_BARBEARIA = 'pb_nome_nova_barbearia';
+async function criarContaDono(email, pass, shopName){
+  try { localStorage.setItem(CHAVE_NOME_NOVA_BARBEARIA, shopName); } catch(e){}
+  const { data, error } = await supa.auth.signUp({ email, password: pass });
+  if(error) return { erro: traduzirErroAuth(error.message) };
+  if(!data || !data.session) return { confirmarEmail: true };
+  await ensureShop(shopName);
+  return {};
+}
+function msgConfirmarEmail(email){ return `Conta criada! Enviamos um link para ${email}. Abra o e-mail (confira também o spam), clique no link e depois entre aqui.`; }
+
 function cartaoAcessoLanding(mode, errorMsg, okMsg){
   const isLogin = mode !== 'signup';
   const slot = document.getElementById('lp-auth-slot');
   // o que a pessoa já digitou não some ao trocar de tela ou ao mostrar um erro
-  const antes = { email: slot.querySelector('#au-email')?.value || '', shop: slot.querySelector('#au-shop')?.value || '' };
+  const antes = { email: slot.querySelector('#au-email')?.value || '', shop: slot.querySelector('#au-shop')?.value || '',
+                  pass: slot.querySelector('#au-shop') ? (slot.querySelector('#au-pass')?.value || '') : '',
+                  aceite: !!slot.querySelector('#au-aceite')?.checked };
   slot.innerHTML = `
     <h2 class="lp-titulo">${isLogin ? 'Que bom ter você de volta' : 'Crie sua barbearia'}</h2>
     <p class="lp-sub">${isLogin ? 'Entre para acessar o painel da sua barbearia.' : 'Monte sua agenda, equipe e clube em minutos.'}</p>
@@ -11886,7 +11901,7 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
     ${errorMsg ? `<div class="lp-erro" role="alert">${esc(errorMsg)}</div>` : ''}
     ${okMsg ? `<div class="lp-okmsg" role="status">${esc(okMsg)}</div>` : ''}
     <form id="au-form" novalidate>
-      ${!isLogin ? `<div class="lp-campo"><label for="au-shop">Nome da barbearia</label><input id="au-shop" autocomplete="organization" placeholder="Ex: Barbearia do Centro"></div>` : ''}
+      ${!isLogin ? `<div class="lp-campo"><label for="au-shop">Nome da barbearia</label><input id="au-shop" autocomplete="organization" placeholder="Ex: Barbearia do Centro" maxlength="80" required></div>` : ''}
       <div class="lp-campo"><label for="au-email">E-mail</label><input id="au-email" type="email" inputmode="email" autocomplete="email" required></div>
       <div class="lp-campo"><label for="au-pass">Senha</label><input id="au-pass" type="password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" ${isLogin ? '' : 'placeholder="Mínimo 6 caracteres"'} required></div>
       ${isLogin ? `<div class="lp-esqueci"><button type="button" class="lp-link" id="au-esqueci">Esqueci minha senha</button></div>` : ''}
@@ -11897,6 +11912,8 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
     ${isLogin ? `<p class="lp-equipe">É da equipe? Entre aqui com o e-mail e a senha que o dono da barbearia criou para você.</p>` : ''}`;
   if(antes.email) slot.querySelector('#au-email').value = antes.email;
   if(antes.shop && slot.querySelector('#au-shop')) slot.querySelector('#au-shop').value = antes.shop;
+  if(!isLogin && antes.pass) slot.querySelector('#au-pass').value = antes.pass;
+  if(antes.aceite && slot.querySelector('#au-aceite')) slot.querySelector('#au-aceite').checked = true;
   slot.querySelector('#au-switch').addEventListener('click', ()=>{
     cartaoAcessoLanding(isLogin ? 'signup' : 'login');
     document.getElementById(isLogin ? 'au-shop' : 'au-email')?.focus();
@@ -11909,6 +11926,7 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
     const email = slot.querySelector('#au-email').value.trim();
     const pass = slot.querySelector('#au-pass').value;
     const shopName = slot.querySelector('#au-shop')?.value.trim();
+    if(!isLogin && !shopName){ cartaoAcessoLanding(mode, 'Digite o nome da sua barbearia.'); slot.querySelector('#au-shop')?.focus(); return; }
     if(!email || !pass){ cartaoAcessoLanding(mode, 'Preencha e-mail e senha.'); return; }
     if(!isLogin && pass.length < 6){ cartaoAcessoLanding(mode, 'A senha precisa ter pelo menos 6 caracteres.'); return; }
     if(!isLogin && !slot.querySelector('#au-aceite').checked){ cartaoAcessoLanding(mode, 'Para criar a conta, marque que leu e aceita os Termos e a Política de Privacidade.'); return; }
@@ -11918,9 +11936,9 @@ function cartaoAcessoLanding(mode, errorMsg, okMsg){
         const { error } = await supa.auth.signInWithPassword({ email, password: pass });
         if(error){ cartaoAcessoLanding('login', traduzirErroAuth(error.message)); return; }
       } else {
-        const { error } = await supa.auth.signUp({ email, password: pass });
-        if(error){ cartaoAcessoLanding('signup', traduzirErroAuth(error.message)); return; }
-        await ensureShop(shopName || 'Minha barbearia');
+        const r = await criarContaDono(email, pass, shopName);
+        if(r.erro){ cartaoAcessoLanding('signup', r.erro); return; }
+        if(r.confirmarEmail){ cartaoAcessoLanding('login', '', msgConfirmarEmail(email)); return; }
       }
     } catch(err){ cartaoAcessoLanding(mode, traduzirErroAuth(err && err.message)); return; }
     boot();
@@ -12020,14 +12038,15 @@ function renderAuthScreen(mode, errorMsg){
     const email = document.getElementById('au-email').value.trim();
     const pass = document.getElementById('au-pass').value;
     const shopName = document.getElementById('au-shop')?.value.trim();
+    if(!isLogin && !shopName){ renderAuthScreen(mode, 'Digite o nome da sua barbearia.'); return; }
     if(!email || !pass){ renderAuthScreen(mode, 'Preencha email e senha.'); return; }
     if(isLogin){
       const { error } = await supa.auth.signInWithPassword({ email, password: pass });
       if(error){ renderAuthScreen('login', traduzirErroAuth(error.message)); return; }
     } else {
-      const { error } = await supa.auth.signUp({ email, password: pass });
-      if(error){ renderAuthScreen('signup', traduzirErroAuth(error.message)); return; }
-      await ensureShop(shopName || 'Minha barbearia');
+      const r = await criarContaDono(email, pass, shopName);
+      if(r.erro){ renderAuthScreen('signup', r.erro); return; }
+      if(r.confirmarEmail){ renderAuthScreen('login', esc(msgConfirmarEmail(email))); return; }
     }
     boot();
   });
@@ -12037,7 +12056,8 @@ async function ensureShop(defaultName){
   const { data: { user } } = await supa.auth.getUser();
   if(!user) return null;
   const { data: existing } = await supa.from('shops').select('*').eq('owner_id', user.id).maybeSingle();
-  if(existing) return existing;
+  if(existing){ try { localStorage.removeItem(CHAVE_NOME_NOVA_BARBEARIA); } catch(e){} return existing; }
+  if(!defaultName){ try { defaultName = (localStorage.getItem(CHAVE_NOME_NOVA_BARBEARIA) || '').trim().slice(0, 80) || undefined; } catch(e){} }
   const trialEnds = new Date(Date.now() + TRIAL_DAYS*24*60*60*1000).toISOString();
   const seeded = blankShopData();
   if(defaultName) seeded.shopProfile.name = defaultName;
@@ -12053,6 +12073,7 @@ async function ensureShop(defaultName){
     trial_ends_at: trialEnds,
   }).select().single();
   if(error){ console.error('Erro ao criar barbearia', error); return null; }
+  try { localStorage.removeItem(CHAVE_NOME_NOVA_BARBEARIA); } catch(e){}
   if(typeof window.fbq === 'function' && consentimentoCookies()==='sim') window.fbq('track', 'CompleteRegistration');
   // Avisa o dono do sistema por e-mail. Se falhar, não atrapalha o cadastro.
   supa.functions.invoke('notify-signup', {

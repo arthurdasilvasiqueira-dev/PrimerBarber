@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /?agendar=
+Disallow: /?planos=
+Disallow: /?cliente=
+Disallow: /?equipe=
+Disallow: /?gerenciar=
+Sitemap: https://primerbarber.com.br/sitemap.xml

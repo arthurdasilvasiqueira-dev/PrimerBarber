@@ -1,14 +1,483 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8">
-<title>Primer Barber</title>
-<meta name="robots" content="noindex">
-<link rel="canonical" href="https://primerbarber.com.br/">
-<meta http-equiv="refresh" content="0; url=https://primerbarber.com.br/">
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>
-  /* A página de venda agora é a própria primerbarber.com.br.
-     Links antigos com ?cadastro=1 continuam abrindo direto em "Criar conta". */
-  location.replace('https://primerbarber.com.br/' + (/[?&]cadastro=1/.test(location.search) ? '?cadastro=1' : '') + location.hash);
+  /* Links antigos lp.html?cadastro=1 continuam abrindo direto em "Criar conta". */
+  if (/[?&]cadastro=1/.test(location.search)) location.replace('https://primerbarber.com.br/?cadastro=1');
 </script>
-</head><body style="background:#0a0b0d;color:#f4f5f6;font-family:system-ui,sans-serif;padding:24px">
-<p>Indo para <a href="https://primerbarber.com.br/" style="color:#e3c078">primerbarber.com.br</a>…</p>
-</body></html>
+<title>Primer Barber — Agenda online, WhatsApp automático e clube de assinatura para barbearia</title>
+<meta name="description" content="Sistema para barbearia: o cliente agenda sozinho 24h, recebe confirmação e lembrete no WhatsApp, e você controla caixa, comissões e clube de assinatura pelo celular. Teste grátis por 14 dias, sem cartão.">
+<link rel="canonical" href="https://primerbarber.com.br/lp.html">
+<meta name="theme-color" content="#0a0b0d">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="Primer Barber">
+<meta property="og:url" content="https://primerbarber.com.br/lp.html">
+<meta property="og:title" content="Primer Barber — sua barbearia organizada, sem planilha">
+<meta property="og:description" content="Agenda online 24h, WhatsApp automático, clube de assinatura, caixa e comissões. Teste grátis por 14 dias, sem cartão.">
+<meta property="og:image" content="https://primerbarber.com.br/img/og-primerbarber.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="img/icon-192.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --fundo:#0a0b0d; --fundo-2:#111316; --cartao:#15171b; --borda:#262a31;
+  --ouro:#c9a24b; --ouro-2:#e3c078; --texto:#f4f5f6; --suave:#a7adb5; --suave-2:#7b828c;
+  --claro:#f7f4ee; --tinta:#1b1a17; --tinta-2:#5f5b54; --borda-clara:#e4ddcf;
+  --verde-wa:#1f8a4c;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}
+body{margin:0;background:var(--fundo);color:var(--texto);font:400 17px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;}
+img{max-width:100%;height:auto;display:block;}
+a{color:inherit;}
+:focus-visible{outline:3px solid var(--ouro-2);outline-offset:3px;border-radius:6px;}
+.conteudo{width:100%;max-width:1160px;margin:0 auto;padding:0 20px;}
+h1,h2,h3{font-family:'Fraunces',Georgia,serif;font-weight:500;letter-spacing:-.01em;margin:0;}
+em.ouro{color:var(--ouro-2);font-style:italic;}
+
+/* botões */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:0 28px;border-radius:12px;
+  background:var(--ouro);color:#14110a;font:700 17px/1.2 'Inter',sans-serif;text-decoration:none;border:0;cursor:pointer;
+  box-shadow:0 10px 30px rgba(201,162,75,.25);transition:background .15s, transform .15s;}
+.btn:hover{background:#d6b25d;transform:translateY(-1px);}
+.btn svg{width:20px;height:20px;}
+.btn-pequeno{min-height:42px;padding:0 18px;font-size:15px;box-shadow:none;}
+.nota-cta{margin-top:12px;font-size:14.5px;color:var(--suave);}
+.nota-cta b{color:var(--texto);font-weight:600;}
+
+/* topo */
+.topo{position:sticky;top:0;z-index:50;background:rgba(10,11,13,.86);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid rgba(255,255,255,.06);}
+.topo .conteudo{display:flex;align-items:center;justify-content:space-between;height:66px;}
+.marca{display:flex;align-items:center;gap:10px;text-decoration:none;}
+.marca img{width:36px;height:36px;border-radius:9px;background:#1a1d22;padding:5px;}
+.marca b{font:600 20px/1 'Fraunces',Georgia,serif;}
+.topo-dir{display:flex;align-items:center;gap:18px;}
+.topo-entrar{font-size:15px;color:var(--suave);text-decoration:none;font-weight:500;}
+.topo-entrar:hover{color:var(--texto);}
+
+/* hero */
+.hero{position:relative;overflow:hidden;padding:56px 0 40px;
+  background:radial-gradient(900px 500px at 85% -10%, rgba(201,162,75,.20), transparent 60%), radial-gradient(700px 400px at -10% 110%, rgba(201,162,75,.08), transparent 60%);}
+.hero .conteudo{display:grid;gap:44px;align-items:center;}
+.selo{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:13.5px;font-weight:600;color:var(--ouro-2);
+  border:1px solid rgba(227,192,120,.35);background:rgba(201,162,75,.10);margin-bottom:20px;}
+.hero h1{font-size:clamp(36px,8.4vw,62px);line-height:1.06;margin-bottom:20px;}
+.hero p.sub{font-size:clamp(17px,2.2vw,20px);color:#d0d4d9;max-width:560px;margin:0 0 28px;}
+.hero-lista{list-style:none;padding:0;margin:0 0 30px;display:grid;gap:10px;}
+.hero-lista li{display:flex;gap:10px;align-items:flex-start;color:#e3e6e9;}
+.hero-lista svg{flex:0 0 22px;width:22px;height:22px;color:var(--ouro-2);margin-top:2px;}
+.vitrine{position:relative;max-width:620px;margin:0 auto;width:100%;}
+.vitrine .pc{border-radius:14px;border:1px solid var(--borda);box-shadow:0 30px 80px rgba(0,0,0,.6);width:92%;margin-left:auto;}
+.vitrine .cel{position:absolute;left:0;bottom:-18px;width:34%;border-radius:26px;border:6px solid #1b1e23;box-shadow:0 24px 60px rgba(0,0,0,.7);background:#000;}
+
+/* faixa de dores */
+.dores{background:var(--fundo-2);border-top:1px solid var(--borda);border-bottom:1px solid var(--borda);padding:44px 0;}
+.dores h2{font-size:clamp(24px,4vw,32px);text-align:center;margin-bottom:26px;}
+.dores-grade{display:grid;gap:12px;grid-template-columns:1fr;}
+.dor{display:flex;gap:12px;align-items:flex-start;background:var(--cartao);border:1px solid var(--borda);border-radius:12px;padding:16px 18px;color:#dfe2e6;font-size:16px;}
+.dor .x{flex:0 0 26px;height:26px;border-radius:50%;background:rgba(229,90,74,.14);color:#f08a7d;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;}
+
+/* recursos */
+.secao{padding:72px 0;}
+.secao-titulo{text-align:center;max-width:720px;margin:0 auto 52px;}
+.secao-titulo .chapeu{display:block;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ouro-2);font-weight:700;margin-bottom:12px;}
+.secao-titulo h2{font-size:clamp(28px,5vw,44px);line-height:1.12;}
+.secao-titulo p{color:var(--suave);margin:14px 0 0;font-size:18px;}
+.recurso{display:grid;gap:30px;align-items:center;margin-bottom:76px;}
+.recurso:last-child{margin-bottom:0;}
+.recurso h3{font-size:clamp(25px,3.6vw,34px);line-height:1.15;margin-bottom:14px;}
+.recurso p{color:#c9ced4;margin:0 0 18px;}
+.marcadores{list-style:none;padding:0;margin:0;display:grid;gap:10px;}
+.marcadores li{display:flex;gap:10px;color:#dfe2e6;font-size:16px;}
+.marcadores li::before{content:"";flex:0 0 8px;height:8px;border-radius:50%;background:var(--ouro);margin-top:9px;}
+.icone-recurso{width:46px;height:46px;border-radius:12px;border:1px solid rgba(227,192,120,.4);color:var(--ouro-2);display:flex;align-items:center;justify-content:center;margin-bottom:18px;}
+.icone-recurso svg{width:22px;height:22px;}
+.print{border-radius:14px;border:1px solid var(--borda);box-shadow:0 24px 60px rgba(0,0,0,.5);}
+
+/* conversa de WhatsApp (ilustração com os textos reais do sistema) */
+.zap{max-width:400px;margin:0 auto;width:100%;background:#0b141a;border:1px solid #1f2c33;border-radius:22px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5);}
+.zap-topo{display:flex;align-items:center;gap:12px;background:#1f2c33;padding:12px 16px;}
+.zap-topo .av{width:38px;height:38px;border-radius:50%;background:#14161a;display:flex;align-items:center;justify-content:center;}
+.zap-topo .av img{width:24px;height:24px;}
+.zap-topo b{display:block;font-size:15px;}
+.zap-topo span{font-size:12.5px;color:#8fa1ab;}
+.zap-corpo{padding:16px 14px 18px;display:grid;gap:10px;background:#0b141a;}
+.balao{max-width:88%;background:#1f2c33;color:#e9edef;border-radius:10px 10px 10px 2px;padding:9px 12px 20px;font-size:14.5px;line-height:1.45;position:relative;}
+.balao small{position:absolute;right:10px;bottom:4px;font-size:11px;color:#8fa1ab;}
+.balao.cli{justify-self:end;background:#005c4b;border-radius:10px 10px 2px 10px;}
+.zap-dia{justify-self:center;font-size:12px;color:#8fa1ab;background:#182229;padding:4px 10px;border-radius:7px;}
+
+/* equipe (cartões) */
+.cartoes{display:grid;gap:16px;grid-template-columns:1fr;}
+.cartao{background:var(--cartao);border:1px solid var(--borda);border-radius:14px;padding:24px;}
+.cartao h3{font-size:21px;margin:14px 0 8px;}
+.cartao p{color:var(--suave);margin:0;font-size:16px;}
+
+/* como funciona — parte clara */
+.claro{background:var(--claro);color:var(--tinta);}
+.claro .secao-titulo .chapeu{color:#8a6a1f;}
+.claro .secao-titulo p{color:var(--tinta-2);}
+.passos{display:grid;gap:18px;grid-template-columns:1fr;counter-reset:passo;}
+.passo{background:#fff;border:1px solid var(--borda-clara);border-radius:16px;padding:26px;}
+.passo .num{width:42px;height:42px;border-radius:50%;background:var(--tinta);color:var(--ouro-2);display:flex;align-items:center;justify-content:center;font:600 19px/1 'Fraunces',serif;margin-bottom:16px;}
+.passo h3{font-size:22px;margin-bottom:8px;}
+.passo p{margin:0;color:var(--tinta-2);font-size:16px;}
+.claro .centro{text-align:center;margin-top:40px;}
+.claro .nota-cta{color:var(--tinta-2);}
+.claro .nota-cta b{color:var(--tinta);}
+
+/* celular */
+.celular .conteudo{display:grid;gap:36px;align-items:center;}
+.celular-img{max-width:300px;margin:0 auto;border-radius:34px;border:8px solid #1b1e23;box-shadow:0 30px 70px rgba(0,0,0,.6);background:#000;}
+
+/* perguntas */
+.faq{max-width:780px;margin:0 auto;}
+.faq details{border-bottom:1px solid var(--borda);}
+.faq summary{list-style:none;cursor:pointer;padding:22px 40px 22px 0;font-weight:600;font-size:17.5px;position:relative;}
+.faq summary::-webkit-details-marker{display:none;}
+.faq summary::after{content:"+";position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:26px;font-weight:400;color:var(--ouro-2);transition:transform .2s;}
+.faq details[open] summary::after{transform:translateY(-50%) rotate(45deg);}
+.faq details p{margin:0 0 22px;color:var(--suave);}
+
+/* chamada final */
+.final{padding:80px 0;text-align:center;background:radial-gradient(700px 360px at 50% 0%, rgba(201,162,75,.18), transparent 70%), var(--fundo-2);border-top:1px solid var(--borda);}
+.final h2{font-size:clamp(30px,5.4vw,48px);line-height:1.1;max-width:760px;margin:0 auto 16px;}
+.final p{color:var(--suave);max-width:560px;margin:0 auto 30px;font-size:18px;}
+
+.rodape{padding:34px 0 120px;color:var(--suave-2);font-size:14px;border-top:1px solid var(--borda);}
+.rodape .conteudo{display:flex;flex-wrap:wrap;gap:12px 22px;justify-content:space-between;align-items:center;}
+.rodape nav{display:flex;flex-wrap:wrap;gap:8px 20px;}
+.rodape a{color:var(--suave);text-decoration:none;}
+.rodape a:hover{color:var(--texto);text-decoration:underline;}
+
+/* barra fixa no celular */
+.barra-cta{position:fixed;left:0;right:0;bottom:0;z-index:60;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:rgba(10,11,13,.94);
+  border-top:1px solid var(--borda);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transform:translateY(110%);transition:transform .25s;}
+.barra-cta.ver{transform:none;}
+.barra-cta .btn{width:100%;min-height:52px;}
+
+/* aviso de cookies */
+#pb-cookies{position:fixed;left:12px;right:12px;bottom:12px;z-index:80;max-width:520px;margin:0 auto;background:#15171b;border:1px solid #2c3038;border-radius:12px;
+  padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px;line-height:1.55;color:var(--texto);}
+#pb-cookies a{color:var(--ouro-2);}
+#pb-cookies .botoes{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
+#pb-cookies button{min-height:38px;padding:0 16px;border-radius:9px;font:600 13px/1 'Inter',sans-serif;cursor:pointer;}
+#pb-cookies .nao{background:transparent;color:var(--texto);border:1px solid #2c3038;}
+#pb-cookies .sim{background:var(--ouro);color:#14110a;border:0;}
+
+@media (max-width:420px){ .topo-entrar{display:none;} }
+@media (min-width:720px){
+  .dores-grade{grid-template-columns:1fr 1fr;}
+  .cartoes{grid-template-columns:repeat(3,1fr);}
+  .passos{grid-template-columns:repeat(3,1fr);}
+}
+@media (min-width:960px){
+  .hero{padding:80px 0 72px;}
+  .hero .conteudo{grid-template-columns:1.02fr 1fr;}
+  .dores-grade{grid-template-columns:repeat(4,1fr);}
+  .recurso{grid-template-columns:1fr 1.15fr;gap:60px;}
+  .recurso.inverte > :first-child{order:2;}
+  .celular .conteudo{grid-template-columns:1fr 1fr;}
+  .barra-cta{display:none;}
+  .rodape{padding-bottom:34px;}
+  #pb-cookies{left:24px;right:auto;bottom:24px;margin:0;}
+}
+@media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto;} *{transition:none !important;} }
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="conteudo">
+    <a class="marca" href="#inicio" aria-label="Primer Barber, início"><img src="img/icon-192.png" alt="" width="36" height="36"><b>Primer Barber</b></a>
+    <div class="topo-dir">
+      <a class="topo-entrar" href="./">Já tenho conta</a>
+      <a class="btn btn-pequeno" href="./?cadastro=1" data-cta="topo">Teste grátis</a>
+    </div>
+  </div>
+</header>
+
+<main id="inicio">
+  <!-- 1. CHAMADA PRINCIPAL -->
+  <section class="hero">
+    <div class="conteudo">
+      <div>
+        <span class="selo">✦ Sistema para barbearia</span>
+        <h1>Agenda cheia, cliente avisado e <em class="ouro">caixa no controle</em>.</h1>
+        <p class="sub">O cliente marca sozinho pelo seu link, recebe confirmação e lembrete no WhatsApp, e você vê o caixa, as comissões e o clube de assinatura no celular. Sem caderno, sem planilha.</p>
+        <ul class="hero-lista">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Agendamento online 24 horas, até de madrugada</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Lembrete automático no WhatsApp: menos cliente esquecendo o horário</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Clube de assinatura com cobrança automática todo mês</li>
+        </ul>
+        <a class="btn" href="./?cadastro=1" data-cta="hero">Começar meu teste grátis
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <div class="nota-cta"><b>14 dias grátis</b> · sem cartão de crédito · funciona no celular e no computador</div>
+      </div>
+      <div class="vitrine">
+        <img class="pc" src="img/landing/tela-dashboard-pc.webp" width="1600" height="1000" alt="Painel do Primer Barber com faturamento do dia, saldo do caixa, comissões e agenda de hoje">
+        <img class="cel" src="img/landing/tela-agenda-cel.webp" width="780" height="1688" alt="Agenda do Primer Barber aberta no celular">
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. DORES -->
+  <section class="dores" aria-labelledby="t-dores">
+    <div class="conteudo">
+      <h2 id="t-dores">Se isso acontece na sua barbearia, o Primer Barber é para você</h2>
+      <div class="dores-grade">
+        <div class="dor"><span class="x" aria-hidden="true">✕</span>Cliente mandando mensagem a toda hora para marcar horário</div>
+        <div class="dor"><span class="x" aria-hidden="true">✕</span>Cliente que esquece o horário e deixa a cadeira vazia</div>
+        <div class="dor"><span class="x" aria-hidden="true">✕</span>Comissão dos barbeiros feita no caderno ou na calculadora</div>
+        <div class="dor"><span class="x" aria-hidden="true">✕</span>Mensalidade do clube atrasada e você cobrando um por um</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. RECURSOS -->
+  <section class="secao" id="recursos" aria-labelledby="t-recursos">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Tudo em um só lugar</span>
+        <h2 id="t-recursos">Feito para o dia a dia de quem vive de barbearia</h2>
+        <p>Você atende. O sistema cuida da agenda, dos avisos e das contas.</p>
+      </div>
+
+      <div class="recurso">
+        <div>
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+          <h3>Agenda online: o cliente marca sozinho</h3>
+          <p>Sua barbearia ganha um link próprio para colocar no Instagram, no WhatsApp ou num QR code no balcão. O cliente escolhe o serviço, o barbeiro e o horário livre, sem precisar te chamar.</p>
+          <ul class="marcadores">
+            <li>Agenda de cada barbeiro lado a lado, com encaixes</li>
+            <li>Bloqueio de horário, folgas e lista de espera</li>
+            <li>Você é avisado na hora quando alguém agenda</li>
+          </ul>
+        </div>
+        <img class="print" src="img/landing/tela-agenda-pc.webp" width="1600" height="1000" loading="lazy" alt="Agenda do dia no Primer Barber, com uma coluna para cada barbeiro">
+      </div>
+
+      <div class="recurso inverte">
+        <div>
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 20.5l1.6-5.4A8.5 8.5 0 1 1 21 11.5z"/></svg></div>
+          <h3>WhatsApp automático, pelo número da sua barbearia</h3>
+          <p>Conecte o WhatsApp da barbearia lendo um QR code e o sistema manda as mensagens sozinho, na hora certa.</p>
+          <ul class="marcadores">
+            <li>Confirmação assim que o horário é marcado</li>
+            <li>Lembrete cerca de 2 horas antes</li>
+            <li>Pedido de avaliação depois do atendimento</li>
+            <li>Chama de volta o cliente que sumiu há semanas</li>
+          </ul>
+        </div>
+        <div class="zap" role="img" aria-label="Exemplo de conversa: confirmação do horário e lembrete enviados pelo WhatsApp da barbearia">
+          <div class="zap-topo"><span class="av"><img src="img/icon-192.png" alt="" width="24" height="24"></span><div><b>Sua Barbearia</b><span>mensagem automática</span></div></div>
+          <div class="zap-corpo">
+            <span class="zap-dia">HOJE</span>
+            <div class="balao">✅ Olá, Lucas! Seu horário na Sua Barbearia está marcado: sex, 24/10 às 17:00 — Corte + Barba com Carlos.<small>10:12</small></div>
+            <div class="balao cli">Fechado, obrigado! 👊<small>10:15</small></div>
+            <div class="balao">⏰ Olá, Lucas! Lembrete: seu horário na Sua Barbearia é hoje às 17:00 com Carlos. Te esperamos!<small>15:00</small></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="recurso">
+        <div>
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z"/></svg></div>
+          <h3>Clube de assinatura com cobrança automática</h3>
+          <p>Crie seus planos mensais e deixe a cobrança no automático: o cliente paga por Pix, boleto ou cartão e o sistema mostra quem está em dia e quem atrasou.</p>
+          <ul class="marcadores">
+            <li>Página de planos pronta para o cliente assinar</li>
+            <li>Aviso antes de vencer e quando atrasar</li>
+            <li>Estrelinha na agenda para você reconhecer o assinante</li>
+          </ul>
+        </div>
+        <img class="print" src="img/landing/tela-clube-pc.webp" width="1600" height="1000" loading="lazy" alt="Tela do clube de assinatura com receita recorrente, assinantes ativos e quem ainda não pagou">
+      </div>
+
+      <div class="recurso inverte">
+        <div>
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg></div>
+          <h3>Caixa e comissões calculados sozinhos</h3>
+          <p>Cada atendimento concluído entra no caixa e na comissão do barbeiro certo. No fim do dia, você sabe quanto entrou, quanto saiu e quanto deve a cada um.</p>
+          <ul class="marcadores">
+            <li>Comissão diferente por barbeiro e por serviço</li>
+            <li>Vales, despesas e fechamento do mês</li>
+            <li>Relatórios de faturamento e dos melhores clientes</li>
+          </ul>
+        </div>
+        <img class="print" src="img/landing/tela-dashboard-pc.webp" width="1600" height="1000" loading="lazy" alt="Painel com faturamento do dia, saldo do caixa e comissões por profissional">
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. EQUIPE -->
+  <section class="secao" style="padding-top:0" aria-labelledby="t-equipe">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Para você e para a sua equipe</span>
+        <h2 id="t-equipe">Cada um vê o que precisa</h2>
+      </div>
+      <div class="cartoes">
+        <div class="cartao">
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.3 3-5 6-5s5.4 1.7 6 5"/><circle cx="17.5" cy="9" r="2.4"/><path d="M16 14.6c2.6-.2 4.5 1.3 5 4"/></svg></div>
+          <h3>Login para cada barbeiro</h3>
+          <p>Cada barbeiro entra com o próprio e-mail e senha e vê a agenda e a comissão dele. Os números da barbearia ficam só com você.</p>
+        </div>
+        <div class="cartao">
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-4.4-7-10.2A4.8 4.8 0 0 1 12 7a4.8 4.8 0 0 1 7 3.8C19 16.6 12 21 12 21z"/></svg></div>
+          <h3>Cliente que volta</h3>
+          <p>Histórico de cada cliente, pontos de fidelidade e indicação. Você sabe quem vem sempre e quem está sumido.</p>
+        </div>
+        <div class="cartao">
+          <div class="icone-recurso" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg></div>
+          <h3>Seus dados seguros</h3>
+          <p>Tudo fica salvo na nuvem, e quem mexeu em valores fica registrado no histórico. Você pode baixar uma cópia dos seus dados quando quiser.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. COMO FUNCIONA -->
+  <section class="secao claro" aria-labelledby="t-passos">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Comece hoje</span>
+        <h2 id="t-passos">Pronto para usar em poucos minutos</h2>
+        <p>Não precisa instalar nada nem chamar técnico.</p>
+      </div>
+      <div class="passos">
+        <div class="passo"><div class="num">1</div><h3>Crie sua conta grátis</h3><p>Só o nome da barbearia, e-mail e senha. Sem cartão de crédito.</p></div>
+        <div class="passo"><div class="num">2</div><h3>Cadastre serviços e equipe</h3><p>Coloque seus serviços, preços, barbeiros e horários de atendimento.</p></div>
+        <div class="passo"><div class="num">3</div><h3>Divulgue seu link</h3><p>Coloque o link na bio do Instagram e no WhatsApp. Os clientes começam a marcar sozinhos.</p></div>
+      </div>
+      <div class="centro">
+        <a class="btn" href="./?cadastro=1" data-cta="passos">Criar minha conta grátis</a>
+        <div class="nota-cta"><b>14 dias grátis</b> para testar tudo, sem compromisso</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. CELULAR -->
+  <section class="secao celular" aria-labelledby="t-cel">
+    <div class="conteudo">
+      <img class="celular-img" src="img/landing/tela-agenda-cel.webp" width="780" height="1688" loading="lazy" alt="Primer Barber aberto no celular, na tela da agenda">
+      <div>
+        <div class="secao-titulo" style="text-align:left;margin:0 0 24px;">
+          <span class="chapeu">No bolso</span>
+          <h2 id="t-cel">A barbearia inteira no seu celular</h2>
+          <p>Abra pelo navegador do celular, do tablet ou do computador. Se quiser, adicione na tela de início e use como um aplicativo.</p>
+        </div>
+        <ul class="marcadores">
+          <li>Funciona em Android, iPhone e computador</li>
+          <li>Notificação quando um cliente agenda</li>
+          <li>Tudo sincronizado entre você e a equipe</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. PERGUNTAS -->
+  <section class="secao" style="padding-top:20px" aria-labelledby="t-faq">
+    <div class="conteudo">
+      <div class="secao-titulo"><h2 id="t-faq">Perguntas frequentes</h2></div>
+      <div class="faq">
+        <details><summary>Preciso cadastrar cartão para testar?</summary><p>Não. Você cria a conta só com e-mail e senha e usa tudo por 14 dias. Nada é cobrado no teste.</p></details>
+        <details><summary>Preciso instalar algum programa?</summary><p>Não. O Primer Barber funciona no navegador do celular ou do computador. Se quiser, dá para adicionar na tela de início do celular, como um aplicativo.</p></details>
+        <details><summary>Serve para barbearia pequena, com um barbeiro só?</summary><p>Serve. Você pode usar sozinho e, quando a equipe crescer, criar o acesso de cada barbeiro.</p></details>
+        <details><summary>Como funciona o WhatsApp automático?</summary><p>Você conecta o WhatsApp da barbearia lendo um QR code, do mesmo jeito que faz no WhatsApp Web. A partir daí, as confirmações e os lembretes saem sozinhos, pelo seu número. Recomendamos usar um número só da barbearia.</p></details>
+        <details><summary>Como o cliente paga o clube de assinatura?</summary><p>A cobrança é feita pela Asaas, uma plataforma de pagamentos: o cliente recebe o link e paga por Pix, boleto ou cartão (as formas que você liberar na sua conta Asaas). O dinheiro vai para a conta da barbearia.</p></details>
+        <details><summary>E se eu precisar de ajuda?</summary><p>O sistema tem uma Central de Ajuda com passo a passo, e você pode falar com o suporte pelo e-mail <a href="mailto:primerbarbersuporte@gmail.com" style="color:var(--ouro-2)">primerbarbersuporte@gmail.com</a>.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. CHAMADA FINAL -->
+  <section class="final" aria-labelledby="t-final">
+    <div class="conteudo">
+      <h2 id="t-final">Sua barbearia organizada <em class="ouro">a partir de hoje</em></h2>
+      <p>Crie sua conta em poucos minutos e teste tudo por 14 dias, sem cartão.</p>
+      <a class="btn" href="./?cadastro=1" data-cta="final">Começar meu teste grátis
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    </div>
+  </section>
+</main>
+
+<footer class="rodape">
+  <div class="conteudo">
+    <span>© 2026 Primer Barber</span>
+    <nav aria-label="Links do rodapé">
+      <a href="./">Entrar</a>
+      <a href="./?pagina=termos">Termos de Uso</a>
+      <a href="./?pagina=privacidade">Privacidade</a>
+      <a href="mailto:primerbarbersuporte@gmail.com">Suporte</a>
+    </nav>
+  </div>
+</footer>
+
+<div class="barra-cta" id="barra-cta" aria-hidden="true">
+  <a class="btn" href="./?cadastro=1" data-cta="barra" tabindex="-1">Testar grátis por 14 dias</a>
+</div>
+
+<script>
+/* Pixel da Meta: só carrega se a pessoa aceitar (mesma escolha da tela de entrada,
+   guardada em "pb_cookies"). Botões de teste grátis contam como "Lead". */
+(function(){
+  var PIXEL = '1606280897548168';
+  function escolha(){ try { return localStorage.getItem('pb_cookies'); } catch(e){ return null; } }
+  function grava(v){ try { localStorage.setItem('pb_cookies', v); } catch(e){} }
+  function carregaPixel(){
+    if (window.fbq || escolha() !== 'sim') return;
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    window.fbq('init', PIXEL);
+    window.fbq('track', 'PageView');
+  }
+  function avisoCookies(){
+    if (escolha()) { carregaPixel(); return; }
+    var el = document.createElement('div');
+    el.id = 'pb-cookies';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Aviso de cookies');
+    el.innerHTML = 'Usamos cookies de medição (Meta/Facebook) nesta página para saber quais anúncios trazem novas barbearias. <a href="./?pagina=privacidade" target="_blank">Saiba mais</a>'
+      + '<div class="botoes"><button type="button" class="nao">Recusar</button><button type="button" class="sim">Aceitar</button></div>';
+    document.body.appendChild(el);
+    el.querySelector('.nao').addEventListener('click', function(){ grava('nao'); el.remove(); });
+    el.querySelector('.sim').addEventListener('click', function(){ grava('sim'); el.remove(); carregaPixel(); });
+  }
+  avisoCookies();
+
+  // clique em "teste grátis": registra o Lead e segue para o cadastro
+  document.querySelectorAll('[data-cta]').forEach(function(a){
+    a.addEventListener('click', function(ev){
+      if (typeof window.fbq !== 'function') return;
+      window.fbq('track', 'Lead', { content_name: a.getAttribute('data-cta') });
+      if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button !== 0) return;
+      ev.preventDefault();
+      setTimeout(function(){ location.href = a.href; }, 180);
+    });
+  });
+
+  // barra fixa no celular: aparece depois que o botão principal sai da tela
+  var barra = document.getElementById('barra-cta'), heroBtn = document.querySelector('[data-cta="hero"]');
+  if (barra && heroBtn && 'IntersectionObserver' in window) {
+    new IntersectionObserver(function(ent){
+      var mostrar = !ent[0].isIntersecting && ent[0].boundingClientRect.top < 0;
+      barra.classList.toggle('ver', mostrar);
+      barra.setAttribute('aria-hidden', mostrar ? 'false' : 'true');
+      barra.querySelector('a').tabIndex = mostrar ? 0 : -1;
+    }).observe(heroBtn);
+  }
+})();
+</script>
+</body>
+</html>
