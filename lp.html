@@ -83,6 +83,28 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 .dor{display:flex;gap:12px;align-items:flex-start;background:var(--cartao);border:1px solid var(--borda);border-radius:12px;padding:16px 18px;color:#dfe2e6;font-size:16px;}
 .dor .x{flex:0 0 26px;height:26px;border-radius:50%;background:rgba(229,90,74,.14);color:#f08a7d;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;}
 
+/* simulador do clube */
+.simula{padding-bottom:40px;}
+.simula-caixa{max-width:860px;margin:0 auto;display:grid;gap:22px;background:var(--cartao);border:1px solid rgba(227,192,120,.35);border-radius:18px;padding:26px;}
+.simula-campos{display:grid;gap:22px;}
+.simula-campos label{display:grid;grid-template-columns:1fr auto;gap:10px 14px;align-items:center;font-weight:600;color:#e3e6e9;}
+.simula-campos input{order:1;grid-column:1 / -1;width:100%;accent-color:var(--ouro);height:28px;}
+.simula-campos output{font:600 20px/1 'Fraunces',serif;color:var(--ouro-2);}
+.simula-resultado{display:flex;flex-direction:column;justify-content:center;gap:6px;background:rgba(201,162,75,.10);border-radius:14px;padding:22px;text-align:center;}
+.simula-resultado span{color:var(--suave);font-size:15px;}
+.simula-resultado b{font:600 clamp(36px,7vw,50px)/1.05 'Fraunces',serif;color:var(--ouro-2);}
+.simula-resultado small{color:#d0d4d9;font-size:15px;}
+.simula-obs{text-align:center;color:var(--suave-2);font-size:14px;max-width:640px;margin:16px auto 0;}
+.centro-simples{text-align:center;margin-top:26px;}
+
+/* ajuda para começar */
+.ajuda-zap{max-width:860px;margin:44px auto 0;display:grid;gap:16px;align-items:center;background:var(--cartao);border:1px solid var(--borda);border-radius:16px;padding:24px;}
+.ajuda-zap h3{font-size:23px;margin-bottom:6px;}
+.ajuda-zap p{margin:0;color:var(--suave);font-size:16px;}
+.btn.zap-btn{background:var(--verde-wa);color:#fff;box-shadow:none;}
+.btn.zap-btn:hover{background:#25a35b;}
+[hidden]{display:none !important;}
+
 /* recursos */
 .secao{padding:72px 0;}
 .secao-titulo{text-align:center;max-width:720px;margin:0 auto 52px;}
@@ -189,6 +211,8 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 @media (max-width:420px){ .topo-entrar{display:none;} }
 @media (min-width:720px){
   .planos{grid-template-columns:1fr 1fr;}
+  .simula-caixa{grid-template-columns:1.2fr 1fr;padding:32px;}
+  .ajuda-zap{grid-template-columns:1fr auto;}
   .dores-grade{grid-template-columns:1fr 1fr;}
   .cartoes{grid-template-columns:repeat(3,1fr);}
   .passos{grid-template-columns:repeat(3,1fr);}
@@ -224,13 +248,13 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
   <section class="hero">
     <div class="conteudo">
       <div>
-        <span class="selo">✦ Sistema para barbearia</span>
-        <h1>Agenda cheia, cliente avisado e <em class="ouro">caixa no controle</em>.</h1>
-        <p class="sub">O cliente marca sozinho pelo seu link, recebe confirmação e lembrete no WhatsApp, e você vê o caixa, as comissões e o clube de assinatura no celular. Sem caderno, sem planilha.</p>
+        <span class="selo">✦ Feito por barbeiro, para barbearia</span>
+        <h1>Transforme cliente avulso em <em class="ouro">assinante que paga todo mês</em>.</h1>
+        <p class="sub">Monte o clube de assinatura da sua barbearia com cobrança automática, deixe o cliente marcar sozinho pelo seu link e receba lembrete no WhatsApp. Caixa e comissões no celular, sem caderno.</p>
         <ul class="hero-lista">
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Agendamento online 24 horas, até de madrugada</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Lembrete automático no WhatsApp: menos cliente esquecendo o horário</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Clube de assinatura com cobrança automática todo mês</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Clube de assinatura: dinheiro entrando todo mês, mesmo em semana fraca</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Agendamento online 24 horas e lembrete automático no WhatsApp</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Aviso do cliente que sumiu, para chamar de volta antes de perder</li>
         </ul>
         <a class="btn" href="./?cadastro=1" data-cta="hero">Começar meu teste grátis
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
@@ -253,6 +277,36 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
         <div class="dor"><span class="x" aria-hidden="true">✕</span>Comissão dos barbeiros feita no caderno ou na calculadora</div>
         <div class="dor"><span class="x" aria-hidden="true">✕</span>Mensalidade do clube atrasada e você cobrando um por um</div>
       </div>
+    </div>
+  </section>
+
+  <!-- 2b. SIMULADOR DO CLUBE -->
+  <section class="secao simula" id="simulador" aria-labelledby="t-simula">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Faça a conta</span>
+        <h2 id="t-simula">Quanto o clube de assinatura pode colocar no seu caixa?</h2>
+        <p>Mexa nos números com a realidade da sua barbearia.</p>
+      </div>
+      <div class="simula-caixa">
+        <div class="simula-campos">
+          <label>Quantos clientes assinantes
+            <input type="range" id="sim-qtd" min="5" max="150" step="5" value="30">
+            <output id="sim-qtd-v" for="sim-qtd">30</output>
+          </label>
+          <label>Valor do plano por mês
+            <input type="range" id="sim-valor" min="50" max="250" step="10" value="100">
+            <output id="sim-valor-v" for="sim-valor"></output>
+          </label>
+        </div>
+        <div class="simula-resultado" aria-live="polite">
+          <span>Entrada prevista todo mês</span>
+          <b id="sim-mes"></b>
+          <small>No ano: <strong id="sim-ano"></strong></small>
+        </div>
+      </div>
+      <p class="simula-obs">Conta ilustrativa: o valor real depende de quantos clientes assinam e continuam pagando. As taxas da Asaas ficam à parte.</p>
+      <div class="centro-simples"><a class="btn" href="./?cadastro=1" data-cta="simulador">Montar meu clube grátis por 14 dias</a></div>
     </div>
   </section>
 
@@ -376,6 +430,13 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
         <a class="btn" href="./?cadastro=1" data-cta="passos">Criar minha conta grátis</a>
         <div class="nota-cta"><b>14 dias grátis</b> para testar tudo, sem compromisso</div>
       </div>
+      <div class="ajuda-zap" id="ajuda-zap" hidden>
+        <div>
+          <h3>Quer ajuda para começar?</h3>
+          <p>Chame no WhatsApp: a gente cadastra seus serviços, barbeiros e o clube de assinatura junto com você, sem custo.</p>
+        </div>
+        <a class="btn zap-btn" href="#" data-zap="como-funciona" target="_blank" rel="noopener">Falar no WhatsApp</a>
+      </div>
     </div>
   </section>
 
@@ -446,6 +507,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
       <div class="faq">
         <details><summary>Quanto custa depois do teste?</summary><p>O plano Basic custa R$ 49,90 por mês (até 4 profissionais). O Pro custa R$ 109,90 por mês, com profissionais ilimitados e clube de assinatura. Você só escolhe e paga se quiser continuar depois dos 14 dias grátis.</p></details>
         <details><summary>Preciso cadastrar cartão para testar?</summary><p>Não. Você cria a conta só com e-mail e senha e usa tudo por 14 dias. Nada é cobrado no teste.</p></details>
+        <details><summary>Tem fidelidade ou multa se eu cancelar?</summary><p>Não. É mês a mês: se não quiser continuar, é só cancelar, sem multa. E você pode baixar uma cópia dos seus dados quando quiser.</p></details>
         <details><summary>Preciso instalar algum programa?</summary><p>Não. O Primer Barber funciona no navegador do celular ou do computador. Se quiser, dá para adicionar na tela de início do celular, como um aplicativo.</p></details>
         <details><summary>Serve para barbearia pequena, com um barbeiro só?</summary><p>Serve. Você pode usar sozinho e, quando a equipe crescer, criar o acesso de cada barbeiro.</p></details>
         <details><summary>Como funciona o WhatsApp automático?</summary><p>Você conecta o WhatsApp da barbearia lendo um QR code, do mesmo jeito que faz no WhatsApp Web. A partir daí, as confirmações e os lembretes saem sozinhos, pelo seu número. Recomendamos usar um número só da barbearia.</p></details>
@@ -524,6 +586,31 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
       setTimeout(function(){ location.href = a.href; }, 180);
     });
   });
+
+  // WhatsApp de atendimento (vendas/ajuda para começar). Vazio = bloco escondido.
+  var WHATSAPP = '';
+  if (/^55\d{10,11}$/.test(WHATSAPP)) {
+    var textoZap = encodeURIComponent('Oi! Vi o Primer Barber e quero ajuda para começar na minha barbearia.');
+    document.querySelectorAll('[data-zap]').forEach(function(a){
+      a.href = 'https://wa.me/' + WHATSAPP + '?text=' + textoZap;
+      a.addEventListener('click', function(){
+        if (typeof window.fbq === 'function') window.fbq('track', 'Contact', { content_name: a.getAttribute('data-zap') });
+      });
+    });
+    document.getElementById('ajuda-zap').hidden = false;
+  }
+
+  // simulador do clube de assinatura
+  var qtd = document.getElementById('sim-qtd'), valor = document.getElementById('sim-valor');
+  function dinheiro(n){ return n.toLocaleString('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 }); }
+  function simula(){
+    var q = +qtd.value, v = +valor.value;
+    document.getElementById('sim-qtd-v').textContent = q;
+    document.getElementById('sim-valor-v').textContent = dinheiro(v);
+    document.getElementById('sim-mes').textContent = dinheiro(q * v);
+    document.getElementById('sim-ano').textContent = dinheiro(q * v * 12);
+  }
+  if (qtd && valor) { qtd.addEventListener('input', simula); valor.addEventListener('input', simula); simula(); }
 
   // barra fixa no celular: aparece depois que o botão principal sai da tela
   var barra = document.getElementById('barra-cta'), heroBtn = document.querySelector('[data-cta="hero"]');

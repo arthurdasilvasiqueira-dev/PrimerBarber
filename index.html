@@ -1054,7 +1054,8 @@ function soDigitos(s){ return String(s||'').replace(/\D/g,''); }
 // continuava aparecendo no aviso de cobrança para sempre.
 function assinantesEmAtraso(){
   return (state.subscriptionMembers||[]).filter(m=>{
-    if(m.status !== 'atrasado') return false;
+    // "pago" que já venceu (sem pagamento novo) também precisa de cobrança
+    if(m.status !== 'atrasado' && !(m.status === 'pago' && !m.arquivado && membroVencido(m))) return false;
     const plano = (state.subscriptionPlans||[]).find(p=>p.id===m.planId);
     return !!plano;
   });
@@ -1070,18 +1071,40 @@ function assinantesOrfaos(){
 function clubeTolerancia(){ return Math.max(0, Math.min(30, Number(state.clubSettings?.diasTolerancia)||0)); }
 // quantos dias antes do vencimento o assinante é avisado (padrão 1) — o servidor usa o mesmo número
 function clubeDiasAviso(){ const n = Number(state.clubSettings?.diasAvisoVencimento); return n>=1 ? Math.min(7, Math.round(n)) : 1; }
+const DATA_ISO_RE = /^\d{4}-\d{2}-\d{2}/;
+// mesma data no mês seguinte; 31/01 → 28/02 (igual ao "+ interval '1 month'" do banco)
+function maisUmMes(iso){
+  const d = new Date(String(iso).slice(0,10)+'T12:00');
+  const dia = d.getDate();
+  d.setDate(1); d.setMonth(d.getMonth()+1);
+  d.setDate(Math.min(dia, new Date(d.getFullYear(), d.getMonth()+1, 0).getDate()));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Até quando um "pago" vale. "pagoAte" é gravado a cada pagamento (Recebi,
+// aviso do Asaas, sincronização). Sem ele (dados antigos), vale um mês depois
+// do último pagamento ou do vencimento, o que for mais tarde. Sem nenhuma
+// data, não dá para saber: continua valendo. O servidor usa a mesma regra.
+function fimDoPago(m){
+  if(DATA_ISO_RE.test(m?.pagoAte||'')) return String(m.pagoAte).slice(0,10);
+  const datas = [m?.lastPaymentDate, m?.dueDate].filter(x=>DATA_ISO_RE.test(x||'')).map(maisUmMes).sort();
+  return datas.length ? datas[datas.length-1] : null;
+}
 function membroVencido(m, dataISO){
-  if(!m || !m.dueDate) return false;
-  const limite = new Date(String(m.dueDate).slice(0,10)+'T12:00');
+  const base = m?.status === 'pago' ? fimDoPago(m) : (m?.dueDate ? String(m.dueDate).slice(0,10) : null);
+  if(!base) return false;
+  const limite = new Date(base+'T12:00');
   limite.setDate(limite.getDate() + clubeTolerancia());
   return limite.toISOString().slice(0,10) < (dataISO || todayISO());
 }
 function membroEmDia(m, dataISO){
   if(!m || m.arquivado) return false;
-  if(m.status === 'pago') return true;
-  if(m.status === 'pendente' || m.status === 'atrasado') return !membroVencido(m, dataISO);
+  if(['pago', 'pendente', 'atrasado'].includes(m.status)) return !membroVencido(m, dataISO);
   return false;   // pausado, cancelado
 }
+// trava do link de agendamento para quem está atrasado (Clube → Regras); padrão: trava
+// em atraso para cobrança: status "atrasado" ou "pago" que já venceu
+function clubeEmAtraso(m){ return !!m && !m.arquivado && (m.status === 'atrasado' || (m.status === 'pago' && membroVencido(m))); }
+function clubeTravaAtrasado(){ return state.clubSettings?.travarAtrasado !== false; }
 
 // FASE 4B: quantos atendimentos este assinante já usou do plano no mês do
 // atendimento (só os concluídos e cobertos pelo plano; o próprio não conta)
@@ -1240,7 +1263,7 @@ function clubStarBadge(clientName){
 }
 function clubOverdueWaButton(clientName, phone){
   const m = clubMemberForClient(clientName);
-  if(!m || m.status!=='atrasado') return '';
+  if(!clubeEmAtraso(m)) return '';
   const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
   let text = `Olá ${m.name}! Notamos que sua mensalidade do ${plan?plan.name:'clube'} está em atraso.`;
   if(m.invoiceUrl) text += ` Você pode regularizar por aqui: ${m.invoiceUrl}`;
@@ -1726,16 +1749,19 @@ function potCommissionForProf(profId, customPeriod = null){
 function asaasSummary(){
   const inMonth = state.subscriptionMembers.filter(m=>m.paymentMethod==='asaas');
   const cash = state.subscriptionMembers.filter(m=>m.paymentMethod==='dinheiro');
-  const planPrice = m => state.subscriptionPlans.find(p=>p.id===m.planId)?.price || 0;
+  // "pago" = pagou NESTE mês (o status "pago" do mês passado não conta quando o mês vira)
+  const ym = todayISO().slice(0,7);
+  const pagou = m => pagouNoMes(m, ym);
+  const aberto = m => !pagou(m) && !['cancelado','pausado'].includes(m.status);
   return {
-    asaasPago: inMonth.filter(m=>m.status==='pago'),
-    asaasPendente: inMonth.filter(m=>m.status==='pendente'),
+    asaasPago: inMonth.filter(pagou),
+    asaasPendente: inMonth.filter(m=>aberto(m) && m.status!=='atrasado'),
     asaasAtrasado: inMonth.filter(m=>m.status==='atrasado'),
-    cashPago: cash.filter(m=>m.status==='pago'),
-    cashPendente: cash.filter(m=>m.status!=='pago' && m.status!=='cancelado'),
-    // soma apenas o valor que de fato entrou (cobranças pagas), não saldo de conta
-    totalRecebidoAsaas: inMonth.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).reduce((a,m)=>a+planPrice(m),0),
-    totalRecebidoDinheiro: cash.filter(m=>pagouNoMes(m, todayISO().slice(0,7))).reduce((a,m)=>a+planPrice(m),0),
+    cashPago: cash.filter(pagou),
+    cashPendente: cash.filter(aberto),
+    // soma o valor que de fato entrou no mês (igual ao pote), não o preço do plano
+    totalRecebidoAsaas: inMonth.reduce((a,m)=>a+recebidoDoMembroNoMes(m, ym),0),
+    totalRecebidoDinheiro: cash.reduce((a,m)=>a+recebidoDoMembroNoMes(m, ym),0),
   };
 }
 
@@ -1813,6 +1839,7 @@ function navAllowedForSession(){
 /* ============ ROOT RENDER ============ */
 function render(){
   if(route!=='comissoes') selectedCommissionPeriod = null;
+  if(route==='dashboard' || route==='clube') setTimeout(asaasAutomatico, 0);
   const app = document.getElementById('app');
   const cashOpen = openSession();
   if(!navAllowedForSession().includes(route)) route = 'dashboard';
@@ -2022,7 +2049,11 @@ function viewDashboard(){
   const commissionsPending = isProfView
     ? commissionOwed(myId).owed + bonusProdutos(myId).owed
     : state.professionals.reduce((a,p)=>a+commissionOwed(p.id).owed+bonusProdutos(p.id).owed,0);
-  const activeMembers = state.subscriptionMembers.filter(m=>m.status==='pago').length;
+  // clube: o que ENTROU no mês (igual ao pote) — o contratado (MRR) fica só como referência
+  const mesClube = todayISO().slice(0,7);
+  const recebidoClubeMes = clubMonthlyPot(mesClube);
+  const pagaramClube = state.subscriptionMembers.filter(m=>pagouNoMes(m, mesClube)).length;
+  const ativosClube = state.subscriptionMembers.filter(m=>!m.arquivado && !['cancelado','pausado'].includes(m.status)).length;
   const overdueMembers = assinantesEmAtraso().length;
   const met = metricasClube(todayISO().slice(0,7));
   const mrr = met.mrr;
@@ -2037,7 +2068,7 @@ function viewDashboard(){
         'ok')}
       ${!isProfView ? statCard('Saldo do caixa', session?BRL(totals.balance):'—', session?`Entradas ${BRL(totals.in)} · Saídas ${BRL(totals.out)}`:'Nenhum caixa aberto', session?'ok':'bad') : ''}
       ${statCard(isProfView?'Você tem a receber':'Comissões pendentes', BRL(commissionsPending), isProfView?'em comissões':'a pagar aos profissionais', commissionsPending>0?'warn':'ok')}
-      ${!isProfView ? statCard('Clube de assinatura', activeMembers+' membros ativos', 'MRR '+BRL(mrr), 'ok') : ''}
+      ${!isProfView ? statCard('Clube: recebido em '+new Date().toLocaleDateString('pt-BR',{month:'long'}), BRL(recebidoClubeMes), `${pagaramClube} de ${ativosClube} assinantes pagaram · contratado ${BRL(mrr)}/mês`, 'ok') : ''}
       ${!isProfView ? statCard('Assinantes em atraso', overdueMembers, overdueMembers>0?'precisam de cobrança':'nenhum em atraso', overdueMembers>0?'bad':'ok') : ''}
       ${isOwnerLevel() ? (()=>{ const lm = resultadoDoMes(mesReal()).resultado;
         return `<button type="button" data-ir-lucro style="all:unset;cursor:pointer;display:block;">${statCard('Lucro do mês (até agora)', BRL(lm), 'ver como chegamos →', lm>=0?'ok':'bad')}</button>`; })() : ''}
@@ -2578,7 +2609,7 @@ function renderAgenda(view){
               <div style="font-weight:600;font-size:14.5px;">${esc(a.client)} ${clubStarBadge(a.client)} ${a.origem==='online'?`<span class="pill" style="background:rgba(74,159,216,.15);color:#4a9fd8;border-color:rgba(74,159,216,.35);font-size:10px;">${ICON.globe} agendou pelo link</span>`:''} ${a.confirmed?`<span style="color:var(--ok);font-size:11px;">✓ confirmado</span>`:''}</div>
               <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${svcsList.length?esc(nomeServ):'Serviço removido'} · ${esc(profName(a.professionalId))} ${svcsList.length?`· ${ICON.clock} ${durTotal} min`:''}</div>
               ${a.rating ? `<div style="font-size:12px;color:var(--gold-bright);margin-top:3px;">${ICON.star} ${a.rating.stars}/5 ${a.rating.comment?'— '+esc(a.rating.comment):''}</div>` : ''}
-              ${clubMemberForClient(a.client)?.status==='atrasado' ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="pill pill-bad" style="font-size:11px;">Clube em atraso — cobrança em valor cheio</span>${clubOverdueWaButton(a.client)}</div>` : ''}
+              ${clubeEmAtraso(clubMemberForClient(a.client)) ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="pill pill-bad" style="font-size:11px;">Clube em atraso — cobrança em valor cheio</span>${clubOverdueWaButton(a.client)}</div>` : ''}
             </div>
             ${depositPill(a)}
             <div class="font-mono" style="font-size:14px;color:var(--muted);">${s?BRL(s.price):'—'}</div>
@@ -3393,7 +3424,7 @@ function apptActionsModal(apptId, view){
         ${svcs.length ? (multi.todosCobertos
           ? `<span class="pill pill-ok" style="font-weight:600;">★ PLANO ATIVO · R$ 0,00</span>`
           : `<span class="pill pill-muted font-mono">${BRL(valorReal)}${valorReal < precoTabela ? ` <span style="text-decoration:line-through;opacity:.6;">${BRL(precoTabela)}</span>` : ''}</span>`) : `<span class="pill pill-bad">Sem serviço definido</span>`}
-        ${membro && membro.status==='atrasado'?`<span class="pill pill-bad">Clube em atraso</span>`:''}
+        ${clubeEmAtraso(membro)?`<span class="pill pill-bad">Clube em atraso</span>`:''}
         ${a.depositStatus==='pago'?`<span class="pill pill-ok">Sinal pago ${BRL(a.depositAmount)}</span>`:''}
       </div>
 
@@ -3876,10 +3907,10 @@ function openApptModal(pre){
       const m = clubMemberForClient(inputCliente.value);
       const dataAg = root.querySelector('#f-date')?.value || todayISO();
       note.removeAttribute('style'); note.style.fontSize = '12.5px';
-      if(m && (m.status==='pendente' || m.status==='atrasado') && !membroEmDia(m, dataAg)){
+      if(m && ['pendente', 'atrasado', 'pago'].includes(m.status) && !membroEmDia(m, dataAg)){
         // FASE CLUBE: atrasado além da tolerância → aviso grande para a recepção cobrar
         note.style.cssText = 'display:block;margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--bad);background:var(--bad-bg);color:var(--bad);font-size:13px;font-weight:600;line-height:1.5;';
-        note.textContent = `⚠ CLUBE ATRASADO — ${m.name} está com a mensalidade vencida desde ${m.dueDate ? new Date(String(m.dueDate).slice(0,10)+'T12:00').toLocaleDateString('pt-BR') : '—'}. Cobrar a renovação: enquanto não pagar, o serviço sai pelo valor normal.`;
+        note.textContent = `⚠ CLUBE ATRASADO — ${m.name} está com a mensalidade vencida desde ${(()=>{ const v = m.status==='pago' ? fimDoPago(m) : m.dueDate; return v ? new Date(String(v).slice(0,10)+'T12:00').toLocaleDateString('pt-BR') : '—'; })()}. Cobrar a renovação: enquanto não pagar, o serviço sai pelo valor normal.`;
       } else if(m && membroEmDia(m, dataAg)){
         note.style.color = 'var(--ok)';
         note.textContent = `✓ ${m.name} é assinante do clube e está em dia.`;
@@ -3952,7 +3983,7 @@ function openApptModal(pre){
         return `<div class="sug-item" data-nome="${esc(cl.name)}" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
           <div style="font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:6px;">
             ${esc(cl.name)} ${clubStarBadge(cl.name)}
-            ${membro && membro.status==='atrasado' ? `<span class="pill pill-bad" style="font-size:10px;">em atraso</span>` : ''}
+            ${clubeEmAtraso(membro) ? `<span class="pill pill-bad" style="font-size:10px;">em atraso</span>` : ''}
           </div>
           <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">${esc(detalhes)}</div>
         </div>`;
@@ -4079,6 +4110,7 @@ function renderCaixa(view){
         <button class="btn btn-ghost" style="color:var(--ok);border-color:var(--ok);" id="btn-add-in">${ICON.arrowUp} Lançar entrada</button>
         <button class="btn btn-ghost" style="color:var(--bad);border-color:var(--bad);" id="btn-add-out">${ICON.arrowDown} Lançar saída</button>
         <button class="btn btn-ghost" id="btn-sangria">${ICON.cash} Sangria</button>
+        ${podeDarVale() ? `<button class="btn btn-ghost" id="btn-vale-caixa">${ICON.cash} Vale</button>` : ''}
       </div>
 
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Movimentações de hoje</div>
@@ -4132,6 +4164,7 @@ function renderCaixa(view){
   view.querySelector('#btn-add-in')?.addEventListener('click', ()=>addEntryModal('entrada'));
   view.querySelector('#btn-add-out')?.addEventListener('click', ()=>addEntryModal('saida'));
   view.querySelector('#btn-sangria')?.addEventListener('click', ()=>sangriaModal(view));
+  view.querySelector('#btn-vale-caixa')?.addEventListener('click', ()=>escolherProfissionalValeModal(()=>renderCaixa(view)));
 }
 // Quanto ficou na gaveta no último fechamento
 function saldoUltimoFechamento(){
@@ -4924,9 +4957,31 @@ function withdrawalRequestModal(prof){
     });
   });
 }
-function valeModal(profId, view){
+// Vale: dono/admin (Comissões ou Caixa) e recepcionista (só no Caixa, só
+// dinheiro da gaveta — o servidor confere e limita)
+function podeDarVale(){ return isOwnerLevel() || userSession.role==='recepcionista'; }
+function escolherProfissionalValeModal(aoTerminar){
+  if(!podeDarVale()){ showToast('Você não tem permissão para dar vale.'); return; }
+  if(!openSession()){ showToast('Abra o caixa antes de dar vale.'); return; }
+  const profs = state.professionals.filter(p=>p.servesClients!==false && !p.inativo);
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Vale para quem?</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${profs.length===0 ? emptyState('Nenhum profissional cadastrado.') : profs.map(p=>`<button class="btn btn-ghost" data-vale-prof="${esc(p.id)}" style="justify-content:flex-start;">${esc(p.name)}</button>`).join('')}
+      </div>
+    </div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelectorAll('[data-vale-prof]').forEach(b=>b.addEventListener('click', ()=>valeModal(b.dataset.valeProf, null, aoTerminar)));
+  });
+}
+function valeModal(profId, view, aoTerminar){
   const valeIdUnico = uid();   // FASE 5: identidade deste vale (evita lançar duas vezes)
-  if(!isOwnerLevel()){ showToast('Apenas o dono ou administrador pode dar vale.'); return; }
+  if(!podeDarVale()){ showToast('Você não tem permissão para dar vale.'); return; }
+  const soCaixa = !isOwnerLevel();   // recepcionista: só dinheiro da gaveta, sem ver o saldo de comissão
   const prof = state.professionals.find(p=>p.id===profId);
   if(!prof) return;
   const c = commissionOwed(profId, mesReal());
@@ -4938,12 +4993,13 @@ function valeModal(profId, view){
         <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
       </div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">${esc(prof.name)}</div>
+      ${soCaixa ? `<div style="font-size:12.5px;color:var(--muted-2);margin-bottom:18px;line-height:1.5;">O dinheiro sai da gaveta e fica registrado no seu nome. Vale de até R$ 2.000.</div>` : `
       <div style="font-size:12.5px;color:var(--muted-2);margin-bottom:18px;">
         ${c.owed<0
           ? `Já deve <b style="color:var(--bad);">${BRL(Math.abs(c.owed))}</b> de vale anterior — outro vale aumenta essa dívida.`
           : `Tem <b style="color:var(--gold-bright);">${BRL(c.owed)}</b> a receber no momento.`}
       </div>
-      <div style="font-size:11px;color:var(--muted-2);margin:-12px 0 6px;line-height:1.5;">Pode dar mais vale que ele tem a receber — o saldo fica negativo e é abatido sozinho conforme ele atende novos clientes.</div>
+      <div style="font-size:11px;color:var(--muted-2);margin:-12px 0 6px;line-height:1.5;">Pode dar mais vale que ele tem a receber — o saldo fica negativo e é abatido sozinho conforme ele atende novos clientes.</div>`}
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div><label>Valor do vale (R$)</label><input id="v-amount" type="number" step="0.01" min="0" placeholder="0,00" style="width:100%;"></div>
         <div>
@@ -4956,7 +5012,7 @@ function valeModal(profId, view){
                 <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">Lança uma saída no caixa automaticamente${caixaAberto?'':' — <span style="color:var(--bad);">é preciso abrir o caixa antes</span>'}</div>
               </div>
             </label>
-            <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;cursor:pointer;">
+            <label style="display:${soCaixa?'none':'flex'};align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;cursor:pointer;">
               <input type="radio" name="v-origem" value="banco" style="width:auto;margin-top:2px;">
               <div>
                 <div style="font-size:13.5px;font-weight:600;">Conta bancária / PIX</div>
@@ -4978,6 +5034,7 @@ function valeModal(profId, view){
       const origem = root.querySelector('input[name="v-origem"]:checked').value;
       const note = root.querySelector('#v-note').value.trim();
       if(isNaN(amount) || amount<=0){ showToast('Informe um valor válido.'); return; }
+      if(soCaixa && (origem!=='caixa' || amount>2000)){ showToast('A recepção registra vale só do caixa, até R$ 2.000. Acima disso, fale com o dono.'); return; }
       if(origem==='caixa' && !openSession()){ showToast('Abra o caixa antes de dar vale em dinheiro.'); return; }
       e.currentTarget.disabled = true;   // FASE 5: dois toques não lançam dois vales
       update(s=>{
@@ -4998,7 +5055,8 @@ function valeModal(profId, view){
       });
       closeModal();
       showToast(`Vale de ${BRL(amount)} registrado (${origem==='caixa'?'saiu do caixa':'conta bancária'}).`);
-      if(view) renderComissoes(view);
+      if(aoTerminar) aoTerminar();
+      else if(view) renderComissoes(view);
     });
   });
 }
@@ -6089,12 +6147,19 @@ function renderClube(view){
     </div>
     <div class="card" style="padding:14px 18px;margin-bottom:14px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
       <div style="flex:1;min-width:220px;">
-        <label>Tolerância de atraso (dias) — o plano ainda vale até X dias depois do vencimento. Depois disso, o assinante só agenda pelo valor normal até pagar.</label>
+        <label>Tolerância de atraso (dias) — o plano ainda vale até X dias depois do vencimento. Depois disso, o plano para de valer até pagar.</label>
         <input id="f-tolerancia" type="number" min="0" max="30" value="${clubeTolerancia()}" style="width:100%;max-width:160px;">
       </div>
       <div style="flex:1;min-width:200px;">
         <label>Avisar o assinante quantos dias antes do vencimento (WhatsApp e e-mail)</label>
         <input id="f-aviso-venc" type="number" min="1" max="7" value="${clubeDiasAviso()}" style="width:100%;max-width:160px;">
+      </div>
+      <div style="flex:1 1 100%;">
+        <label>Assinante atrasado no link de agendamento</label>
+        <select id="f-trava-atraso" style="width:100%;max-width:520px;">
+          <option value="travar" ${clubeTravaAtrasado()?'selected':''}>Travar: só agenda pelo link depois de pagar a mensalidade</option>
+          <option value="liberar" ${clubeTravaAtrasado()?'':'selected'}>Deixar agendar pagando o valor normal do serviço</option>
+        </select>
       </div>
       <button class="btn btn-ghost" id="f-save-clube-regras">Salvar regra</button>
       ${state.subscriptionMembers.some(m=>m.arquivado) ? `<button class="btn btn-ghost" id="btn-ver-membros-arquivados">${verMembrosArquivados?'Voltar aos membros':'Ver arquivados ('+state.subscriptionMembers.filter(m=>m.arquivado).length+')'}</button>` : ''}
@@ -6341,6 +6406,12 @@ function renderClube(view){
           m.status = 'pago';
           m.lastPaymentDate = todayISO();
           m.lastPaymentAmount = p ? Number(p.price) : 0;
+          // o mês pago começa no vencimento (se estiver perto) ou hoje; o próximo vencimento anda junto
+          const limiteAntigo = new Date(todayISO()+'T12:00'); limiteAntigo.setDate(limiteAntigo.getDate()-31);
+          const base = DATA_ISO_RE.test(m.dueDate||'') && String(m.dueDate).slice(0,10) >= limiteAntigo.toISOString().slice(0,10)
+            ? String(m.dueDate).slice(0,10) : todayISO();
+          m.pagoAte = maisUmMes(base);
+          m.dueDate = m.pagoAte;
           registrarPagamentoNoHistorico(m, m.lastPaymentDate, m.lastPaymentAmount);
           registrarAuditoria(s, 'Marcou mensalidade como paga', `${m.name} — ${BRL(m.lastPaymentAmount)}`);
         });
@@ -6414,7 +6485,7 @@ function renderClube(view){
     renderClube(view);
   });
   view.querySelector('#btn-vinculos')?.addEventListener('click', ()=>vinculosModal(view));
-  view.querySelector('#btn-sync-asaas').addEventListener('click', syncAsaas);
+  view.querySelector('#btn-sync-asaas').addEventListener('click', ()=>syncAsaas());
   view.querySelector('#btn-copy-plans-link')?.addEventListener('click', ()=>{
     navigator.clipboard?.writeText(`${window.location.origin}${window.location.pathname}?planos=${state.onlineBooking.slug}`);
     showToast('Link da página de planos copiado.');
@@ -6466,9 +6537,10 @@ function renderClube(view){
   view.querySelector('#f-save-clube-regras')?.addEventListener('click', ()=>{
     const dias = Math.max(0, Math.min(30, parseInt(view.querySelector('#f-tolerancia').value, 10) || 0));
     const aviso = Math.max(1, Math.min(7, parseInt(view.querySelector('#f-aviso-venc').value, 10) || 1));
-    update(s=>{ s.clubSettings = { ...(s.clubSettings||{}), diasTolerancia: dias, diasAvisoVencimento: aviso };
-      registrarAuditoria(s, 'Mudou regras do clube', `tolerância ${dias} dia(s) · aviso ${aviso} dia(s) antes`); });
-    showToast(`Salvo: o plano vale até ${dias} dia(s) depois do vencimento; aviso ${aviso} dia(s) antes.`);
+    const travar = view.querySelector('#f-trava-atraso')?.value !== 'liberar';
+    update(s=>{ s.clubSettings = { ...(s.clubSettings||{}), diasTolerancia: dias, diasAvisoVencimento: aviso, travarAtrasado: travar };
+      registrarAuditoria(s, 'Mudou regras do clube', `tolerância ${dias} dia(s) · aviso ${aviso} dia(s) antes · atrasado ${travar?'travado':'paga valor normal'} no link`); });
+    showToast(`Salvo: o plano vale até ${dias} dia(s) depois do vencimento; aviso ${aviso} dia(s) antes; atrasado ${travar?'não agenda pelo link até pagar':'agenda pelo valor normal'}.`);
     renderClube(view);
   });
   view.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>{
@@ -6533,16 +6605,20 @@ function confirmAsaasImport(view){
   showToast(`Importado: ${novos} assinante(s) novo(s), ${atualizados} atualizado(s), ${planos} plano(s) criado(s).`);
   renderConfig(view);
 }
-async function syncAsaas(){
+// silencioso = conferência automática ao abrir o painel/clube: só avisa se
+// entrou pagamento novo (erro fica no console, o botão continua de reserva)
+async function syncAsaas(opcoes){
+  const silencioso = opcoes?.silencioso === true;
+  const avisar = msg => { if(silencioso) console.warn('Asaas (automático):', msg); else showToast(msg); };
   if(!(state.asaas.apiKey || state.asaas.configured)){
-    showToast('Configure sua API Key do Asaas em Integração Asaas antes de sincronizar.');
+    avisar('Configure sua API Key do Asaas em Integração Asaas antes de sincronizar.');
     return;
   }
-  showToast('Sincronizando com o Asaas...');
+  if(!silencioso) showToast('Sincronizando com o Asaas...');
   const { data: result, error } = await supa.functions.invoke('asaas-sync', { body: { action:'sync_status' } });
-  if(error){ showToast('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
-  if(result?.error){ showToast(result.error); return; }
-  if(result?.note){ showToast(result.note); return; }
+  if(error){ avisar('Falha ao chamar o servidor: '+(error.message||'erro desconhecido')); return; }
+  if(result?.error){ avisar(result.error); return; }
+  if(result?.note){ avisar(result.note); return; }
   let novosPagamentos = 0;
   const mesAtual = todayISO().slice(0,7);
   update(s=>{
@@ -6567,6 +6643,7 @@ async function syncAsaas(){
       // isso, uma data antiga ficava guardada e o sistema achava "venceu"
       // de novo mesmo já corrigido o status, tirando o benefício do plano.
       if(r.dueDate) m.dueDate = r.dueDate;
+      if(DATA_ISO_RE.test(r.pagoAte||'') && !(String(m.pagoAte||'') > r.pagoAte)) m.pagoAte = r.pagoAte;
       // Status "pago" sem data era resquício da importação. Se o Asaas diz
       // que não pagou este mês, limpamos para não parecer em dia.
       if(!r.pagouEsteMes && !r.lastPaymentDate) m.lastPaymentDate = null;
@@ -6574,9 +6651,52 @@ async function syncAsaas(){
     });
   });
   const total = (result.results||[]).length;
+  if(silencioso){ if(novosPagamentos > 0) showToast(`Clube: ${novosPagamentos} pagamento(s) novo(s) do Asaas entraram.`); return; }
   showToast(novosPagamentos > 0
     ? `Sincronizado — ${novosPagamentos} pagamento(s) novo(s) deste mês encontrado(s).`
     : `Sincronizado — ${total} assinante(s) verificados, nenhum pagamento novo neste mês.`);
+}
+
+/* ===== ASAAS AUTOMÁTICO =====
+   Só o dono (o servidor do Asaas confere que é o dono da barbearia).
+   - aviso automático (webhook): o servidor cadastra/religa na conta Asaas
+     com a chave salva — confere 1x por dia;
+   - conferência dos pagamentos ao abrir o Painel ou o Clube: no máximo a
+     cada 10 minutos, em segundo plano. O botão "Sincronizar" fica de reserva. */
+const ASAAS_SYNC_MIN = 10, ASAAS_AVISO_HORAS = 24;
+function lerMarca(k){ try { return Number(localStorage.getItem(k))||0; } catch(e){ return 0; } }
+function gravarMarca(k){ try { localStorage.setItem(k, String(Date.now())); } catch(e){} }
+function asaasAutomaticoPode(){
+  return !!supa && !!currentShop && !teamSession && userSession?.role === 'dono'
+    && !!(state?.asaas?.apiKey || state?.asaas?.configured);
+}
+async function ligarAvisoAsaas(){
+  const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'configurar_webhook' } });
+  if(error) return { error: 'Não foi possível falar com o servidor agora.' };
+  if(res?.error) return { error: res.error };
+  if(res?.acao && res.acao !== 'nada' || !state.asaas?.avisoAutomatico?.ligado){
+    const remoto = await buscarEstadoRemoto();   // o servidor gravou "aviso ligado"
+    if(remoto){ state = remoto; migrateState(); }
+  }
+  return res || {};
+}
+let asaasAutoRodando = false;
+async function asaasAutomatico(){
+  if(asaasAutoRodando || !asaasAutomaticoPode()) return;
+  asaasAutoRodando = true;
+  try{
+    const kAviso = 'pb_asaas_aviso_' + currentShop.id, kSync = 'pb_asaas_sync_' + currentShop.id;
+    if(Date.now() - lerMarca(kAviso) > ASAAS_AVISO_HORAS*3600000){
+      gravarMarca(kAviso);
+      const r = await ligarAvisoAsaas();
+      if(r.error) console.warn('Asaas (aviso automático):', r.error);
+    }
+    if(Date.now() - lerMarca(kSync) > ASAAS_SYNC_MIN*60000){
+      gravarMarca(kSync);
+      await syncAsaas({ silencioso:true });
+    }
+  } catch(e){ console.warn('Asaas automático:', e); }
+  finally{ asaasAutoRodando = false; }
 }
 function planModal(existing){
   const isEdit = !!existing;
@@ -7336,9 +7456,22 @@ function renderConfig(view){
     </div>
 
     <div class="card" style="padding:20px;margin-top:20px;">
-      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Atualização automática (webhook)</div>
-      <div style="font-size:13px;color:var(--muted-2);margin-bottom:10px;">Para que o status mude sozinho assim que um assinante pagar (sem precisar clicar em "Sincronizar"), cole este endereço no painel do Asaas em <b>Integrações → Webhooks</b>:</div>
-      <div class="font-mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;word-break:break-all;color:var(--gold-bright);">${SUPABASE_URL}/functions/v1/asaas-webhook</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
+        <div class="font-display" style="font-size:16px;font-weight:600;">Atualização automática</div>
+        ${(a.apiKey||a.configured) ? `<button class="btn btn-ghost" id="f-aviso-asaas">${ICON.link} ${a.avisoAutomatico?.ligado ? 'Conferir de novo' : 'Ligar agora'}</button>` : ''}
+      </div>
+      <div id="asaas-aviso-status" style="font-size:13px;line-height:1.6;">
+        ${a.avisoAutomatico?.ligado
+          ? '<span style="color:var(--ok);">✅ Ligada: quando um assinante paga, o Asaas avisa o sistema e o pote e o caixa do clube atualizam sozinhos.</span>'
+          : (a.apiKey||a.configured)
+            ? '<span style="color:var(--warn);">Ainda não ligada. Clique em "Ligar agora" — o sistema cadastra o aviso na sua conta Asaas sozinho.</span>'
+            : '<span style="color:var(--muted-2);">Salve a API Key acima: o aviso automático é ligado na hora.</span>'}
+      </div>
+      <div style="font-size:12px;color:var(--muted-2);margin-top:8px;">Além disso, ao abrir o Painel ou o Clube, o sistema confere os pagamentos no Asaas sozinho (no máximo a cada 10 minutos).</div>
+      <details style="margin-top:10px;font-size:12px;color:var(--muted-2);"><summary style="cursor:pointer;">Fazer manualmente (só se o automático der erro)</summary>
+        <div style="margin:8px 0 6px;">No painel do Asaas, em <b>Integrações → Webhooks</b>, cadastre este endereço:</div>
+        <div class="font-mono" style="font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;word-break:break-all;color:var(--gold-bright);">${SUPABASE_URL}/functions/v1/asaas-webhook</div>
+      </details>
     </div>
   `;
   view.querySelector('#f-save').addEventListener('click', async ()=>{
@@ -7352,7 +7485,9 @@ function renderConfig(view){
     });
     if(r!=='ok') return;
     if(novaChave){ state.asaas.apiKey = ''; state.asaas.configured = true; }   // não fica na memória do navegador
-    showToast('Configuração salva.');
+    showToast('Configuração salva. Ligando o aviso automático do Asaas...');
+    const aviso = await ligarAvisoAsaas();
+    showToast(aviso.error ? 'Chave salva, mas o aviso automático não ligou: ' + aviso.error : '✅ Asaas conectado: os pagamentos entram sozinhos.');
     renderConfig(view);
   });
   view.querySelector('#f-remove-key')?.addEventListener('click', async ()=>{
@@ -7422,7 +7557,17 @@ function renderConfig(view){
     `;
     view.querySelector('#f-confirm-import').addEventListener('click', ()=>confirmAsaasImport(view));
   });
-  view.querySelector('#f-sync').addEventListener('click', syncAsaas);
+  view.querySelector('#f-sync').addEventListener('click', ()=>syncAsaas());
+  view.querySelector('#f-aviso-asaas')?.addEventListener('click', async (e)=>{
+    const btn = e.currentTarget, out = view.querySelector('#asaas-aviso-status');
+    btn.disabled = true; out.innerHTML = '<span style="color:var(--muted);">Falando com o Asaas...</span>';
+    const r = await ligarAvisoAsaas();
+    btn.disabled = false;
+    if(r.error){ out.innerHTML = `<span style="color:var(--bad);">${esc(r.error)}</span>`; return; }
+    gravarMarca('pb_asaas_aviso_' + currentShop.id);
+    showToast('✅ Atualização automática ligada.');
+    renderConfig(view);
+  });
   view.querySelector('[data-goto="clube"]')?.addEventListener('click', ()=>{ route='clube'; render(); });
 }
 
@@ -9608,7 +9753,10 @@ function subscribeBookingNotifications(){
         const qtdLocal = (state?.appointments||[]).length;
         const concluidosRemoto = (remoto.appointments||[]).filter(a=>a.status==='concluido').length;
         const concluidosLocal = (state?.appointments||[]).filter(a=>a.status==='concluido').length;
-        if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal){
+        // clube: pagamento/status que o aviso do Asaas gravou no servidor
+        const assinaturaClube = d => JSON.stringify((d?.subscriptionMembers||[]).map(m=>[m.id, m.status, m.pagoAte, (m.paymentHistory||[]).length]));
+        const clubeMudou = assinaturaClube(remoto) !== assinaturaClube(state);
+        if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal || clubeMudou){
           // mantém a tela em dia com o que outro aparelho fez.
           // O salvamento já é protegido por merge — isto é só para a exibição.
           state = remoto;
@@ -11307,19 +11455,23 @@ document.addEventListener('click', function pbConfirmDelegate(e){
 });
 // Aviso na própria página, junto do botão: o alert() do navegador às vezes
 // não aparece no celular (e o cliente acha que o botão está travado).
-// aviso do clube atrasado no link (com botões) — o cliente decide seguir pelo valor normal ou pagar antes
-function pbAvisoClube(){
+// aviso do clube atrasado no link. Com a trava da barbearia (padrão), só
+// pagar; sem a trava, o cliente decide seguir pelo valor normal ou pagar antes.
+// (o servidor também recusa o agendamento travado — isto aqui é só o aviso)
+function pbAvisoClube(trava){
   const el = document.getElementById('pb-msg');
   if(!el) return;
   el.style.display = 'block';
   el.innerHTML = `<div style="border:1px solid var(--bad);background:var(--bad-bg);border-radius:10px;padding:12px 14px;color:var(--ink);">
     <b style="color:var(--bad);">Sua assinatura do clube está vencida.</b><br>
-    Enquanto não pagar, os serviços do plano não valem: este horário será cobrado pelo <b>valor normal</b>.
+    ${trava
+      ? 'Para agendar pelo link, pague a mensalidade do clube. Depois de pago, é só voltar aqui e marcar.'
+      : 'Enquanto não pagar, os serviços do plano não valem: este horário será cobrado pelo <b>valor normal</b>.'}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
       <a class="btn btn-gold" href="?cliente=${esc(pubBooking.slug)}" style="text-decoration:none;">Pagar minha assinatura</a>
-      <button class="btn btn-ghost" type="button" id="pb-clube-seguir">Agendar pelo valor normal</button>
+      ${trava ? '' : '<button class="btn btn-ghost" type="button" id="pb-clube-seguir">Agendar pelo valor normal</button>'}
     </div></div>`;
-  el.querySelector('#pb-clube-seguir').addEventListener('click', ()=>{ el.style.display='none'; enviarAgendamentoPublico(); });
+  el.querySelector('#pb-clube-seguir')?.addEventListener('click', ()=>{ el.style.display='none'; enviarAgendamentoPublico(); });
   el.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 function pbAviso(msg){
@@ -11366,11 +11518,12 @@ async function submitPublicBooking(){
   // CLUBE: assinante com a mensalidade vencida além da tolerância agenda pelo
   // valor normal — o plano só volta a valer depois de pagar. Avisamos ANTES.
   if(pubBooking.clubeAvisoTel !== soDigitos(phone)){
-    let situacao = null;
-    try { const r = await supa.rpc('public_club_status', { p_shop_id: pubBooking.shopId, p_phone: phone }); situacao = r.data?.situacao || null; } catch(e){}
+    let situacao = null, trava = false;
+    try { const r = await supa.rpc('public_club_status', { p_shop_id: pubBooking.shopId, p_phone: phone }); situacao = r.data?.situacao || null; trava = r.data?.trava === true; } catch(e){}
     if(situacao === 'atrasado'){
-      pubBooking.clubeAvisoTel = soDigitos(phone);
-      pbAvisoClube(); return;
+      // travado: mostra o aviso de novo a cada tentativa (não deixa "passar" no segundo toque)
+      if(!trava) pubBooking.clubeAvisoTel = soDigitos(phone);
+      pbAvisoClube(trava); return;
     }
   }
   // Se a barbearia aceita automaticamente, o horário já entra na agenda.
