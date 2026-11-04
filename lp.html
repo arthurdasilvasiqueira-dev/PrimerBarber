@@ -50,6 +50,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 .btn-pequeno{min-height:42px;padding:0 18px;font-size:15px;box-shadow:none;}
 .nota-cta{margin-top:12px;font-size:14.5px;color:var(--suave);}
 .nota-cta b{color:var(--texto);font-weight:600;}
+.nota-cta a{color:#4ade80;font-weight:600;}
 
 /* topo */
 .topo{position:sticky;top:0;z-index:50;background:rgba(10,11,13,.86);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid rgba(255,255,255,.06);}
@@ -259,6 +260,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
         <a class="btn" href="./?cadastro=1" data-cta="hero">Começar meu teste grátis
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         <div class="nota-cta"><b>14 dias grátis</b> · sem cartão de crédito · funciona no celular e no computador</div>
+        <div class="nota-cta" id="zap-hero" hidden>Prefere conversar antes? <a href="#" data-zap="hero" target="_blank" rel="noopener">Chame no WhatsApp</a></div>
       </div>
       <div class="vitrine">
         <img class="pc" src="img/landing/tela-dashboard-pc.webp" width="1600" height="1000" alt="Painel do Primer Barber com faturamento do dia, saldo do caixa, comissões e agenda de hoje">
@@ -588,7 +590,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
   });
 
   // WhatsApp de atendimento (vendas/ajuda para começar). Vazio = bloco escondido.
-  var WHATSAPP = '';
+  var WHATSAPP = '5522988467755';
   if (/^55\d{10,11}$/.test(WHATSAPP)) {
     var textoZap = encodeURIComponent('Oi! Vi o Primer Barber e quero ajuda para começar na minha barbearia.');
     document.querySelectorAll('[data-zap]').forEach(function(a){
@@ -598,6 +600,7 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
       });
     });
     document.getElementById('ajuda-zap').hidden = false;
+    document.getElementById('zap-hero').hidden = false;
   }
 
   // simulador do clube de assinatura
