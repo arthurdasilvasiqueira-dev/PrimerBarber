@@ -1054,8 +1054,7 @@ function soDigitos(s){ return String(s||'').replace(/\D/g,''); }
 // continuava aparecendo no aviso de cobrança para sempre.
 function assinantesEmAtraso(){
   return (state.subscriptionMembers||[]).filter(m=>{
-    // "pago" que já venceu (sem pagamento novo) também precisa de cobrança
-    if(m.status !== 'atrasado' && !(m.status === 'pago' && !m.arquivado && membroVencido(m))) return false;
+    if(!clubeEmAtraso(m)) return false;
     const plano = (state.subscriptionPlans||[]).find(p=>p.id===m.planId);
     return !!plano;
   });
@@ -1102,8 +1101,8 @@ function membroEmDia(m, dataISO){
   return false;   // pausado, cancelado
 }
 // trava do link de agendamento para quem está atrasado (Clube → Regras); padrão: trava
-// em atraso para cobrança: status "atrasado" ou "pago" que já venceu
-function clubeEmAtraso(m){ return !!m && !m.arquivado && (m.status === 'atrasado' || (m.status === 'pago' && membroVencido(m))); }
+// em atraso para cobrança: status "atrasado", ou "pago"/"pendente" que já venceu
+function clubeEmAtraso(m){ return !!m && !m.arquivado && (m.status === 'atrasado' || (['pago','pendente'].includes(m.status) && membroVencido(m))); }
 function clubeTravaAtrasado(){ return state.clubSettings?.travarAtrasado !== false; }
 
 // FASE 4B: quantos atendimentos este assinante já usou do plano no mês do
@@ -1117,6 +1116,9 @@ function usosDoPlanoNoMes(member, plan, appt){
 
 function clubMemberForClient(clientName){
   if(!clientName) return null;
+  // cliente com mais de uma assinatura (ex.: uma antiga vencida): vale a que está em dia
+  const emDia = clubMembersForClient(clientName).find(m=>membroEmDia(m));
+  if(emDia) return emDia;
   const alvo = normNome(clientName);
   const ativos = (state.subscriptionMembers||[]).filter(m=>m.status!=='cancelado' && !m.arquivado);
 
@@ -1755,8 +1757,8 @@ function asaasSummary(){
   const aberto = m => !pagou(m) && !['cancelado','pausado'].includes(m.status);
   return {
     asaasPago: inMonth.filter(pagou),
-    asaasPendente: inMonth.filter(m=>aberto(m) && m.status!=='atrasado'),
-    asaasAtrasado: inMonth.filter(m=>m.status==='atrasado'),
+    asaasPendente: inMonth.filter(m=>aberto(m) && !clubeEmAtraso(m)),
+    asaasAtrasado: inMonth.filter(m=>clubeEmAtraso(m) && !pagou(m)),
     cashPago: cash.filter(pagou),
     cashPendente: cash.filter(aberto),
     // soma o valor que de fato entrou no mês (igual ao pote), não o preço do plano
@@ -6369,7 +6371,7 @@ function renderClube(view){
           <div class="font-display" style="font-size:19px;font-weight:600;">Ainda não pagaram este mês</div>
           <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
         </div>
-        <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">${faltando.length} assinante(s). Quem paga pelo Asaas atualiza sozinho na sincronização.</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;">${faltando.length} assinante(s). Quem paga pelo Asaas atualiza sozinho. Se pagou em dinheiro no balcão, use "Recebi em dinheiro".</div>
         <div style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;">
           ${faltando.map(m=>{
             const p = state.subscriptionPlans.find(x=>x.id===m.planId);
@@ -6392,6 +6394,7 @@ function renderClube(view){
               <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
                 ${messageChannelRow(m.phone, msg)}
                 ${m.paymentMethod!=='asaas'?`<button class="btn btn-gold" data-marcar-pago="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi</button>`:''}
+                ${m.paymentMethod==='asaas' && userSession.role==='dono'?`<button class="btn btn-gold" data-receber-asaas="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi em dinheiro</button>`:''}
               </div>
             </div>`;
           }).join('')}
@@ -6399,6 +6402,17 @@ function renderClube(view){
       </div>
     `, root=>{
       root.querySelector('#m-close').addEventListener('click', closeModal);
+      // assinante do Asaas que pagou no balcão: o servidor dá baixa na cobrança do Asaas
+      root.querySelectorAll('[data-receber-asaas]').forEach(b=>b.addEventListener('click', async ()=>{
+        const m = state.subscriptionMembers.find(x=>x.id===b.dataset.receberAsaas);
+        if(!m || !confirm(`Confirmar que ${m.name} pagou em dinheiro?\n\nA cobrança em aberto será baixada no Asaas (sem entrar saldo lá) e o cliente não recebe aviso.`)) return;
+        b.disabled = true;
+        const ok = await acaoClubeNoServidor({ action:'receber_dinheiro', memberId:m.id });
+        if(!ok){ b.disabled = false; return; }
+        showToast('Pagamento em dinheiro registrado.');
+        closeModal();
+        renderClube(view);
+      }));
       root.querySelectorAll('[data-marcar-pago]').forEach(b=>b.addEventListener('click', ()=>{
         update(s=>{
           const m = s.subscriptionMembers.find(x=>x.id===b.dataset.marcarPago);
@@ -6685,7 +6699,7 @@ async function asaasAutomatico(){
   if(asaasAutoRodando || !asaasAutomaticoPode()) return;
   asaasAutoRodando = true;
   try{
-    const kAviso = 'pb_asaas_aviso_' + currentShop.id, kSync = 'pb_asaas_sync_' + currentShop.id;
+    const kAviso = 'pb_asaas_aviso2_' + currentShop.id, kSync = 'pb_asaas_sync_' + currentShop.id;
     if(Date.now() - lerMarca(kAviso) > ASAAS_AVISO_HORAS*3600000){
       gravarMarca(kAviso);
       const r = await ligarAvisoAsaas();
@@ -7564,7 +7578,7 @@ function renderConfig(view){
     const r = await ligarAvisoAsaas();
     btn.disabled = false;
     if(r.error){ out.innerHTML = `<span style="color:var(--bad);">${esc(r.error)}</span>`; return; }
-    gravarMarca('pb_asaas_aviso_' + currentShop.id);
+    gravarMarca('pb_asaas_aviso2_' + currentShop.id);
     showToast('✅ Atualização automática ligada.');
     renderConfig(view);
   });
@@ -9754,7 +9768,7 @@ function subscribeBookingNotifications(){
         const concluidosRemoto = (remoto.appointments||[]).filter(a=>a.status==='concluido').length;
         const concluidosLocal = (state?.appointments||[]).filter(a=>a.status==='concluido').length;
         // clube: pagamento/status que o aviso do Asaas gravou no servidor
-        const assinaturaClube = d => JSON.stringify((d?.subscriptionMembers||[]).map(m=>[m.id, m.status, m.pagoAte, (m.paymentHistory||[]).length]));
+        const assinaturaClube = d => JSON.stringify((d?.subscriptionMembers||[]).map(m=>[m.id, m.status, m.pagoAte, m.lastPaymentDate, (m.paymentHistory||[]).length]));
         const clubeMudou = assinaturaClube(remoto) !== assinaturaClube(state);
         if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal || clubeMudou){
           // mantém a tela em dia com o que outro aparelho fez.
