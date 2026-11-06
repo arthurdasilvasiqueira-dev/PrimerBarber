@@ -209,6 +209,10 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
 #pb-cookies .nao{background:transparent;color:var(--texto);border:1px solid #2c3038;}
 #pb-cookies .sim{background:var(--ouro);color:#14110a;border:0;}
 
+.motion-sec{padding:56px 0 64px;}
+.motion-sec .secao-titulo{margin-bottom:28px;}
+.motion-video{display:block;width:100%;max-width:980px;margin:0 auto;aspect-ratio:4/5;border-radius:16px;border:1px solid var(--borda);background:var(--fundo-2);box-shadow:0 30px 80px rgba(0,0,0,.6);}
+@media (min-width:720px){ .motion-video{aspect-ratio:16/9;} }
 @media (max-width:420px){ .topo-entrar{display:none;} }
 @media (min-width:720px){
   .planos{grid-template-columns:1fr 1fr;}
@@ -266,6 +270,17 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
         <img class="pc" src="img/landing/tela-dashboard-pc.webp" width="1600" height="1000" alt="Painel do Primer Barber com faturamento do dia, saldo do caixa, comissões e agenda de hoje">
         <img class="cel" src="img/landing/tela-agenda-cel.webp" width="780" height="1688" alt="Agenda do Primer Barber aberta no celular">
       </div>
+    </div>
+  </section>
+
+  <!-- 1b. VIDEO DO PRODUTO -->
+  <section class="motion-sec" id="video" aria-labelledby="t-motion">
+    <div class="conteudo">
+      <div class="secao-titulo">
+        <span class="chapeu">Veja funcionando</span>
+        <h2 id="t-motion">Enquanto você corta, o sistema trabalha</h2>
+      </div>
+      <video class="motion-video" id="motion-video" muted loop playsinline preload="none" aria-label="Vídeo sem som: o cliente marca sozinho, o lembrete sai no WhatsApp, o cliente sumido é chamado de volta, o caixa e as comissões ficam prontos e o clube de assinatura entra todo mês"></video>
     </div>
   </section>
 
@@ -625,6 +640,21 @@ em.ouro{color:var(--ouro-2);font-style:italic;}
       barra.querySelector('a').tabIndex = mostrar ? 0 : -1;
     }).observe(heroBtn);
   }
+})();
+</script>
+<script>
+/* Video do produto: 4:5 no celular, 16:9 no computador. Toca so quando esta na tela. */
+(function () {
+  var v = document.getElementById('motion-video');
+  if (!v) return;
+  var nome = window.matchMedia('(min-width:720px)').matches ? 'motion-16x9' : 'motion-4x5';
+  v.poster = 'img/landing/' + nome + '-capa.jpg';
+  v.src = 'img/landing/' + nome + '.mp4';
+  if (window.matchMedia('(prefers-reduced-motion:reduce)').matches || !('IntersectionObserver' in window)) { v.controls = true; return; }
+  new IntersectionObserver(function (itens) {
+    if (itens[0].isIntersecting) { var p = v.play(); if (p && p.catch) p.catch(function () { v.controls = true; }); }
+    else v.pause();
+  }, { threshold: 0.35 }).observe(v);
 })();
 </script>
 </body>
