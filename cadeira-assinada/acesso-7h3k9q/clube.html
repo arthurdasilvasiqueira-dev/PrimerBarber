@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Calculadora do Clube</title>
+<style>
+/* Layout: uma coluna no celular; no computador, formulário à esquerda e planos à direita.
+   Visual único e escuro com dourado, como pedido. Só fontes do sistema para funcionar sem internet. */
+:root {
+  color-scheme: dark;
+  --bg: #121110;
+  --surface: #1c1a17;
+  --surface-2: #26231f;
+  --line: #3b362e;
+  --fg: #f4efe6;
+  --muted: #b5ac9c;
+  --gold: #d9b45b;
+  --gold-strong: #f0cf7e;
+  --on-gold: #1a1408;
+  --danger: #ff6b5e;
+  --danger-bg: #3a1613;
+  --warn: #f3b344;
+  --warn-bg: #352710;
+  --ok: #6fd08c;
+  --ok-bg: #14301e;
+  --font-title: "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+}
+.pole {
+  height: 8px;
+  background: repeating-linear-gradient(135deg, var(--gold) 0 14px, var(--bg) 14px 28px);
+}
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 20px;
+}
+header { display: grid; gap: 4px; }
+.brand {
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+h1 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1.05;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.lead { margin: 4px 0 0; color: var(--muted); max-width: 60ch; }
+.cols { display: grid; gap: 20px; }
+.cols > * { min-width: 0; }
+@media (min-width: 900px) {
+  .cols { grid-template-columns: 420px minmax(0, 1fr); align-items: start; }
+}
+form, .plan, .topo {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+form { padding: 16px; display: grid; gap: 16px; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+.two > * { min-width: 0; }
+label, .legend { font-size: 14px; font-weight: 600; }
+.opt { color: var(--muted); font-weight: 400; }
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 5px; min-width: 0; }
+legend { padding: 0; }
+input[type="text"] {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+input[type="text"]::placeholder { color: #8d8576; }
+input.bad { border-color: var(--danger); }
+:focus-visible { outline: 2px solid var(--gold-strong); outline-offset: 2px; }
+.err { min-height: 0; font-size: 13px; color: var(--danger); }
+.err:empty { display: none; }
+.hint { font-size: 13px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 40px;
+  min-width: 52px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: var(--on-gold); font-weight: 700; }
+.btn {
+  min-height: 48px;
+  width: 100%;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn-gold { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
+.btn-gold:hover { background: var(--gold-strong); }
+.btn-line { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+.btn-line:hover { border-color: var(--gold); }
+.results { display: grid; gap: 16px; }
+.results > * { min-width: 0; }
+.topo { padding: 14px 16px; display: grid; gap: 2px; }
+.topo strong {
+  font-family: var(--font-title);
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.topo span { color: var(--muted); font-size: 14px; }
+.topo .sample { font-size: 14px; color: var(--gold-strong); }
+.plan { padding: 16px; display: grid; gap: 14px; }
+.plan h2 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 22px;
+  letter-spacing: .02em;
+}
+.inclui { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.preco { display: grid; gap: 0; }
+.preco small { color: var(--muted); font-size: 13px; }
+.preco b {
+  font-family: var(--font-title);
+  font-size: 38px;
+  line-height: 1.1;
+  color: var(--gold-strong);
+  font-variant-numeric: tabular-nums;
+}
+.linhas { margin: 0; display: grid; gap: 0; }
+.linhas div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+.linhas dt { color: var(--muted); }
+.linhas dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.alerta { padding: 10px 12px; border-radius: 8px; border: 1px solid; font-size: 14px; }
+.alerta strong { display: block; font-size: 15px; }
+.alerta.perigo { background: var(--danger-bg); border-color: var(--danger); }
+.alerta.perigo strong { color: var(--danger); }
+.alerta.atencao { background: var(--warn-bg); border-color: var(--warn); }
+.alerta.atencao strong { color: var(--warn); }
+.alerta.ok { background: var(--ok-bg); border-color: var(--ok); }
+.alerta.ok strong { color: var(--ok); }
+.sim-t { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.sim-box { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 4px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; border-top: 0; }
+th:first-child, td:first-child { text-align: left; }
+.falta { color: var(--muted); margin: 0; }
+.copia { display: grid; gap: 6px; }
+.copia textarea {
+  width: 100%;
+  min-height: 170px;
+  padding: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.vazio { padding: 16px; display: grid; gap: 10px; background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; }
+.vazio p { margin: 0; color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; max-width: 70ch; }
+footer p { margin: 0 0 6px; }
+h2.sec {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 19px;
+  color: var(--gold-strong);
+}
+.bloco { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.bloco:first-child { padding-top: 0; border-top: 0; }
+.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: end; }
+.three > * { min-width: 0; }
+.dias { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.dia { position: relative; }
+.dia input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.dia span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.dia input:checked + span { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.dia input:focus-visible + span { outline: 2px solid var(--gold-strong); outline-offset: 2px; }
+.servico { display: grid; gap: 8px; padding: 10px; background: var(--surface-2); border-radius: 8px; }
+.servico input[type="text"] { background: var(--surface); }
+.servico .dia span { background: var(--surface); }
+.servico .dia input:checked + span { background: var(--gold); }
+.servico.off > :not(.oferece) { display: none; }
+.oferece { display: flex; align-items: center; gap: 8px; font-weight: 700; min-height: 28px; }
+.oferece input { width: 20px; height: 20px; accent-color: var(--gold); }
+input:disabled { opacity: .75; }
+.resumo { margin: 0; }
+details.plan { padding: 0; display: block; }
+details.plan > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+details.plan > summary::-webkit-details-marker { display: none; }
+.s-nome { font-family: var(--font-title); font-size: 19px; font-weight: 700; }
+.s-preco { font-family: var(--font-title); font-size: 21px; font-weight: 700; color: var(--gold-strong); text-align: right; font-variant-numeric: tabular-nums; }
+.s-dias { color: var(--muted); font-size: 13px; }
+.pill { justify-self: end; padding: 1px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; border: 1px solid; white-space: nowrap; }
+.pill.perigo { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
+.pill.atencao { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+.pill.ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok); }
+.corpo { display: grid; gap: 14px; padding: 0 16px 16px; }
+.corpo > * { min-width: 0; }
+.dica { font-size: 13px; color: var(--muted); margin: 0; }
+.link-site { display: grid; place-items: center; text-align: center; text-decoration: none; }
+.sugs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sugs > * { min-width: 0; }
+.sug { display: grid; gap: 4px; align-content: start; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+.sug small { color: var(--muted); font-size: 13px; }
+.sug b { font-family: var(--font-title); font-size: 22px; color: var(--gold-strong); font-variant-numeric: tabular-nums; }
+.sug span { font-size: 13px; color: var(--muted); }
+.sug button { min-height: 38px; padding: 4px 6px; font: inherit; font-size: 14px; font-weight: 700; color: var(--fg); background: transparent; border: 1px solid var(--gold); border-radius: 7px; cursor: pointer; }
+.sug button:hover { background: var(--gold); color: var(--on-gold); }
+.tab-sug th:not(:first-child), .tab-sug td:not(:first-child) { color: var(--gold-strong); }
+.tab-sug th { color: var(--muted) !important; }
+.tab-sug td:first-child { white-space: normal; }
+</style>
+</head>
+<body>
+<div class="pole" aria-hidden="true"></div>
+<div class="wrap">
+  <header>
+    <div class="brand">Cadeira Assinada</div>
+    <h1>Calculadora de Preço do Clube</h1>
+    <p class="lead">Coloque o valor do corte e receba dois preços de assinatura: o ideal e um mais barato para atrair cliente.</p>
+  </header>
+  <div class="cols">
+    <form id="form" autocomplete="off" novalidate></form>
+    <section class="results" id="resultado" aria-live="polite" aria-label="Resultado dos planos"></section>
+  </div>
+  <footer>
+    <p>Todos os valores são simulações matemáticas. Não são promessa de ganho.</p>
+    <p>Nada do que você digita sai deste aparelho. Não precisa de cadastro.</p>
+  </footer>
+</div>
+
+<script id="contas">
+/* Contas puras, sem tela. A planilha usa as mesmas regras. */
+var MARGEM_MINIMA = 0.20;
+var MARGEM_APERTADA = 0.30;
+var DESCONTO_MAXIMO = 40;
+var POR_SEMANA = 4.33;
+var ASSINANTES = [10, 20, 30, 50];
+var DIAS = [['seg', 'Seg', 'segunda'], ['ter', 'Ter', 'terça'], ['qua', 'Qua', 'quarta'], ['qui', 'Qui', 'quinta'], ['sex', 'Sex', 'sexta'], ['sab', 'Sáb', 'sábado'], ['dom', 'Dom', 'domingo']];
+var TIPOS = [['basico', 'Básico'], ['premium', 'Premium']];
+var SERVICOS = [['cabelo', 'Cabelo'], ['barba', 'Barba'], ['combo', 'Cabelo + barba']];
+
+/* Aceita 40 | 40,5 | 40.5 | 1.234,56 | 1,234.56 | R$ 40,00. Vazio = null. Inválido = NaN. */
+function lerNumero(texto) {
+  var s = String(texto == null ? '' : texto).replace(/R\$/gi, '').replace(/%/g, '').replace(/\s/g, '');
+  if (s === '') return null;
+  if (!/^-?[\d.,]+$/.test(s) || !/\d/.test(s)) return NaN;
+  var v = s.lastIndexOf(','), p = s.lastIndexOf('.');
+  if (v >= 0 && p >= 0) {
+    if (v > p) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (v >= 0) {
+    if ((s.match(/,/g) || []).length > 1) return NaN;
+    s = s.replace(',', '.');
+  } else if (p >= 0) {
+    if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    else if ((s.match(/\./g) || []).length > 1) return NaN;
+  }
+  var n = Number(s);
+  return isFinite(n) ? n : NaN;
+}
+
+/* Arredonda para cima terminando em ,90. Ex.: 92,53 vira 92,90. */
+function final90(x) { return Math.max(Math.ceil(Math.round((x - 0.9) * 1e6) / 1e6), 0) + 0.9; }
+
+function centavos(n) { return Math.round((n + (n < 0 ? -1 : 1) * 1e-9) * 100) / 100; }
+
+function reais(n) {
+  var neg = n < 0;
+  var partes = Math.abs(centavos(n)).toFixed(2).split('.');
+  return (neg ? '-' : '') + 'R$ ' + partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + partes[1];
+}
+
+/* ['ter','qua','qui'] -> "terça a quinta" */
+function diasTexto(lista) {
+  var idx = DIAS.map(function (d, i) { return lista.indexOf(d[0]) >= 0 ? i : -1; }).filter(function (i) { return i >= 0; });
+  if (!idx.length) return '';
+  if (idx.length === 7) return 'todos os dias';
+  var seguidos = idx[idx.length - 1] - idx[0] === idx.length - 1;
+  if (idx.length === 1) return DIAS[idx[0]][2];
+  if (seguidos) return DIAS[idx[0]][2] + ' a ' + DIAS[idx[idx.length - 1]][2];
+  var nomes = idx.map(function (i) { return DIAS[i][2]; });
+  return nomes.slice(0, -1).join(', ') + ' e ' + nomes[nomes.length - 1];
+}
+
+function frequenciaTexto(v) {
+  if (Math.abs(v - POR_SEMANA) < 0.01) return '1 vez por semana';
+  return v === 1 ? '1 vez por mês' : String(v).replace('.', ',') + ' vezes por mês';
+}
+
+function base(d) {
+  return { contas: d.contas };
+}
+
+/* Base: valor do serviço x quantidade de cortes da base. Premium custa a mais. */
+function sugerir(pl, d) {
+  var av = d.avulso[pl.servico];
+  var cortes = d.baseCortes > 0 ? d.baseCortes : 2;
+  if (!(av > 0)) return { popular: null, ideal: null };
+  var fator = pl.tipo === 'premium' ? 1 + (d.premiumMais || 0) / 100 : 1;
+  var referencia = av * cortes * fator;
+  return {
+    referencia: centavos(av * cortes),
+    popular: centavos(final90(referencia * (1 + (d.ajPopular || 0) / 100))),
+    ideal: centavos(final90(referencia * (1 + (d.ajIdeal || 0) / 100)))
+  };
+}
+
+function calcularPlano(pl, d, b) {
+  var p = { tipo: pl.tipo, nomeTipo: pl.nomeTipo, servico: pl.servico, nomeServico: pl.nomeServico, dias: pl.dias, id: pl.tipo + '-' + pl.servico };
+  var v = d.visitas;
+  var av = d.avulso[pl.servico];
+  if (av != null && pl.tipo === 'premium' && d.extra > 0) { av += d.extra; p.comExtra = true; }
+  if (!(v > 0)) { p.pronto = false; p.falta = 'Preencha quantas vezes o cliente pode vir.'; return p; }
+  p.semAssinatura = av > 0 ? centavos(av * v) : null;
+  var sg = sugerir(pl, d);
+  p.popular = sg.popular;
+  p.ideal = sg.ideal;
+  if (d.modoPreco === 'desconto') {
+    p.desconto = d.desc[pl.tipo];
+    if (p.semAssinatura == null) { p.pronto = false; p.falta = 'Preencha o preço avulso deste serviço.'; return p; }
+    if (p.desconto == null) { p.pronto = false; p.falta = 'Preencha o desconto do plano ' + pl.nomeTipo + '.'; return p; }
+    p.preco = centavos(p.semAssinatura * (1 - p.desconto / 100));
+  } else if (pl.preco > 0) {
+    p.preco = pl.preco;
+  } else if (sg.ideal != null) {
+    p.preco = sg.ideal;
+    p.sugerido = true;
+  } else {
+    p.pronto = false;
+    p.falta = 'Preencha o preço avulso deste serviço para receber uma sugestão.';
+    return p;
+  }
+  p.pronto = true;
+  if (p.semAssinatura != null) {
+    p.economiaMes = centavos(p.semAssinatura - p.preco);
+    p.economiaAno = centavos(p.economiaMes * 12);
+    p.descontoCliente = Math.round(p.economiaMes / p.semAssinatura * 100);
+  }
+  var c = d.comissao;
+  var valor = c.valor > 0 ? c.valor : 0;
+  function comissaoDe(x) { return centavos(c.modo === 'corte' ? valor * v : x * valor / 100); }
+  p.comissao = comissaoDe(p.preco);
+  p.outros = centavos((d.outros || 0) * v);
+  p.sobra = centavos(p.preco - p.comissao - p.outros);
+  p.margem = p.sobra / p.preco;
+  p.temCusto = valor > 0 || p.outros > 0;
+  function detalhe(x) {
+    var sobra = centavos(x - comissaoDe(x) - p.outros);
+    return {
+      preco: x,
+      sobra: sobra,
+      desconto: p.semAssinatura != null ? Math.round((p.semAssinatura - x) / p.semAssinatura * 100) : null,
+      assinantes: b.contas > 0 && sobra > 0 ? Math.ceil(b.contas / sobra - 1e-9) : null
+    };
+  }
+  p.opIdeal = p.ideal != null ? detalhe(p.ideal) : null;
+  p.opPopular = p.popular != null ? detalhe(p.popular) : null;
+  p.assinantesContas = detalhe(p.preco).assinantes;
+  if (c.modo === 'pote') {
+    var f = d.fichas[pl.servico];
+    if (f > 0 && valor > 0) {
+      p.valorFicha = centavos(p.preco * valor / 100 / (v * f));
+      p.barbeiroPorAtend = centavos(p.preco * valor / 100 / v);
+    }
+  }
+  p.simulacao = ASSINANTES.map(function (q) {
+    return { assinantes: q, receita: centavos(p.preco * q), lucro: p.temCusto ? centavos(p.sobra * q) : null, agenda: null };
+  });
+  p.alerta = avaliar(p, d, b);
+  return p;
+}
+
+function contasTexto(p) {
+  return p.assinantesContas != null ? ' ' + p.assinantesContas + ' assinantes assim pagam as contas do mês.' : '';
+}
+
+function avaliar(p, d) {
+  if (!p.temCusto) return { nivel: 'atencao', rotulo: 'Falta comissão', titulo: 'Falta a comissão', texto: 'Coloque a comissão dos barbeiros para ver quanto sobra neste plano.' };
+  if (p.sobra <= 0) return { nivel: 'perigo', rotulo: 'Prejuízo', titulo: 'Prejuízo de ' + reais(-p.sobra) + ' por assinante', texto: 'O plano não cobre a comissão e o produto. Suba o preço ou reduza as visitas.' };
+  if (p.margem < MARGEM_MINIMA) return { nivel: 'perigo', rotulo: 'Barato demais', titulo: 'Plano barato demais', texto: 'Sobram só ' + reais(p.sobra) + ' por assinante.' + contasTexto(p) };
+  if (d.modoPreco === 'desconto' && p.desconto > DESCONTO_MAXIMO) return { nivel: 'perigo', rotulo: 'Desconto alto', titulo: 'Desconto alto demais', texto: 'Acima de ' + DESCONTO_MAXIMO + '% o plano fica barato demais.' };
+  if (p.economiaMes != null && p.economiaMes <= 0) return { nivel: 'atencao', rotulo: 'Sem economia', titulo: 'Cliente não economiza', texto: 'O plano sai igual ou mais caro que o avulso. Ele vai ter pouco motivo para assinar.' };
+  if (p.margem < MARGEM_APERTADA) return { nivel: 'atencao', rotulo: 'Apertado', titulo: 'Lucro apertado', texto: 'Sobram ' + reais(p.sobra) + ' por assinante.' + contasTexto(p) };
+  return { nivel: 'ok', rotulo: 'Seguro', titulo: 'Preço seguro', texto: 'Sobram ' + reais(p.sobra) + ' por assinante.' + contasTexto(p) };
+}
+
+function calcular(d) {
+  var b = base(d);
+  return { base: b, planos: d.planos.filter(function (pl) { return pl.on; }).map(function (pl) { return calcularPlano(pl, d, b); }) };
+}
+
+function textoWhatsApp(p, d, nome) {
+  var l = [];
+  if (nome) l.push('*' + nome + '*');
+  l.push('*Clube de assinatura: ' + p.nomeServico + ' ' + p.nomeTipo + '*', '');
+  l.push('Inclui: ' + p.nomeServico + (p.comExtra ? ' + sobrancelha ou pezinho' : '') + ', ' + frequenciaTexto(d.visitas));
+  var dias = diasTexto(p.dias);
+  if (dias) l.push('Válido: ' + dias);
+  l.push('Valor: ' + reais(p.preco) + ' por mês');
+  if (p.economiaMes > 0) {
+    l.push('', 'Sem assinatura você pagaria ' + reais(p.semAssinatura) + '.');
+    l.push('Você economiza ' + reais(p.economiaMes) + ' por mês (' + reais(p.economiaAno) + ' por ano).');
+  }
+  l.push('', 'Quer entrar no clube? É só me responder aqui.');
+  return l.join('\n');
+}
+</script>
+
+<script id="tela">
+(function () {
+  var CHAVE = 'calculadora-clube-v5';
+  var EXEMPLO = {
+    nome: 'Barbearia de Exemplo',
+    aluguel: '1.500,00', agua: '150,00', luz: '350,00', outrasContas: '',
+    visitas: '4,33', avCabelo: '40,00', avBarba: '20,00', avCombo: '60,00', extra: '',
+    modoCom: 'pote', valorCorte: '', valorPct: '', valorPote: '50', fCabelo: '4', fBarba: '2', fCombo: '6', outros: '',
+    modoPreco: 'digito', baseCortes: '2', ajIdeal: '12', ajPopular: '8', premiumMais: '20', descBasico: '20', descPremium: '10',
+    'basico-cabelo-on': true, 'basico-cabelo-preco': '65,90', 'basico-cabelo-dias': ['ter', 'qua', 'qui'],
+    'basico-barba-on': true, 'basico-barba-preco': '49,90', 'basico-barba-dias': ['ter', 'qua', 'qui'],
+    'basico-combo-on': true, 'basico-combo-preco': '110,90', 'basico-combo-dias': ['seg', 'ter', 'qua', 'qui'],
+    'premium-cabelo-on': true, 'premium-cabelo-preco': '79,90', 'premium-cabelo-dias': ['ter', 'qua', 'qui', 'sex', 'sab'],
+    'premium-barba-on': false, 'premium-barba-preco': '', 'premium-barba-dias': ['ter', 'qua', 'qui', 'sex', 'sab'],
+    'premium-combo-on': true, 'premium-combo-preco': '149,90', 'premium-combo-dias': ['ter', 'qua', 'qui', 'sex', 'sab']
+  };
+  function vazio() {
+    var s = {};
+    Object.keys(EXEMPLO).forEach(function (k) {
+      var v = EXEMPLO[k];
+      s[k] = Array.isArray(v) ? [] : typeof v === 'boolean' ? true : '';
+    });
+    s.modoCom = 'pote'; s.modoPreco = 'digito';
+    return s;
+  }
+  var S = {};
+  var ehExemplo = false;
+  var abertos = {};
+  var atual = null;
+  var dadosAtuais = null;
+  var el = function (id) { return document.getElementById(id); };
+  var SITE = '<div class="vazio"><p>Ainda não tem um sistema de agendamento com assinatura?</p>' +
+    '<a class="btn btn-gold link-site" id="site-sugerido" href="https://primerbarber.com.br/lp.html?utm_source=calculadora&amp;utm_medium=cadeira-assinada" target="_blank" rel="noopener">Conhecer o Primer Barber</a>' +
+    '<p class="dica">Indicação do autor. O Primer Barber é o meu sistema.</p></div>';
+
+  function esc(t) {
+    return String(t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function campo(k, rotulo, ph, tipo) {
+    return '<div class="field"><label for="' + k + '">' + rotulo + '</label>' +
+      '<input type="text" id="' + k + '" data-k="' + k + '" inputmode="' + (tipo || 'decimal') + '" placeholder="' + ph + '">' +
+      '<div class="err" data-err="' + k + '"></div></div>';
+  }
+  function caixasDias(k, rotulo) {
+    return '<div class="dias" role="group" aria-label="' + rotulo + '">' + DIAS.map(function (d) {
+      return '<label class="dia"><input type="checkbox" id="' + k + '-' + d[0] + '" data-dias="' + k + '" value="' + d[0] + '" aria-label="' + d[2] + '"><span>' + d[1] + '</span></label>';
+    }).join('') + '</div>';
+  }
+  function linhaServico(t, sv) {
+    var k = t[0] + '-' + sv[0];
+    return '<div class="servico" id="box-' + k + '">' +
+      '<label class="oferece"><input type="checkbox" id="' + k + '-on" data-on="' + k + '-on">' + sv[1] + '</label>' +
+      '<div class="field"><label for="' + k + '-preco">Preço por mês (R$)</label>' +
+      '<input type="text" id="' + k + '-preco" data-k="' + k + '-preco" inputmode="decimal" placeholder="Vazio usa o ideal">' +
+      '<div class="err" data-err="' + k + '-preco"></div></div>' +
+      '<div class="field"><span class="legend">Dias que vale</span>' + caixasDias(k + '-dias', 'Dias do plano ' + t[1] + ' ' + sv[1]) + '</div></div>';
+  }
+  function montarForm() {
+    el('form').innerHTML =
+      '<div class="bloco"><h2 class="sec">Sua barbearia</h2>' +
+        '<div class="field"><label for="nome">Nome da barbearia</label><input type="text" id="nome" data-k="nome" maxlength="60" placeholder="Ex.: Barbearia do Zé"></div>' +
+      '</div>' +
+      '<div class="bloco"><h2 class="sec">Contas do mês</h2><div class="two">' +
+        campo('aluguel', 'Aluguel (R$)', '1.500,00') + campo('agua', 'Água (R$)', '150,00') +
+        campo('luz', 'Luz (R$)', '350,00') + campo('outrasContas', 'Outras contas (R$)', '0,00') +
+      '</div></div>' +
+      '<div class="bloco"><h2 class="sec">Comissão dos barbeiros</h2>' +
+        '<div class="chips" id="modoCom">' +
+          '<button type="button" class="chip" data-modo="corte" id="com-corte">Por corte</button>' +
+          '<button type="button" class="chip" data-modo="pct" id="com-pct">Porcentagem</button>' +
+          '<button type="button" class="chip" data-modo="pote" id="com-pote">Pote de fichas</button>' +
+        '</div>' +
+        '<div id="painel-corte">' + campo('valorCorte', 'Quanto o barbeiro ganha por atendimento (R$)', '10,00') + '</div>' +
+        '<div id="painel-pct">' + campo('valorPct', 'Percentual da mensalidade para o barbeiro (%)', '40') + '</div>' +
+        '<div id="painel-pote" class="bloco" style="border-top:0;padding-top:0">' + campo('valorPote', 'Percentual que vai para o pote (%)', '50') +
+          '<div class="field"><span class="legend">Fichas que cada serviço gera</span><div class="three">' +
+          campo('fCabelo', 'Cabelo', '4') + campo('fBarba', 'Barba', '2') + campo('fCombo', 'Combo', '6') +
+          '</div></div></div>' +
+        campo('outros', 'Produto e taxa por atendimento (R$, opcional)', '0,00') +
+      '</div>' +
+      '<div class="bloco"><h2 class="sec">Frequência e preço avulso</h2>' +
+        '<div class="field"><label for="visitas">Quantas vezes por mês o cliente pode vir?</label>' +
+          '<div class="chips" id="chips-visitas">' +
+            '<button type="button" class="chip" data-v="4,33" id="v-semana">1 por semana</button>' +
+            '<button type="button" class="chip" data-v="2" id="v-2">2 no mês</button>' +
+            '<button type="button" class="chip" data-v="3" id="v-3">3 no mês</button>' +
+          '</div>' +
+          '<input type="text" id="visitas" data-k="visitas" inputmode="decimal" placeholder="Ou digite outro número">' +
+          '<div class="err" data-err="visitas"></div></div>' +
+        '<div class="two">' + campo('avCabelo', 'Cabelo avulso (R$)', '40,00') + campo('avBarba', 'Barba avulsa (R$)', '20,00') +
+          campo('avCombo', 'Combo avulso (R$)', '60,00') + campo('extra', 'Sobrancelha ou pezinho (R$, opcional)', '15,00') + '</div>' +
+        '<p class="dica">Se preencher sobrancelha ou pezinho, ela entra de brinde nos planos Premium.</p>' +
+      '</div>' +
+      '<div class="bloco"><h2 class="sec">Seus planos</h2>' +
+        '<div class="chips" id="modoPreco">' +
+          '<button type="button" class="chip" data-mp="digito" id="mp-digito">Eu digito o preço</button>' +
+          '<button type="button" class="chip" data-mp="desconto" id="mp-desconto">Calcular por desconto</button>' +
+        '</div>' +
+        '<p class="dica">A sugestão parte do valor do serviço. Exemplo: corte de R$ 40 x 2 = R$ 80. Com 8% a mais, dá R$ 86,90. Com 12%, dá R$ 89,90. Deixe o preço vazio para usar o ideal.</p>' +
+        campo('baseCortes', 'Base do preço: quantos cortes', '2') +
+        '<div class="two">' + campo('ajIdeal', 'Ideal: quanto acima da base (%)', '12') + campo('ajPopular', 'Popular: quanto acima da base (%)', '8') + '</div>' +
+        campo('premiumMais', 'Quanto o Premium custa a mais que o Básico (%)', '20') +
+        '<div class="two" id="painel-desc">' + campo('descBasico', 'Desconto do Básico (%)', '20') + campo('descPremium', 'Desconto do Premium (%)', '10') + '</div>' +
+        TIPOS.map(function (t) {
+          return '<div class="field"><span class="legend">Plano ' + t[1] + '</span>' + SERVICOS.map(function (sv) { return linhaServico(t, sv); }).join('') + '</div>';
+        }).join('') +
+      '</div>' +
+      '<button type="button" class="btn btn-line" id="limpar">Limpar tudo</button>';
+  }
+
+  function guardar() {
+    try { localStorage.setItem(CHAVE, JSON.stringify(S)); } catch (e) { /* segue funcionando sem guardar */ }
+  }
+  function recuperar() {
+    try { var t = localStorage.getItem(CHAVE); return t ? JSON.parse(t) : null; } catch (e) { return null; }
+  }
+  function preencher() {
+    document.querySelectorAll('[data-k]').forEach(function (i) { i.value = S[i.dataset.k] || ''; });
+    document.querySelectorAll('[data-dias]').forEach(function (i) { i.checked = (S[i.dataset.dias] || []).indexOf(i.value) >= 0; });
+    document.querySelectorAll('[data-on]').forEach(function (i) { i.checked = S[i.dataset.on] !== false; });
+  }
+
+  function num(k, regra) {
+    var n = lerNumero(S[k]);
+    var msg = '';
+    if (n !== null) msg = isNaN(n) ? 'Digite só números. Exemplo: 35,00' : (regra ? regra(n) : (n < 0 ? 'O valor não pode ser negativo.' : ''));
+    var e = document.querySelector('[data-err="' + k + '"]');
+    if (e) e.textContent = msg;
+    if (el(k)) el(k).classList.toggle('bad', !!msg);
+    return msg ? null : n;
+  }
+  function pct(n) { return n < 0 || n > 100 ? 'Use um valor de 0 a 100.' : ''; }
+
+  function lerDados() {
+    var modo = S.modoCom;
+    var valores = { corte: num('valorCorte'), pct: num('valorPct', pct), pote: num('valorPote', pct) };
+    var somar = ['aluguel', 'agua', 'luz', 'outrasContas'].reduce(function (t, k) { return t + (num(k) || 0); }, 0);
+    var planos = [];
+    TIPOS.forEach(function (t) {
+      SERVICOS.forEach(function (sv) {
+        var k = t[0] + '-' + sv[0];
+        planos.push({ tipo: t[0], nomeTipo: t[1], servico: sv[0], nomeServico: sv[1], on: S[k + '-on'] !== false, preco: num(k + '-preco'), dias: S[k + '-dias'] || [] });
+      });
+    });
+    return {
+      contas: somar,
+      visitas: num('visitas', function (n) { return n < 0.5 || n > 31 ? 'Use um número de 0,5 a 31.' : ''; }),
+      avulso: { cabelo: num('avCabelo'), barba: num('avBarba'), combo: num('avCombo') },
+      extra: num('extra'),
+      comissao: { modo: modo, valor: valores[modo] },
+      fichas: { cabelo: num('fCabelo'), barba: num('fBarba'), combo: num('fCombo') },
+      outros: num('outros'),
+      premiumMais: num('premiumMais'),
+      baseCortes: num('baseCortes'),
+      ajIdeal: num('ajIdeal'),
+      ajPopular: num('ajPopular'),
+      modoPreco: S.modoPreco,
+      desc: { basico: num('descBasico', function (n) { return n < 0 || n >= 100 ? 'Use de 0 a 99%.' : ''; }), premium: num('descPremium', function (n) { return n < 0 || n >= 100 ? 'Use de 0 a 99%.' : ''; }) },
+      planos: planos
+    };
+  }
+
+  function marcar() {
+    ['corte', 'pct', 'pote'].forEach(function (m) {
+      el('com-' + m).setAttribute('aria-pressed', String(S.modoCom === m));
+      el('painel-' + m).hidden = S.modoCom !== m;
+    });
+    ['digito', 'desconto'].forEach(function (m) { el('mp-' + m).setAttribute('aria-pressed', String(S.modoPreco === m)); });
+    el('painel-desc').hidden = S.modoPreco !== 'desconto';
+    var v = lerNumero(S.visitas);
+    document.querySelectorAll('#chips-visitas .chip').forEach(function (b) { b.setAttribute('aria-pressed', String(lerNumero(b.dataset.v) === v)); });
+    TIPOS.forEach(function (t) {
+      SERVICOS.forEach(function (sv) {
+        var k = t[0] + '-' + sv[0];
+        el('box-' + k).classList.toggle('off', S[k + '-on'] === false);
+        el(k + '-preco').disabled = S.modoPreco === 'desconto';
+      });
+    });
+  }
+
+  function opcao(p, titulo, o, resumo) {
+    return '<div class="sug"><small>' + titulo + '</small><b>' + reais(o.preco) + '</b><span>' + resumo + '</span>' +
+      (o.desconto != null ? '<span>Cliente economiza ' + o.desconto + '%</span>' : '') +
+      (p.temCusto ? '<span>Sobra ' + reais(o.sobra) + '</span>' : '') +
+      (o.assinantes != null ? '<span>' + o.assinantes + ' assinantes pagam as contas</span>' : '') +
+      '<button type="button" data-usar="' + p.id + '" data-valor="' + o.preco + '">Usar este preço</button></div>';
+  }
+  function sugestoes(p) {
+    if (!p.opIdeal && !p.opPopular) return '';
+    return '<div><p class="sim-t">Preços sugeridos</p><div class="sugs">' +
+      (p.opIdeal ? opcao(p, 'Ideal', p.opIdeal, 'Melhor para o caixa') : '') +
+      (p.opPopular ? opcao(p, 'Popular', p.opPopular, 'Mais barato, atrai cliente') : '') +
+      '</div></div>';
+  }
+  function tabelaSugestoes(planos) {
+    var com = planos.filter(function (p) { return p.pronto && (p.ideal != null || p.popular != null); });
+    if (!com.length) return '';
+    return '<div class="topo"><p class="sim-t">Preços sugeridos</p><div class="sim-box"><table class="tab-sug"><thead><tr><th>Plano</th><th>Popular</th><th>Ideal</th></tr></thead><tbody>' +
+      com.map(function (p) {
+        return '<tr><td>' + esc(p.nomeServico + ' ' + p.nomeTipo) + '</td><td>' + (p.popular != null ? reais(p.popular) : '-') + '</td><td>' + (p.ideal != null ? reais(p.ideal) : '-') + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+  }
+
+  function cartao(p, d) {
+    if (!p.pronto) {
+      return '<article class="plan" style="padding:14px 16px"><div class="s-nome">' + esc(p.nomeServico + ' ' + p.nomeTipo) + '</div><p class="falta">' + esc(p.falta) + '</p></article>';
+    }
+    var a = p.alerta;
+    var dias = diasTexto(p.dias);
+    var linhas = [];
+    function linha(t, v) { linhas.push('<div><dt>' + t + '</dt><dd>' + v + '</dd></div>'); }
+    if (p.semAssinatura != null) {
+      linha('Sem assinatura, por mês', reais(p.semAssinatura));
+      linha('Cliente economiza por mês', reais(p.economiaMes));
+      linha('Cliente economiza por ano', reais(p.economiaAno));
+      linha('Desconto para o cliente', p.descontoCliente + '%');
+    }
+    if (p.temCusto) {
+      linha(d.comissao.modo === 'pote' ? 'Vai para o pote' : 'Comissão', reais(p.comissao));
+      if (p.outros > 0) linha('Produto e taxa', reais(p.outros));
+      linha('Lucro por assinante, antes das contas', reais(p.sobra));
+      if (p.assinantesContas != null) linha('Assinantes para pagar as contas', String(p.assinantesContas));
+    }
+    if (p.valorFicha != null) {
+      linha('Valor estimado da ficha', reais(p.valorFicha));
+      linha('Barbeiro recebe por atendimento', reais(p.barbeiroPorAtend));
+    }
+    var comLucro = p.temCusto, comAgenda = p.simulacao[0].agenda != null;
+    var sim = p.simulacao.map(function (s) {
+      return '<tr><td>' + s.assinantes + '</td><td>' + reais(s.receita) + '</td>' +
+        (comLucro ? '<td>' + reais(s.lucro) + '</td>' : '') + (comAgenda ? '<td>' + s.agenda + '%</td>' : '') + '</tr>';
+    }).join('');
+    return '<details class="plan" id="plano-' + p.id + '" data-plano="' + p.id + '"' + (abertos[p.id] ? ' open' : '') + '>' +
+      '<summary><span class="s-nome">' + esc(p.nomeServico + ' ' + p.nomeTipo) + '</span><span class="s-preco">' + reais(p.preco) + '</span>' +
+      '<span class="s-dias">' + esc((p.sugerido ? 'Preço ideal. ' : '') + (dias ? 'Vale ' + dias : 'Marque os dias')) + '</span><span class="pill ' + a.nivel + '">' + esc(a.rotulo) + '</span></summary>' +
+      '<div class="corpo">' +
+      '<p class="inclui">' + esc(p.nomeServico + (p.comExtra ? ' + sobrancelha ou pezinho' : '') + ', ' + frequenciaTexto(d.visitas)) + '</p>' +
+      '<div class="alerta ' + a.nivel + '" role="status"><strong>' + esc(a.titulo) + '</strong>' + esc(a.texto) + '</div>' +
+      sugestoes(p) +
+      '<dl class="linhas">' + linhas.join('') + '</dl>' +
+      '<div><p class="sim-t">Simulação de receita mensal fixa</p><div class="sim-box"><table><thead><tr><th>Assinantes</th><th>Receita</th>' +
+        (comLucro ? '<th>Sobra</th>' : '') + (comAgenda ? '<th>Agenda</th>' : '') + '</tr></thead><tbody>' + sim + '</tbody></table></div>' +
+        (comAgenda ? '<p class="dica">Agenda é quanto dos seus atendimentos do mês esses assinantes usariam.</p>' : '') + '</div>' +
+      '<div class="copia"><button type="button" class="btn btn-gold" data-copiar="' + p.id + '">Copiar texto do plano</button><div data-saida="' + p.id + '"></div></div>' +
+      '</div></details>';
+  }
+
+  function desenhar() {
+    var d = lerDados();
+    marcar();
+    var alvo = el('resultado');
+    var nada = !['nome', 'aluguel', 'agua', 'luz', 'outrasContas', 'visitas', 'avCabelo', 'avBarba', 'avCombo', 'basico-cabelo-preco', 'basico-barba-preco', 'basico-combo-preco', 'premium-cabelo-preco', 'premium-barba-preco', 'premium-combo-preco'].some(function (k) { return String(S[k] || '').trim(); });
+    if (nada) {
+      atual = null;
+      alvo.innerHTML = '<div class="vazio"><p>Tudo limpo. Preencha o valor do corte, a comissão e as contas para ver os preços.</p><button type="button" class="btn btn-line" id="ver-exemplo">Ver um exemplo</button></div>';
+      return;
+    }
+    atual = calcular(d);
+    dadosAtuais = d;
+    var b = atual.base;
+    var nome = String(S.nome || '').trim();
+    var resumo = [];
+    if (b.contas > 0) resumo.push(['Contas do mês', reais(b.contas)]);
+    alvo.innerHTML =
+      '<div class="topo"><strong>' + esc(nome || 'Sua barbearia') + '</strong><span>Clube de assinatura. Toque em um plano para ver a conta.</span>' +
+      (ehExemplo ? '<span class="sample">Valores de exemplo. Troque pelos seus.</span>' : '') +
+      (resumo.length ? '<dl class="linhas resumo">' + resumo.map(function (r) { return '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>'; }).join('') + '</dl>' : '') + '</div>' +
+      tabelaSugestoes(atual.planos) +
+      (atual.planos.length ? atual.planos.map(function (p) { return cartao(p, d); }).join('') : '<div class="vazio"><p>Marque ao menos um plano para oferecer.</p></div>') +
+      SITE;
+  }
+
+  function aviso(botao, texto) {
+    botao.textContent = texto;
+    setTimeout(function () { botao.textContent = 'Copiar texto do plano'; }, 2200);
+  }
+  function mostrarParaCopiar(id, texto) {
+    var caixa = document.querySelector('[data-saida="' + id + '"]');
+    caixa.innerHTML = '<p class="hint">Toque no texto, selecione tudo e copie.</p><textarea readonly aria-label="Texto do plano"></textarea>';
+    var t = caixa.querySelector('textarea');
+    t.value = texto;
+    t.focus();
+    t.select();
+  }
+  function copiar(botao) {
+    var id = botao.dataset.copiar;
+    var plano = atual.planos.filter(function (p) { return p.id === id; })[0];
+    if (!plano) return;
+    var texto = textoWhatsApp(plano, dadosAtuais, String(S.nome || '').trim());
+    var feito = plano.alerta.nivel === 'perigo' ? 'Copiado, mas o alerta está vermelho' : 'Texto copiado. Cole no WhatsApp';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(function () { aviso(botao, feito); }, function () { mostrarParaCopiar(id, texto); });
+    } else {
+      mostrarParaCopiar(id, texto);
+    }
+  }
+  function mudou() { ehExemplo = false; guardar(); desenhar(); }
+
+  montarForm();
+  var form = el('form');
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
+  form.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.dataset.k) { S[t.dataset.k] = t.value; mudou(); }
+  });
+  form.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.dataset.dias) {
+      var k = t.dataset.dias, lista = (S[k] || []).filter(function (x) { return x !== t.value; });
+      if (t.checked) lista.push(t.value);
+      S[k] = lista;
+      mudou();
+    } else if (t.dataset.on) {
+      S[t.dataset.on] = t.checked;
+      mudou();
+    }
+  });
+  form.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.modo) { S.modoCom = b.dataset.modo; mudou(); }
+    else if (b.dataset.mp) { S.modoPreco = b.dataset.mp; mudou(); }
+    else if (b.dataset.v) { S.visitas = b.dataset.v; el('visitas').value = b.dataset.v; mudou(); }
+    else if (b.id === 'limpar') { S = vazio(); abertos = {}; preencher(); mudou(); }
+  });
+  var res = el('resultado');
+  res.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-copiar]');
+    if (b) { copiar(b); return; }
+    var u = e.target.closest('[data-usar]');
+    if (u) {
+      S[u.dataset.usar + '-preco'] = reais(Number(u.dataset.valor)).replace('R$ ', '');
+      S.modoPreco = 'digito';
+      preencher();
+      mudou();
+      return;
+    }
+    if (e.target.id === 'ver-exemplo') { S = JSON.parse(JSON.stringify(EXEMPLO)); ehExemplo = true; preencher(); desenhar(); }
+  });
+  res.addEventListener('toggle', function (e) {
+    if (e.target.dataset && e.target.dataset.plano) abertos[e.target.dataset.plano] = e.target.open;
+  }, true);
+
+  var salvo = recuperar();
+  if (salvo) { S = salvo; } else { S = JSON.parse(JSON.stringify(EXEMPLO)); ehExemplo = true; }
+  preencher();
+  desenhar();
+})();
+</script>
+</body>
+</html>

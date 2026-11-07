@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Calculadora do Preço do Corte</title>
+<style>
+/* Layout: uma coluna no celular; no computador, formulário à esquerda e planos à direita.
+   Visual único e escuro com dourado, como pedido. Só fontes do sistema para funcionar sem internet. */
+:root {
+  color-scheme: dark;
+  --bg: #121110;
+  --surface: #1c1a17;
+  --surface-2: #26231f;
+  --line: #3b362e;
+  --fg: #f4efe6;
+  --muted: #b5ac9c;
+  --gold: #d9b45b;
+  --gold-strong: #f0cf7e;
+  --on-gold: #1a1408;
+  --danger: #ff6b5e;
+  --danger-bg: #3a1613;
+  --warn: #f3b344;
+  --warn-bg: #352710;
+  --ok: #6fd08c;
+  --ok-bg: #14301e;
+  --font-title: "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+}
+.pole {
+  height: 8px;
+  background: repeating-linear-gradient(135deg, var(--gold) 0 14px, var(--bg) 14px 28px);
+}
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 20px;
+}
+header { display: grid; gap: 4px; }
+.brand {
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+h1 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1.05;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.lead { margin: 4px 0 0; color: var(--muted); max-width: 60ch; }
+.cols { display: grid; gap: 20px; }
+.cols > * { min-width: 0; }
+@media (min-width: 900px) {
+  .cols { grid-template-columns: 420px minmax(0, 1fr); align-items: start; }
+}
+form, .plan, .topo {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+form { padding: 16px; display: grid; gap: 16px; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+.two > * { min-width: 0; }
+label, .legend { font-size: 14px; font-weight: 600; }
+.opt { color: var(--muted); font-weight: 400; }
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 5px; min-width: 0; }
+legend { padding: 0; }
+input[type="text"] {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+input[type="text"]::placeholder { color: #8d8576; }
+input.bad { border-color: var(--danger); }
+:focus-visible { outline: 2px solid var(--gold-strong); outline-offset: 2px; }
+.err { min-height: 0; font-size: 13px; color: var(--danger); }
+.err:empty { display: none; }
+.hint { font-size: 13px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 40px;
+  min-width: 52px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: var(--on-gold); font-weight: 700; }
+.btn {
+  min-height: 48px;
+  width: 100%;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn-gold { background: var(--gold); border: 1px solid var(--gold); color: var(--on-gold); }
+.btn-gold:hover { background: var(--gold-strong); }
+.btn-line { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+.btn-line:hover { border-color: var(--gold); }
+.results { display: grid; gap: 16px; }
+.results > * { min-width: 0; }
+.topo { padding: 14px 16px; display: grid; gap: 2px; }
+.topo strong {
+  font-family: var(--font-title);
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.topo span { color: var(--muted); font-size: 14px; }
+.topo .sample { font-size: 14px; color: var(--gold-strong); }
+.plan { padding: 16px; display: grid; gap: 14px; }
+.plan h2 {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 22px;
+  letter-spacing: .02em;
+}
+.inclui { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.preco { display: grid; gap: 0; }
+.preco small { color: var(--muted); font-size: 13px; }
+.preco b {
+  font-family: var(--font-title);
+  font-size: 38px;
+  line-height: 1.1;
+  color: var(--gold-strong);
+  font-variant-numeric: tabular-nums;
+}
+.linhas { margin: 0; display: grid; gap: 0; }
+.linhas div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+.linhas dt { color: var(--muted); }
+.linhas dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.alerta { padding: 10px 12px; border-radius: 8px; border: 1px solid; font-size: 14px; }
+.alerta strong { display: block; font-size: 15px; }
+.alerta.perigo { background: var(--danger-bg); border-color: var(--danger); }
+.alerta.perigo strong { color: var(--danger); }
+.alerta.atencao { background: var(--warn-bg); border-color: var(--warn); }
+.alerta.atencao strong { color: var(--warn); }
+.alerta.ok { background: var(--ok-bg); border-color: var(--ok); }
+.alerta.ok strong { color: var(--ok); }
+.sim-t { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.sim-box { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 4px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; border-top: 0; }
+th:first-child, td:first-child { text-align: left; }
+.falta { color: var(--muted); margin: 0; }
+.copia { display: grid; gap: 6px; }
+.copia textarea {
+  width: 100%;
+  min-height: 170px;
+  padding: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.vazio { padding: 16px; display: grid; gap: 10px; background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; }
+.vazio p { margin: 0; color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; max-width: 70ch; }
+footer p { margin: 0 0 6px; }
+h2.sec {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: 19px;
+  color: var(--gold-strong);
+}
+.bloco { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.bloco:first-child { padding-top: 0; border-top: 0; }
+.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: end; }
+.three > * { min-width: 0; }
+.dias { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.dia { position: relative; }
+.dia input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.dia span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.dia input:checked + span { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.dia input:focus-visible + span { outline: 2px solid var(--gold-strong); outline-offset: 2px; }
+.servico { display: grid; gap: 8px; padding: 10px; background: var(--surface-2); border-radius: 8px; }
+.servico input[type="text"] { background: var(--surface); }
+.servico .dia span { background: var(--surface); }
+.servico .dia input:checked + span { background: var(--gold); }
+.servico.off > :not(.oferece) { display: none; }
+.oferece { display: flex; align-items: center; gap: 8px; font-weight: 700; min-height: 28px; }
+.oferece input { width: 20px; height: 20px; accent-color: var(--gold); }
+input:disabled { opacity: .75; }
+.resumo { margin: 0; }
+details.plan { padding: 0; display: block; }
+details.plan > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+details.plan > summary::-webkit-details-marker { display: none; }
+.s-nome { font-family: var(--font-title); font-size: 19px; font-weight: 700; }
+.s-preco { font-family: var(--font-title); font-size: 21px; font-weight: 700; color: var(--gold-strong); text-align: right; font-variant-numeric: tabular-nums; }
+.s-dias { color: var(--muted); font-size: 13px; }
+.pill { justify-self: end; padding: 1px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; border: 1px solid; white-space: nowrap; }
+.pill.perigo { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
+.pill.atencao { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+.pill.ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok); }
+.corpo { display: grid; gap: 14px; padding: 0 16px 16px; }
+.corpo > * { min-width: 0; }
+.dica { font-size: 13px; color: var(--muted); margin: 0; }
+.link-site { display: grid; place-items: center; text-align: center; text-decoration: none; }
+.sugs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sugs > * { min-width: 0; }
+.sug { display: grid; gap: 4px; align-content: start; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+.sug small { color: var(--muted); font-size: 13px; }
+.sug b { font-family: var(--font-title); font-size: 22px; color: var(--gold-strong); font-variant-numeric: tabular-nums; }
+.sug span { font-size: 13px; color: var(--muted); }
+.sug button { min-height: 38px; padding: 4px 6px; font: inherit; font-size: 14px; font-weight: 700; color: var(--fg); background: transparent; border: 1px solid var(--gold); border-radius: 7px; cursor: pointer; }
+.sug button:hover { background: var(--gold); color: var(--on-gold); }
+.tab-sug th:not(:first-child), .tab-sug td:not(:first-child) { color: var(--gold-strong); }
+.tab-sug th { color: var(--muted) !important; }
+.tab-sug td:first-child { white-space: normal; }
+.dois { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.dois > * { min-width: 0; }
+.valor { display: grid; gap: 2px; padding: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+.valor.top { border-color: var(--gold); }
+.valor small { color: var(--muted); font-size: 13px; }
+.valor b { font-family: var(--font-title); font-size: 30px; line-height: 1.1; white-space: nowrap; color: var(--gold-strong); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="pole" aria-hidden="true"></div>
+<div class="wrap">
+  <header>
+    <div class="brand">Cadeira Assinada</div>
+    <h1>Calculadora do Preço do Corte</h1>
+    <p class="lead">Descubra quanto cobrar no corte para pagar as contas, pagar você e ainda sobrar lucro.</p>
+  </header>
+  <div class="cols">
+    <form id="form" autocomplete="off" novalidate></form>
+    <section class="results" id="resultado" aria-live="polite" aria-label="Resultado do preço do corte"></section>
+  </div>
+  <footer>
+    <p>Todos os valores são simulações matemáticas. Não são promessa de ganho.</p>
+    <p>Nada do que você digita sai deste aparelho. Não precisa de cadastro.</p>
+  </footer>
+</div>
+
+<script id="contas">
+var DIAS = [['seg', 'Seg', 'segunda'], ['ter', 'Ter', 'terça'], ['qua', 'Qua', 'quarta'], ['qui', 'Qui', 'quinta'], ['sex', 'Sex', 'sexta'], ['sab', 'Sáb', 'sábado'], ['dom', 'Dom', 'domingo']];
+var OCUPACOES = [40, 60, 80];
+/* Aceita 40 | 40,5 | 40.5 | 1.234,56 | 1,234.56 | R$ 40,00. Vazio = null. Inválido = NaN. */
+function lerNumero(texto) {
+  var s = String(texto == null ? '' : texto).replace(/R\$/gi, '').replace(/%/g, '').replace(/\s/g, '');
+  if (s === '') return null;
+  if (!/^-?[\d.,]+$/.test(s) || !/\d/.test(s)) return NaN;
+  var v = s.lastIndexOf(','), p = s.lastIndexOf('.');
+  if (v >= 0 && p >= 0) {
+    if (v > p) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (v >= 0) {
+    if ((s.match(/,/g) || []).length > 1) return NaN;
+    s = s.replace(',', '.');
+  } else if (p >= 0) {
+    if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    else if ((s.match(/\./g) || []).length > 1) return NaN;
+  }
+  var n = Number(s);
+  return isFinite(n) ? n : NaN;
+}
+
+/* Arredonda para cima terminando em ,90. Ex.: 92,53 vira 92,90. */
+function final90(x) { return Math.max(Math.ceil(Math.round((x - 0.9) * 1e6) / 1e6), 0) + 0.9; }
+
+function centavos(n) { return Math.round((n + (n < 0 ? -1 : 1) * 1e-9) * 100) / 100; }
+
+function reais(n) {
+  var neg = n < 0;
+  var partes = Math.abs(centavos(n)).toFixed(2).split('.');
+  return (neg ? '-' : '') + 'R$ ' + partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + partes[1];
+}
+
+
+function teto5(x) { return Math.ceil(Math.round(x * 1e6) / 1e6 / 5) * 5; }
+function tetoCentavos(x) { return Math.ceil(Math.round(x * 1e6) / 1e4) / 100; }
+
+/* d = {barbeiros, dias, horas, tempo, ocupacao, contas, prolabore, produto, modo, comissao, taxa, lucro, atual, concorrencia} */
+function precoCom(d, ocupacao) {
+  var porDia = Math.floor(d.horas * 60 / d.tempo);
+  var capacidade = d.barbeiros * d.dias * 52 / 12 * porDia;
+  var cortes = capacidade * ocupacao / 100;
+  var fixo = (d.contas || 0) + (d.prolabore || 0);
+  var fixoCorte = cortes > 0 ? fixo / cortes : 0;
+  var porCorte = d.modo === 'reais' ? (d.comissao || 0) : 0;
+  var pct = ((d.modo === 'reais' ? 0 : (d.comissao || 0)) + (d.taxa || 0)) / 100;
+  var custo = fixoCorte + (d.produto || 0) + porCorte;
+  var denMin = 1 - pct, denIdeal = 1 - pct - (d.lucro || 0) / 100;
+  return {
+    porDia: porDia, capacidade: capacidade, cortes: cortes, fixo: fixo, fixoCorte: fixoCorte, pct: pct, custo: custo,
+    minimo: denMin > 0 ? tetoCentavos(custo / denMin) : null,
+    idealExato: denIdeal > 0 ? custo / denIdeal : null,
+    ideal: denIdeal > 0 ? teto5(custo / denIdeal) : null
+  };
+}
+
+function calcular(d) {
+  if (!(d.barbeiros > 0) || !(d.dias > 0) || !(d.horas > 0) || !(d.tempo > 0) || !(d.ocupacao > 0)) return { pronto: false, falta: 'Preencha barbeiros, dias, horas, tempo do corte e agenda cheia.' };
+  var r = precoCom(d, d.ocupacao);
+  if (r.porDia < 1) return { pronto: false, falta: 'O tempo do corte está maior que as horas do dia.' };
+  if (!(r.fixo > 0)) return { pronto: false, falta: 'Preencha suas contas e quanto você quer tirar por mês.' };
+  if (r.minimo == null || r.ideal == null) return { pronto: false, falta: 'Comissão, taxa e lucro passam de 100%. Reveja esses percentuais.' };
+  r.pronto = true;
+  r.simulacao = OCUPACOES.map(function (o) { var x = precoCom(d, o); return { ocupacao: o, cortes: Math.round(x.cortes), minimo: x.minimo, ideal: x.ideal }; });
+  if (d.atual > 0) {
+    r.atual = d.atual;
+    r.lucroCorte = centavos(d.atual * (1 - r.pct) - r.custo);
+    r.lucroMes = centavos(r.lucroCorte * r.cortes);
+  }
+  r.alerta = avaliar(r, d);
+  r.meta = metaMensal(r, d);
+  return r;
+}
+
+/* Faturamento que paga tudo e ainda deixa o lucro desejado */
+function metaMensal(r, d) {
+  var saudavel = r.idealExato * r.cortes;
+  var equilibrio = r.minimo * r.cortes;
+  var diasMes = d.dias * 52 / 12;
+  var comissao = d.modo === 'reais' ? (d.comissao || 0) * r.cortes : saudavel * (d.comissao || 0) / 100;
+  var m = {
+    saudavel: Math.ceil(saudavel / 10 - 1e-9) * 10,
+    equilibrio: Math.ceil(equilibrio / 10 - 1e-9) * 10,
+    partes: [
+      ['Contas do mês', d.contas || 0], ['Seu salário', d.prolabore || 0], ['Comissão dos barbeiros', comissao],
+      ['Produto', (d.produto || 0) * r.cortes], ['Taxa da maquininha', saudavel * (d.taxa || 0) / 100], ['Lucro da barbearia', saudavel * (d.lucro || 0) / 100]
+    ]
+  };
+  m.porDia = Math.ceil(m.saudavel / diasMes);
+  m.porSemana = Math.ceil(m.saudavel / (52 / 12));
+  if (d.atual > 0) {
+    m.cortesNoPreco = Math.ceil(m.saudavel / d.atual);
+    m.faturamentoHoje = centavos(d.atual * r.cortes);
+  }
+  return m;
+}
+
+function avaliar(r, d) {
+  if (r.atual == null) return { nivel: 'atencao', titulo: 'Coloque seu preço atual', texto: 'Assim a calculadora mostra quanto sobra hoje em cada corte.' };
+  if (r.lucroCorte < 0) return { nivel: 'perigo', titulo: 'Seu preço não paga tudo', texto: 'Faltam ' + reais(-r.lucroCorte) + ' em cada corte para pagar as contas e o que você quer tirar. Cobre pelo menos ' + reais(r.minimo) + ', ou encha mais a agenda.' };
+  if (r.atual < r.idealExato) return { nivel: 'atencao', titulo: 'Paga as contas, mas sobra pouco', texto: 'Sobram ' + reais(r.lucroCorte) + ' por corte, abaixo do lucro que você quer. O preço ideal é ' + reais(r.ideal) + '.' };
+  return { nivel: 'ok', titulo: 'Seu preço está bom', texto: 'Sobram ' + reais(r.lucroCorte) + ' por corte, além das contas e do que você quer tirar.' };
+}
+
+/* Diagnóstico com o que a barbearia faz hoje. q = quantidades; p = preços */
+var AGENDA_COM_FOLGA = 70;
+function diagnostico(d, p, q) {
+  var nCortes = q.corte || 0, nBarbas = q.barba || 0, nCombos = q.combo || 0;
+  var atend = nCortes + nBarbas + nCombos;
+  if (!(atend > 0)) return null;
+  var extras = p.extras || 0;
+  var faturamento = (p.corte || 0) * nCortes + (p.barba || 0) * nBarbas + (p.combo || 0) * nCombos + extras;
+  if (!(faturamento > 0)) return null;
+  var base = precoCom(d, 100);
+  var pct = base.pct, lucroAlvo = (d.lucro || 0) / 100;
+  var porAtend = (d.produto || 0) + (d.modo === 'reais' ? (d.comissao || 0) : 0);
+  var fixo = base.fixo;
+  var gastos = fixo + faturamento * pct + porAtend * atend;
+  var resultado = faturamento - gastos;
+  var margem = resultado / faturamento;
+  var ticket = faturamento / atend;
+  var den = 1 - pct - lucroAlvo;
+  var precoNecessario = den > 0 ? (fixo + porAtend * atend) / (atend * den) : null;
+  var porCliente = ticket * den - porAtend;
+  var atendNecessarios = porCliente > 0 ? Math.ceil(fixo / porCliente - 1e-9) : null;
+  var agenda = base.capacidade > 0 ? atend / base.capacidade * 100 : null;
+  var r = {
+    faturamento: centavos(faturamento), extras: centavos(extras), atend: atend, gastos: centavos(gastos), resultado: centavos(resultado), margem: margem, ticket: centavos(ticket),
+    agenda: agenda, capacidade: base.capacidade, atendNecessarios: atendNecessarios,
+    reajuste: precoNecessario != null ? Math.ceil((precoNecessario / ticket - 1) * 100 - 1e-9) : null,
+    precoNecessario: precoNecessario != null ? tetoCentavos(precoNecessario) : null
+  };
+  if (margem >= lucroAlvo) {
+    r.situacao = { nivel: 'ok', titulo: 'Barbearia saudável', texto: 'Paga tudo e sobram ' + reais(resultado) + ' de lucro no mês.' };
+    r.acao = { titulo: 'Mantenha e proteja', texto: 'Seu preço e sua clientela estão sustentando a barbearia. Um clube pode deixar esse resultado mais previsível.' };
+    return r;
+  }
+  r.situacao = resultado >= 0
+    ? { nivel: 'atencao', titulo: 'Só está mantendo a barbearia', texto: 'Paga tudo, mas sobram só ' + reais(resultado) + ' no mês. O lucro está abaixo do que você quer.' }
+    : { nivel: 'perigo', titulo: 'A barbearia está no vermelho', texto: 'Faltam ' + reais(-resultado) + ' no mês para pagar tudo, contando o seu salário.' };
+  var cabe = atendNecessarios != null && atendNecessarios <= base.capacidade;
+  if (cabe && agenda != null && agenda < AGENDA_COM_FOLGA) {
+    r.acao = { tipo: 'clientes', titulo: 'O problema é atrair mais clientes', texto: 'Sua agenda usa ' + Math.round(agenda) + '% dos horários. Tem espaço. Com o mesmo preço, faltam ' + (atendNecessarios - atend) + ' atendimentos no mês.' };
+  } else if (r.precoNecessario != null) {
+    r.acao = { tipo: 'reajuste', titulo: 'Você precisa fazer um reajuste', texto: (cabe ? 'Sua agenda já está bem ocupada. ' : 'Mesmo com a agenda cheia, o preço atual não fecha a conta. ') + 'Com o mesmo número de clientes, o valor médio precisa subir ' + r.reajuste + '%.' };
+  } else {
+    r.acao = { tipo: 'custos', titulo: 'Reveja a comissão e as contas', texto: 'Comissão, taxa e lucro estão altos demais para fechar a conta.' };
+  }
+  return r;
+}
+
+function avisoConcorrencia(r, d) {
+  if (!(d.concorrencia > 0)) return '';
+  if (r.ideal > d.concorrencia * 1.3) return 'O preço ideal está bem acima da sua região. Antes de subir tudo, tente encher mais a agenda, reduzir custos ou entregar mais valor.';
+  if (r.ideal < d.concorrencia) return 'O preço ideal está abaixo da sua região. Talvez dê para cobrar um pouco mais.';
+  return 'O preço ideal está perto do que a sua região cobra.';
+}
+</script>
+
+<script id="tela">
+(function () {
+  var CHAVE = 'calculadora-corte-v2';
+  var EXEMPLO = { nome: 'Barbearia de Exemplo', barbeiros: '2', dias: ['seg', 'ter', 'qua', 'qui', 'sex', 'sab'], horas: '8', tempo: '40', ocupacao: '60',
+    aluguel: '1.500,00', agua: '150,00', luz: '350,00', outras: '', prolabore: '2.000,00', produto: '3,00', modo: 'pct', comissaoPct: '50', comissaoReais: '', taxa: '3', lucro: '10', atual: '40,00', concorrencia: '', precoBarba: '20,00', precoCombo: '60,00', qtdCortes: '180', qtdBarbas: '40', qtdCombos: '60', extrasMes: '' };
+  var TEXTO = ['nome', 'barbeiros', 'horas', 'tempo', 'ocupacao', 'aluguel', 'agua', 'luz', 'outras', 'prolabore', 'produto', 'comissaoPct', 'comissaoReais', 'taxa', 'lucro', 'atual', 'concorrencia', 'precoBarba', 'precoCombo', 'qtdCortes', 'qtdBarbas', 'qtdCombos', 'extrasMes'];
+  var S = {}, ehExemplo = false;
+  var el = function (id) { return document.getElementById(id); };
+  function esc(t) { return String(t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function campo(k, rotulo, ph) {
+    return '<div class="field"><label for="' + k + '">' + rotulo + '</label><input type="text" id="' + k + '" data-k="' + k + '" inputmode="decimal" placeholder="' + ph + '"><div class="err" data-err="' + k + '"></div></div>';
+  }
+  el('form').innerHTML =
+    '<div class="bloco"><h2 class="sec">Sua barbearia</h2>' +
+      '<div class="field"><label for="nome">Nome da barbearia</label><input type="text" id="nome" data-k="nome" maxlength="60" placeholder="Ex.: Barbearia do Zé"></div>' +
+      '<div class="field"><span class="legend">Dias que trabalha</span><div class="dias" role="group" aria-label="Dias de trabalho">' +
+      DIAS.map(function (d) { return '<label class="dia"><input type="checkbox" id="dia-' + d[0] + '" data-dia value="' + d[0] + '" aria-label="' + d[2] + '"><span>' + d[1] + '</span></label>'; }).join('') + '</div></div>' +
+      '<div class="two">' + campo('barbeiros', 'Quantos barbeiros', '2') + campo('horas', 'Horas por dia', '8') +
+      campo('tempo', 'Tempo do corte (minutos)', '40') + campo('ocupacao', 'Agenda cheia (%)', '60') + '</div>' +
+      '<p class="dica">Agenda cheia é quanto dos horários fica ocupado em média. Se não sabe, use 60%.</p>' +
+    '</div>' +
+    '<div class="bloco"><h2 class="sec">Contas do mês</h2><div class="two">' +
+      campo('aluguel', 'Aluguel (R$)', '1.500,00') + campo('agua', 'Água (R$)', '150,00') + campo('luz', 'Luz (R$)', '350,00') + campo('outras', 'Outras contas (R$)', '0,00') + '</div>' +
+      campo('prolabore', 'Quanto você quer tirar por mês (R$)', '2.000,00') +
+    '</div>' +
+    '<div class="bloco"><h2 class="sec">Custo de cada corte</h2>' +
+      campo('produto', 'Produto por corte: lâmina, talco, toalha (R$)', '3,00') +
+      '<div class="field"><span class="legend">Comissão do barbeiro</span><div class="chips">' +
+        '<button type="button" class="chip" id="m-pct" data-modo="pct">Porcentagem ou pote</button>' +
+        '<button type="button" class="chip" id="m-reais" data-modo="reais">R$ por corte</button></div></div>' +
+      '<div id="p-pct">' + campo('comissaoPct', 'Percentual do barbeiro (%)', '50') + '</div>' +
+      '<div id="p-reais">' + campo('comissaoReais', 'Valor por corte (R$)', '15,00') + '</div>' +
+      '<p class="dica">Se trabalha sozinho, deixe a comissão em branco.</p>' +
+      campo('taxa', 'Taxa da maquininha (%)', '3') +
+    '</div>' +
+    '<div class="bloco"><h2 class="sec">Lucro e mercado</h2>' + campo('lucro', 'Lucro que você quer no corte (%)', '10') +
+      campo('concorrencia', 'Preço do corte na sua região (R$)', '45,00') + '</div>' +
+    '<div class="bloco"><h2 class="sec">Como está sua barbearia hoje</h2>' +
+      '<p class="dica">Coloque quanto você cobra e quantos atendimentos faz por mês, somando todos os barbeiros.</p>' +
+      '<div class="two">' + campo('atual', 'Preço do corte (R$)', '40,00') + campo('qtdCortes', 'Cortes no mês', '180') +
+      campo('precoBarba', 'Preço da barba (R$)', '20,00') + campo('qtdBarbas', 'Barbas no mês', '40') +
+      campo('precoCombo', 'Corte + barba (R$)', '60,00') + campo('qtdCombos', 'Corte + barba no mês', '60') + '</div>' +
+      campo('extrasMes', 'Serviços extras: total do mês (R$, opcional)', '800,00') +
+      '<p class="dica">Some o que entra por mês com pigmentação, sobrancelha e outros serviços.</p></div>' +
+    '<button type="button" class="btn btn-line" id="limpar">Limpar tudo</button>';
+
+  function guardar() { try { localStorage.setItem(CHAVE, JSON.stringify(S)); } catch (e) {} }
+  function recuperar() { try { var t = localStorage.getItem(CHAVE); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
+  function preencher() {
+    TEXTO.forEach(function (k) { el(k).value = S[k] || ''; });
+    document.querySelectorAll('[data-dia]').forEach(function (i) { i.checked = (S.dias || []).indexOf(i.value) >= 0; });
+  }
+  function num(k, regra) {
+    var n = lerNumero(S[k]), msg = '';
+    if (n !== null) msg = isNaN(n) ? 'Digite só números. Exemplo: 35,00' : (regra ? regra(n) : (n < 0 ? 'O valor não pode ser negativo.' : ''));
+    var e = document.querySelector('[data-err="' + k + '"]');
+    if (e) e.textContent = msg;
+    el(k).classList.toggle('bad', !!msg);
+    return msg ? null : n;
+  }
+  function pct(n) { return n < 0 || n > 100 ? 'Use um valor de 0 a 100.' : ''; }
+  function ler() {
+    var reaisModo = S.modo === 'reais';
+    var cp = num('comissaoPct', pct), cr = num('comissaoReais');
+    return {
+      barbeiros: num('barbeiros'), dias: (S.dias || []).length, horas: num('horas', function (n) { return n <= 0 || n > 24 ? 'Use de 1 a 24.' : ''; }),
+      tempo: num('tempo'), ocupacao: num('ocupacao', pct),
+      contas: ['aluguel', 'agua', 'luz', 'outras'].reduce(function (t, k) { return t + (num(k) || 0); }, 0),
+      prolabore: num('prolabore'), produto: num('produto'), modo: reaisModo ? 'reais' : 'pct', comissao: reaisModo ? cr : cp,
+      taxa: num('taxa', pct), lucro: num('lucro', pct), atual: num('atual'), concorrencia: num('concorrencia')
+    };
+  }
+  function cartaoDiagnostico(g) {
+    if (!g) return '<article class="plan" id="diagnostico"><div><h2>Como está sua barbearia hoje</h2><p class="inclui">Preencha seus preços e quantos atendimentos faz por mês para ver o diagnóstico.</p></div></article>';
+    var linhas = [['Faturamento do mês', reais(g.faturamento)]];
+    if (g.extras > 0) linhas.push(['Dentro dele, serviços extras', reais(g.extras)]);
+    linhas = linhas.concat([['Atendimentos no mês', String(g.atend)], ['Valor médio por atendimento', reais(g.ticket)], ['Gastos do mês, com seu salário', reais(g.gastos)], ['Sobra do mês', reais(g.resultado)]]);
+    if (g.agenda != null) linhas.push(['Horários usados da agenda', Math.round(g.agenda) + '%']);
+    var opcoes = '';
+    if (g.acao.tipo) {
+      opcoes = '<div><p class="sim-t">Dois caminhos para ficar saudável</p><div class="dois">' +
+        '<div class="valor"><small>Atender mais</small><b>' + (g.atendNecessarios != null ? g.atendNecessarios : '-') + '</b><small>atendimentos no mês, no preço atual</small></div>' +
+        '<div class="valor"><small>Reajustar</small><b>' + (g.precoNecessario != null ? reais(g.precoNecessario) : '-') + '</b><small>valor médio, com os mesmos clientes</small></div></div></div>';
+    }
+    return '<article class="plan" id="diagnostico"><div><h2>Como está sua barbearia hoje</h2><p class="inclui">Diagnóstico com seus preços e atendimentos</p></div>' +
+      '<div class="alerta ' + g.situacao.nivel + '" role="status"><strong>' + esc(g.situacao.titulo) + '</strong>' + esc(g.situacao.texto) + '</div>' +
+      '<div class="valor top"><small>O que fazer</small><strong>' + esc(g.acao.titulo) + '</strong><span class="dica">' + esc(g.acao.texto) + '</span></div>' + opcoes +
+      '<dl class="linhas">' + linhas.map(function (l) { return '<div><dt>' + l[0] + '</dt><dd>' + l[1] + '</dd></div>'; }).join('') + '</dl>' +
+      '<p class="dica">Diagnóstico por simulação matemática. O reajuste também depende do que a sua região aceita pagar.</p></article>';
+  }
+
+  function cartaoMeta(m) {
+    var saude = '';
+    if (m.faturamentoHoje != null) {
+      var ok = m.faturamentoHoje >= m.saudavel;
+      saude = '<div class="alerta ' + (ok ? 'ok' : (m.faturamentoHoje >= m.equilibrio ? 'atencao' : 'perigo')) + '" role="status"><strong>' +
+        (ok ? 'Sua meta está ao alcance' : 'Sua conta de hoje fica abaixo da meta') + '</strong>' +
+        'Com seu preço e sua agenda, a estimativa é de ' + reais(m.faturamentoHoje) + ' por mês.</div>';
+    }
+    var linhas = [['Por semana', reais(m.porSemana)], ['Por dia de trabalho', reais(m.porDia)]];
+    if (m.cortesNoPreco != null) linhas.push(['Cortes no mês no seu preço', String(m.cortesNoPreco)]);
+    return '<article class="plan" id="meta"><div><h2>Quanto a barbearia precisa fazer por mês</h2><p class="inclui">Meta para ficar saudável</p></div>' +
+      '<div class="dois"><div class="valor"><small>Só para pagar tudo</small><b>' + reais(m.equilibrio) + '</b><small>Sem lucro</small></div>' +
+      '<div class="valor top"><small>Para ficar saudável</small><b>' + reais(m.saudavel) + '</b><small>Paga tudo e dá lucro</small></div></div>' + saude +
+      '<dl class="linhas">' + linhas.map(function (l) { return '<div><dt>' + l[0] + '</dt><dd>' + l[1] + '</dd></div>'; }).join('') + '</dl>' +
+      '<div><p class="sim-t">Para onde vai esse dinheiro</p><dl class="linhas">' +
+      m.partes.filter(function (p) { return p[1] > 0; }).map(function (p) { return '<div><dt>' + p[0] + '</dt><dd>' + reais(p[1]) + '</dd></div>'; }).join('') + '</dl></div>' +
+      '<p class="dica">Valor total que entra no caixa, antes de pagar comissão e contas. Inclui corte, assinatura e tudo o mais que a barbearia vender.</p></article>';
+  }
+
+  function desenhar() {
+    var d = ler();
+    el('m-pct').setAttribute('aria-pressed', String(S.modo !== 'reais'));
+    el('m-reais').setAttribute('aria-pressed', String(S.modo === 'reais'));
+    el('p-pct').hidden = S.modo === 'reais';
+    el('p-reais').hidden = S.modo !== 'reais';
+    var alvo = el('resultado');
+    var nada = !TEXTO.some(function (k) { return String(S[k] || '').trim(); });
+    if (nada) {
+      alvo.innerHTML = '<div class="vazio"><p>Tudo limpo. Preencha seus dias, contas e custos para ver o preço do corte.</p><button type="button" class="btn btn-line" id="ver-exemplo">Ver um exemplo</button></div>';
+      return;
+    }
+    var r = calcular(d);
+    var nome = String(S.nome || '').trim() || 'Sua barbearia';
+    var topo = '<div class="topo"><strong>' + esc(nome) + '</strong><span>Preço do corte</span>' + (ehExemplo ? '<span class="sample">Valores de exemplo. Troque pelos seus.</span>' : '') + '</div>';
+    if (!r.pronto) { alvo.innerHTML = topo + '<div class="vazio"><p>' + esc(r.falta) + '</p></div>'; return; }
+    var a = r.alerta;
+    var linhas = [['Cortes possíveis por dia, por barbeiro', String(r.porDia)], ['Cortes estimados no mês', String(Math.round(r.cortes))], ['Contas e seu salário', reais(r.fixo)], ['Essa conta por corte', reais(r.fixoCorte)], ['Custo total por corte, sem percentuais', reais(r.custo)]];
+    if (r.atual != null) { linhas.push(['Sobra por corte no seu preço', reais(r.lucroCorte)]); linhas.push(['Sobra no mês no seu preço', reais(r.lucroMes)]); }
+    var aviso = avisoConcorrencia(r, d);
+    alvo.innerHTML = topo +
+      '<article class="plan"><div class="dois"><div class="valor"><small>Preço mínimo</small><b>' + reais(r.minimo) + '</b><small>Paga tudo, sem lucro</small></div>' +
+      '<div class="valor top"><small>Preço ideal</small><b>' + reais(r.ideal) + '</b><small>Paga tudo e dá lucro</small></div></div>' +
+      '<div class="alerta ' + a.nivel + '" role="status"><strong>' + esc(a.titulo) + '</strong>' + esc(a.texto) + '</div>' +
+      (aviso ? '<p class="dica">' + esc(aviso) + '</p>' : '') +
+      '<dl class="linhas">' + linhas.map(function (l) { return '<div><dt>' + l[0] + '</dt><dd>' + l[1] + '</dd></div>'; }).join('') + '</dl></article>' +
+      '<article class="plan"><div><p class="sim-t">Se a agenda encher mais</p><div class="sim-box"><table><thead><tr><th>Agenda</th><th>Cortes no mês</th><th>Mínimo</th><th>Ideal</th></tr></thead><tbody>' +
+      r.simulacao.map(function (s) { return '<tr><td>' + s.ocupacao + '%</td><td>' + s.cortes + '</td><td>' + reais(s.minimo) + '</td><td>' + reais(s.ideal) + '</td></tr>'; }).join('') +
+      '</tbody></table></div><p class="dica">Quanto mais cheia a agenda, menos cada corte precisa pagar das contas.</p></div></article>' +
+      cartaoMeta(r.meta) +
+      cartaoDiagnostico(diagnostico(d, { corte: d.atual, barba: num('precoBarba'), combo: num('precoCombo'), extras: num('extrasMes') }, { corte: num('qtdCortes'), barba: num('qtdBarbas'), combo: num('qtdCombos') }));
+  }
+  function mudou() { ehExemplo = false; guardar(); desenhar(); }
+  var form = el('form');
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
+  form.addEventListener('input', function (e) { var t = e.target; if (t.dataset.k) { S[t.dataset.k] = t.value; mudou(); } });
+  form.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.hasAttribute('data-dia')) {
+      var l = (S.dias || []).filter(function (x) { return x !== t.value; });
+      if (t.checked) l.push(t.value);
+      S.dias = l;
+      mudou();
+    }
+  });
+  form.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.modo) { S.modo = b.dataset.modo; mudou(); }
+    else if (b.id === 'limpar') { S = { modo: 'pct', dias: [] }; preencher(); mudou(); }
+  });
+  el('resultado').addEventListener('click', function (e) {
+    if (e.target.id === 'ver-exemplo') { S = JSON.parse(JSON.stringify(EXEMPLO)); ehExemplo = true; preencher(); desenhar(); }
+  });
+  var salvo = recuperar();
+  if (salvo) { S = salvo; } else { S = JSON.parse(JSON.stringify(EXEMPLO)); ehExemplo = true; }
+  preencher();
+  desenhar();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Pack de Artes do Clube</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Oswald:wght@500;700&display=swap">
+<style>
+/* Editor de 10 artes: formulário curto e galeria. As artes são desenhadas em canvas e viram imagem. */
+:root { color-scheme: dark; --bg:#121110; --surface:#1c1a17; --surface2:#26231f; --line:#3b362e; --fg:#f4efe6; --muted:#b5ac9c; --gold:#d9b45b; --gold2:#f0cf7e; --ink:#1a1408; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: "Barlow", system-ui, Arial, sans-serif; font-size: 16px; line-height: 1.45; }
+.pole { height: 8px; background: repeating-linear-gradient(135deg, var(--gold) 0 14px, var(--bg) 14px 28px); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+.brand { font-family: "Oswald", sans-serif; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold); }
+h1 { margin: 2px 0; font-family: "Oswald", sans-serif; font-size: clamp(30px, 8vw, 42px); line-height: 1.08; }
+.lead { margin: 0; color: var(--muted); max-width: 62ch; }
+form { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.f { display: grid; gap: 4px; min-width: 0; }
+label { font-size: 14px; font-weight: 600; }
+input[type="text"] { width: 100%; min-height: 44px; padding: 8px 12px; font: inherit; color: var(--fg); background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; }
+input[type="file"] { width: 100%; font: inherit; color: var(--muted); }
+:focus-visible { outline: 2px solid var(--gold2); outline-offset: 2px; }
+.galeria { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); align-items: start; }
+.galeria > * { min-width: 0; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+figure img { width: 100%; display: block; border-radius: 6px; }
+figcaption { font-weight: 700; }
+.btn { display: grid; place-items: center; min-height: 44px; font-weight: 700; color: var(--ink); background: var(--gold); border-radius: 8px; text-decoration: none; }
+.dica { font-size: 14px; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<div class="pole" aria-hidden="true"></div>
+<div class="wrap">
+  <header>
+    <div class="brand">Cadeira Assinada</div>
+    <h1>Pack de Artes do Clube</h1>
+    <p class="lead">Preencha uma vez. As 10 artes ficam prontas com o nome e os preços da sua barbearia.</p>
+  </header>
+  <form id="form" autocomplete="off" onsubmit="return false">
+    <div class="f"><label for="nome">Nome da barbearia</label><input type="text" id="nome" maxlength="34" value="Barbearia de Exemplo"></div>
+    <div class="f"><label for="contato">WhatsApp ou Instagram</label><input type="text" id="contato" maxlength="34" value="@suabarbearia"></div>
+    <div class="f"><label for="b1">Básico: cabelo</label><input type="text" id="b1" maxlength="14" value="R$ 86,90"></div>
+    <div class="f"><label for="b2">Básico: cabelo + barba</label><input type="text" id="b2" maxlength="14" value="R$ 129,90"></div>
+    <div class="f"><label for="p1">Premium: cabelo</label><input type="text" id="p1" maxlength="14" value="R$ 103,90"></div>
+    <div class="f"><label for="p2">Premium: cabelo + barba</label><input type="text" id="p2" maxlength="14" value="R$ 155,90"></div>
+    <div class="f"><label for="db">Dias do Básico</label><input type="text" id="db" maxlength="26" value="Terça a quinta"></div>
+    <div class="f"><label for="dp">Dias do Premium</label><input type="text" id="dp" maxlength="26" value="Terça a sábado"></div>
+    <div class="f"><label for="logo">Sua logo (opcional)</label><input type="file" id="logo" accept="image/*"></div>
+  </form>
+  <p class="dica">Toque em "Baixar imagem". Se o celular não baixar, segure o dedo em cima da arte e escolha salvar. Os valores aqui são de exemplo. Troque pelos seus.</p>
+  <section class="galeria" id="galeria" aria-label="Artes"></section>
+</div>
+
+<script>
+(function () {
+  var D = {}, logo = null;
+  var C = { bg: '#0f0e0d', card: '#1e1b17', line: '#4a4235', fg: '#f7f2e8', muted: '#bdb3a2', gold: '#d9b45b', gold2: '#f3d486', ink: '#1a1408' };
+  var T = 'Oswald, Impact, sans-serif', B = 'Barlow, Arial, sans-serif';
+
+  function base(c, w, h) {
+    c.fillStyle = C.bg; c.fillRect(0, 0, w, h);
+    c.save(); c.beginPath(); c.rect(0, 0, w, 26); c.clip();
+    for (var x = -60; x < w + 60; x += 76) {
+      c.fillStyle = C.gold; c.beginPath(); c.moveTo(x, 26); c.lineTo(x + 26, 0); c.lineTo(x + 64, 0); c.lineTo(x + 38, 26); c.closePath(); c.fill();
+    }
+    c.restore();
+  }
+  function texto(c, s, x, y, o) {
+    o = o || {};
+    c.font = (o.peso || 700) + ' ' + o.t + 'px ' + (o.f || T);
+    c.fillStyle = o.cor || C.fg;
+    c.textAlign = o.al || 'left';
+    c.textBaseline = 'alphabetic';
+    var max = o.max || 900, pal = String(s).split(' '), l = '', n = 0, lh = o.lh || o.t * 1.14;
+    for (var i = 0; i < pal.length; i++) {
+      var p = l ? l + ' ' + pal[i] : pal[i];
+      if (c.measureText(p).width > max && l) { c.fillText(l, x, y + n * lh); n++; l = pal[i]; } else { l = p; }
+    }
+    c.fillText(l, x, y + n * lh);
+    return y + (n + 1) * lh;
+  }
+  function caixa(c, x, y, w, h, ouro) {
+    c.beginPath(); c.roundRect(x, y, w, h, 22);
+    c.fillStyle = C.card; c.fill();
+    c.lineWidth = ouro ? 5 : 3; c.strokeStyle = ouro ? C.gold : C.line; c.stroke();
+  }
+  function rodape(c, w, h) {
+    if (logo) {
+      var k = Math.min(150 / logo.width, 110 / logo.height), lw = logo.width * k, lh = logo.height * k;
+      c.drawImage(logo, 70, h - 70 - lh, lw, lh);
+      texto(c, D.nome, 90 + lw, h - 88, { t: 40, cor: C.gold2, max: w - 200 - lw });
+      texto(c, D.contato, 90 + lw, h - 44, { t: 32, f: B, peso: 600, cor: C.muted, max: w - 200 - lw });
+    } else {
+      texto(c, D.nome, 70, h - 92, { t: 44, cor: C.gold2, max: w - 140 });
+      texto(c, D.contato, 70, h - 46, { t: 34, f: B, peso: 600, cor: C.muted, max: w - 140 });
+    }
+  }
+  function plano(c, x, y, w, titulo, dias, a, b) {
+    caixa(c, x, y, w, 300, titulo === 'Premium');
+    texto(c, titulo, x + 40, y + 74, { t: 62, cor: C.gold2 });
+    texto(c, dias, x + 40, y + 122, { t: 34, f: B, peso: 600, cor: C.muted });
+    texto(c, 'Cabelo', x + 40, y + 190, { t: 42, f: B, peso: 700 });
+    texto(c, a, x + w - 40, y + 190, { t: 52, al: 'right', cor: C.gold2 });
+    texto(c, 'Cabelo + barba', x + 40, y + 260, { t: 42, f: B, peso: 700 });
+    texto(c, b, x + w - 40, y + 260, { t: 52, al: 'right', cor: C.gold2 });
+  }
+  function cta(c, w, y, s) {
+    c.font = '500 54px ' + T;
+    var lw = c.measureText(s).width + 90;
+    c.beginPath(); c.roundRect((w - lw) / 2, y, lw, 104, 16); c.fillStyle = C.gold; c.fill();
+    texto(c, s, w / 2, y + 71, { t: 54, peso: 500, al: 'center', cor: C.ink, max: lw });
+  }
+
+  var ARTES = [
+    { n: 'Cartaz do espelho', a: 'cartaz-do-espelho', w: 1240, h: 1754, d: function (c, w, h) {
+      base(c, w, h);
+      var y = texto(c, 'Clube da barbearia', 90, 300, { t: 150, cor: C.gold2, max: 1060 });
+      y = texto(c, 'Seu corte em dia o mês todo.', 90, y + 40, { t: 66, f: B, peso: 600, max: 1060 });
+      texto(c, 'A partir de', w / 2, y + 170, { t: 56, f: B, peso: 600, al: 'center', cor: C.muted });
+      texto(c, D.b1, w / 2, y + 370, { t: 210, al: 'center', cor: C.gold2 });
+      texto(c, 'por mês', w / 2, y + 450, { t: 56, f: B, peso: 600, al: 'center', cor: C.muted });
+      cta(c, w, y + 520, 'Pergunte ao seu barbeiro');
+      rodape(c, w, h);
+    } },
+    { n: 'Tabela de planos', a: 'tabela-de-planos', w: 1080, h: 1350, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Planos do clube', 70, 170, { t: 104, max: 940 });
+      plano(c, 70, 240, 940, 'Básico', D.db, D.b1, D.b2);
+      plano(c, 70, 580, 940, 'Premium', D.dp, D.p1, D.p2);
+      texto(c, 'Valor fixo por mês. Pergunte as regras.', 70, 960, { t: 40, f: B, peso: 600, cor: C.muted, max: 940 });
+      rodape(c, w, h);
+    } },
+    { n: 'Regras do clube', a: 'regras-do-clube', w: 1080, h: 1350, d: function (c, w, h) {
+      base(c, w, h);
+      var y = texto(c, 'Regras do clube', 70, 170, { t: 104, cor: C.gold2 }) + 26;
+      ['O plano vale nos dias combinados.', 'Visita não usada não acumula.', 'Marque seu horário antes.', 'Faltou sem avisar, perde a visita.', 'O plano é só do titular.', 'Para cancelar, avise antes.'].forEach(function (r, i) {
+        caixa(c, 70, y, 940, 118);
+        texto(c, String(i + 1), 110, y + 78, { t: 58, cor: C.gold2 });
+        texto(c, r, 180, y + 74, { t: 42, f: B, peso: 700, max: 800 });
+        y += 134;
+      });
+      rodape(c, w, h);
+    } },
+    { n: 'Post: lançamento', a: 'post-lancamento', w: 1080, h: 1350, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Agora tem', 70, 330, { t: 120 });
+      texto(c, 'clube de assinatura', 70, 500, { t: 150, cor: C.gold2, max: 940 });
+      texto(c, 'Valor fixo por mês e corte sempre em dia.', 70, 830, { t: 54, f: B, peso: 600, cor: C.muted, max: 940 });
+      cta(c, w, 990, 'Chame no direct');
+      rodape(c, w, h);
+    } },
+    { n: 'Post: como funciona', a: 'post-como-funciona', w: 1080, h: 1350, d: function (c, w, h) {
+      base(c, w, h);
+      var y = texto(c, 'Como funciona', 70, 180, { t: 112, cor: C.gold2 }) + 30;
+      [['1', 'Escolha seu plano'], ['2', 'Pague um valor fixo por mês'], ['3', 'Marque seu horário'], ['4', 'Mantenha o corte em dia']].forEach(function (r) {
+        caixa(c, 70, y, 940, 160);
+        texto(c, r[0], 120, y + 104, { t: 80, cor: C.gold2 });
+        texto(c, r[1], 210, y + 98, { t: 50, f: B, peso: 700, max: 770 });
+        y += 180;
+      });
+      rodape(c, w, h);
+    } },
+    { n: 'Post: lembrete', a: 'post-lembrete', w: 1080, h: 1350, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Seu corte não precisa esperar', 70, 300, { t: 130, max: 940 });
+      texto(c, 'No clube, a partir de', 70, 790, { t: 50, f: B, peso: 600, cor: C.muted });
+      texto(c, D.b1, 70, 950, { t: 170, cor: C.gold2 });
+      texto(c, 'por mês', 70, 1030, { t: 50, f: B, peso: 600, cor: C.muted });
+      rodape(c, w, h);
+    } },
+    { n: 'Story: chamada', a: 'story-chamada', w: 1080, h: 1920, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Abriu o clube da barbearia', 84, 520, { t: 150, cor: C.gold2, max: 912 });
+      texto(c, 'Valor fixo por mês. Corte em dia.', 84, 1020, { t: 58, f: B, peso: 600, cor: C.muted, max: 912 });
+      cta(c, w, 1200, 'Responda QUERO');
+      texto(c, D.nome, w / 2, 1440, { t: 48, al: 'center', cor: C.gold2 });
+    } },
+    { n: 'Story: planos', a: 'story-planos', w: 1080, h: 1920, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Escolha seu plano', 70, 400, { t: 112, max: 940 });
+      plano(c, 70, 480, 940, 'Básico', D.db, D.b1, D.b2);
+      plano(c, 70, 820, 940, 'Premium', D.dp, D.p1, D.p2);
+      cta(c, w, 1200, 'Fale comigo');
+      texto(c, D.contato, w / 2, 1400, { t: 44, f: B, peso: 600, al: 'center', cor: C.muted });
+    } },
+    { n: 'Story: dúvidas', a: 'story-duvidas', w: 1080, h: 1920, d: function (c, w, h) {
+      base(c, w, h);
+      texto(c, 'Ficou com dúvida sobre o clube?', 84, 540, { t: 140, max: 912 });
+      texto(c, 'Me manda uma mensagem que eu explico.', 84, 1040, { t: 58, f: B, peso: 600, cor: C.muted, max: 912 });
+      cta(c, w, 1230, 'Chame no direct');
+      texto(c, D.nome, w / 2, 1450, { t: 48, al: 'center', cor: C.gold2 });
+    } },
+    { n: 'Cartão do assinante', a: 'cartao-do-assinante', w: 1050, h: 600, d: function (c, w, h) {
+      c.fillStyle = C.bg; c.fillRect(0, 0, w, h);
+      c.lineWidth = 8; c.strokeStyle = C.gold; c.strokeRect(24, 24, w - 48, h - 48);
+      texto(c, 'Assinante do clube', 74, 150, { t: 86, cor: C.gold2, max: 900 });
+      texto(c, D.nome, 74, 240, { t: 54, max: 900 });
+      texto(c, 'Nome:', 74, 370, { t: 40, f: B, peso: 600, cor: C.muted });
+      c.fillStyle = C.gold; c.fillRect(200, 372, 770, 4);
+      texto(c, 'Plano:', 74, 470, { t: 40, f: B, peso: 600, cor: C.muted });
+      c.fillRect(200, 472, 770, 4);
+    } }
+  ];
+
+  var gal = document.getElementById('galeria');
+  gal.innerHTML = ARTES.map(function (a, i) {
+    return '<figure><img id="img' + i + '" alt="' + a.n + '"><figcaption>' + a.n + '</figcaption><a class="btn" id="bx' + i + '" download="' + a.a + '.png" href="#">Baixar imagem</a></figure>';
+  }).join('');
+
+  var cv = document.createElement('canvas'), fila = null;
+  function desenhar() {
+    ['nome', 'contato', 'b1', 'b2', 'p1', 'p2', 'db', 'dp'].forEach(function (k) { D[k] = document.getElementById(k).value.trim(); });
+    ARTES.forEach(function (a, i) {
+      cv.width = a.w; cv.height = a.h;
+      a.d(cv.getContext('2d'), a.w, a.h);
+      var u = cv.toDataURL('image/png');
+      document.getElementById('img' + i).src = u;
+      document.getElementById('bx' + i).href = u;
+    });
+  }
+  function agendar() { clearTimeout(fila); fila = setTimeout(desenhar, 250); }
+  document.getElementById('form').addEventListener('input', agendar);
+  document.getElementById('logo').addEventListener('change', function (e) {
+    var f = e.target.files[0];
+    if (!f) { logo = null; agendar(); return; }
+    var im = new Image();
+    im.onload = function () { logo = im; desenhar(); };
+    im.src = URL.createObjectURL(f);
+  });
+  window.__artes = { pronto: false };
+  Promise.all([document.fonts.load('700 40px Oswald'), document.fonts.load('500 40px Oswald'), document.fonts.load('600 40px Barlow'), document.fonts.load('700 40px Barlow')]).then(desenhar, desenhar).then(function () { window.__artes.pronto = true; });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cadeira Assinada</title>
+<meta name="description" content="Monte o clube de assinatura da sua barbearia em 7 dias, com duas calculadoras de preço.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Oswald:wght@500;700&display=swap">
+<style>
+/* Layout: uma coluna com faixas de largura total, e um bloco de calculadora ao vivo no topo. Escuro com dourado. */
+:root {
+  color-scheme: dark;
+  --bg: #111010;
+  --band: #1a1815;
+  --card: #231f1a;
+  --line: #443c30;
+  --fg: #f6f1e7;
+  --muted: #c0b6a5;
+  --gold: #d9b45b;
+  --gold2: #f3d486;
+  --ink: #1a1408;
+  --font-title: "Oswald", "Arial Narrow", Impact, sans-serif;
+  --font-body: "Barlow", system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 18px; line-height: 1.5; padding-bottom: 76px; }
+.pole { height: 10px; background: repeating-linear-gradient(135deg, var(--gold) 0 16px, var(--bg) 16px 32px); }
+.faixa { padding-block: 52px; }
+.faixa.alt { background: var(--band); }
+.in { max-width: 980px; margin: 0 auto; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+.in > * { min-width: 0; }
+.tag { font-family: var(--font-title); font-size: 15px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); }
+h1, h2, h3 { font-family: var(--font-title); font-weight: 700; margin: 0; line-height: 1.12; text-wrap: balance; }
+h1 { font-size: clamp(42px, 10.5vw, 76px); text-transform: uppercase; }
+h1 em { font-style: normal; color: var(--gold2); }
+h2 { font-size: clamp(30px, 6.6vw, 44px); }
+h3 { font-size: 23px; color: var(--gold2); font-weight: 500; }
+p { margin: 0; max-width: 62ch; }
+.lead { font-size: 21px; color: var(--muted); }
+.muted { color: var(--muted); }
+.small { font-size: 15px; color: var(--muted); }
+.cta {
+  display: inline-grid; place-items: center; min-height: 58px; padding: 12px 26px; width: 100%; max-width: 440px;
+  font-family: var(--font-title); font-size: 21px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase; text-align: center; text-decoration: none;
+  color: var(--ink); background: var(--gold); border: 0; border-radius: 8px; cursor: pointer;
+}
+.cta:hover { background: var(--gold2); }
+:focus-visible { outline: 3px solid var(--gold2); outline-offset: 3px; }
+/* topo */
+.topo { display: grid; gap: 30px; align-items: center; }
+@media (min-width: 860px) { .topo { grid-template-columns: 1.15fr .85fr; } }
+.topo > * { min-width: 0; }
+.chamada { display: grid; gap: 18px; justify-items: start; }
+.demo { background: var(--card); border: 2px solid var(--gold); border-radius: 12px; padding: 20px; display: grid; gap: 14px; }
+.demo label { font-weight: 600; }
+.demo input { width: 100%; min-height: 54px; padding: 8px 14px; font: inherit; font-size: 24px; font-weight: 700; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.valores { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.valores div { background: var(--bg); border-radius: 8px; padding: 10px 12px; }
+.valores small { display: block; color: var(--muted); font-size: 14px; }
+.valores b { font-family: var(--font-title); font-size: 30px; font-weight: 700; color: var(--gold2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* listas */
+.dores { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.dores li { padding: 12px 16px; background: var(--card); border-left: 4px solid var(--gold); border-radius: 0 8px 8px 0; }
+.conta { font-family: var(--font-title); font-size: clamp(27px, 6.6vw, 42px); color: var(--gold2); font-weight: 700; }
+.grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+.grade > * { min-width: 0; }
+.bloco { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 8px; align-content: start; }
+.bloco.top { border: 2px solid var(--gold); }
+.selo { justify-self: start; padding: 2px 10px; border-radius: 99px; background: var(--gold); color: var(--ink); font-size: 14px; font-weight: 700; }
+.check { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.check li { position: relative; padding-left: 26px; }
+.check li::before { content: ""; position: absolute; left: 3px; top: 7px; width: 13px; height: 7px; border-left: 3px solid var(--gold); border-bottom: 3px solid var(--gold); transform: rotate(-45deg); }
+/* oferta */
+.oferta { border: 2px solid var(--gold); border-radius: 12px; padding: 26px 22px; background: var(--card); display: grid; gap: 14px; justify-items: center; text-align: center; }
+.preco { font-family: var(--font-title); font-size: clamp(58px, 15vw, 88px); line-height: 1; color: var(--gold2); font-weight: 700; }
+.oferta p { max-width: 46ch; }
+.oferta .check { text-align: left; max-width: 440px; width: 100%; }
+.aviso-link { color: var(--gold2); font-size: 15px; }
+.video-in { justify-items: center; text-align: center; }
+.video { width: 100%; max-width: 480px; aspect-ratio: 4 / 5; display: block; border: 2px solid var(--gold); border-radius: 12px; background: #000; }
+/* faq */
+details { border-bottom: 1px solid var(--line); padding-block: 13px; }
+summary { cursor: pointer; font-weight: 700; font-size: 19px; }
+details p { margin-top: 8px; color: var(--muted); }
+footer { padding-block: 26px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 80ch; margin-bottom: 6px; }
+.barra { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; gap: 12px; align-items: center; justify-content: center; background: #0c0b0a; border-top: 1px solid var(--gold);
+  padding: 8px max(14px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left, 0px)); }
+.barra b { font-family: var(--font-title); font-size: 24px; color: var(--gold2); white-space: nowrap; }
+.barra .cta { min-height: 46px; font-size: 17px; padding: 6px 12px; width: auto; flex: 1; max-width: 300px; }
+</style>
+</head>
+<body>
+<div class="pole" aria-hidden="true"></div>
+
+<section class="faixa">
+  <div class="in topo">
+    <div class="chamada">
+      <div class="tag">Cadeira Assinada</div>
+      <h1>Pare de começar <em>todo mês do zero.</em></h1>
+      <p class="lead">Monte o clube de assinatura da sua barbearia em 7 dias, com o preço certo de cada plano e as palavras certas para vender na cadeira.</p>
+      <a class="cta" href="#oferta">Quero montar meu clube</a>
+      <p class="small">Guia, aulas e duas calculadoras por R$ 29,90. Garantia de 7 dias.</p>
+    </div>
+    <div class="demo">
+      <h3>Teste agora: quanto cobrar no plano?</h3>
+      <label for="corte">Quanto custa o seu corte?</label>
+      <input id="corte" type="text" inputmode="decimal" value="40" aria-describedby="demo-nota">
+      <div class="valores" aria-live="polite">
+        <div><small>Plano popular</small><b id="popular">R$ 86,90</b></div>
+        <div><small>Plano ideal</small><b id="ideal">R$ 89,90</b></div>
+      </div>
+      <p class="small" id="demo-nota">Conta de exemplo: 2 cortes mais 8% e 12%. A calculadora completa inclui comissão, contas, dias e cada plano.</p>
+    </div>
+  </div>
+</section>
+
+<section class="faixa alt">
+  <div class="in video-in">
+    <div class="tag">Veja como funciona</div>
+    <h2>Tudo o que você recebe, em poucos segundos</h2>
+    <video class="video" src="motion-cadeira-assinada.mp4" poster="motion-capa.jpg" autoplay muted loop playsinline preload="metadata" controls aria-label="Vídeo mostrando as funções das calculadoras e o que vem no curso"></video>
+  </div>
+</section>
+
+<section class="faixa">
+  <div class="in">
+    <div class="tag">Você conhece essa rotina</div>
+    <h2>A cadeira não pode depender da sorte</h2>
+    <ul class="dores">
+      <li>Terça vazia, sábado lotado.</li>
+      <li>Semana fraca e as contas chegando do mesmo jeito.</li>
+      <li>Cliente que corta uma vez por mês, e às vezes troca de barbeiro.</li>
+      <li>Vontade de criar um plano, mas medo de cobrar errado e perder dinheiro.</li>
+      <li>Dúvida sobre quanto cobrar, o que incluir e como pagar os barbeiros.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="faixa alt">
+  <div class="in">
+    <div class="tag">A solução</div>
+    <h2>Um clube simples, com regra clara e conta certa</h2>
+    <p>O cliente paga um valor fixo por mês e usa o plano dentro de um limite combinado. O mês já começa com dinheiro combinado, e o cliente tem motivo para voltar.</p>
+    <p class="conta">40 assinantes x R$ 99 = R$ 3.960</p>
+    <p class="small">Simulação de exemplo. É valor de mensalidades, não lucro, e não é promessa de ganho.</p>
+    <div class="grade">
+      <div class="bloco"><h3>Planos</h3><p>Dois tipos de plano: um para os dias fracos e outro para a semana toda.</p></div>
+      <div class="bloco"><h3>Preço</h3><p>Uma conta simples, a partir do valor de 2 cortes.</p></div>
+      <div class="bloco"><h3>Venda</h3><p>O que falar na cadeira, e como responder "é caro" e "vou pensar".</p></div>
+      <div class="bloco"><h3>Fidelidade</h3><p>Como fazer o cliente ficar, indicar amigos e evitar cancelamento.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="faixa" id="calculadoras">
+  <div class="in">
+    <div class="tag">Bônus principal</div>
+    <h2>Eu fiz duas calculadoras para você não errar na conta</h2>
+    <p>Você coloca seus números no celular e elas fazem o resto. Não precisa instalar nada, nem criar cadastro. Seus dados ficam no seu aparelho.</p>
+    <div class="grade">
+      <div class="bloco top">
+        <span class="selo">Bônus 1</span>
+        <h3>Calculadora de Preço do Clube</h3>
+        <p>Mostra quanto cobrar de assinatura por mês sem perder o seu lucro.</p>
+        <ul class="check">
+          <li>Preço popular e preço ideal de cada plano</li>
+          <li>Planos Básico e Premium, com os dias de cada um</li>
+          <li>Comissão por corte, porcentagem ou pote de fichas</li>
+          <li>Quantos assinantes pagam as contas do mês</li>
+          <li>Alerta em vermelho se o plano der prejuízo</li>
+          <li>Texto pronto para mandar no WhatsApp</li>
+        </ul>
+      </div>
+      <div class="bloco top">
+        <span class="selo">Bônus 2</span>
+        <h3>Calculadora do Preço do Corte</h3>
+        <p>Mostra quanto cobrar no corte para pagar as contas, pagar você e ainda sobrar lucro.</p>
+        <ul class="check">
+          <li>Preço mínimo e preço ideal do corte</li>
+          <li>Quanto a barbearia precisa faturar por mês</li>
+          <li>Diagnóstico: saudável, só mantendo ou no vermelho</li>
+          <li>Se o caminho é reajuste ou atrair mais clientes</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="faixa alt">
+  <div class="in">
+    <div class="tag">O que você recebe</div>
+    <h2>Tudo pronto para aplicar</h2>
+    <div class="grade">
+      <div class="bloco"><h3>Curso em 6 aulas</h3><p>Aulas curtas em texto, com imagens fáceis de entender. Cada uma termina com uma tarefa.</p></div>
+      <div class="bloco"><h3>Ebook de 14 páginas</h3><p>O resumo de tudo, feito para ler no celular.</p></div>
+      <div class="bloco"><h3>3 modelos de clube</h3><p>Prontos para barbeiro sozinho, barbearia pequena e barbearia com equipe.</p></div>
+      <div class="bloco"><h3>16 scripts de WhatsApp</h3><p>Para convidar, responder dúvidas, cobrar e evitar cancelamento.</p></div>
+      <div class="bloco"><h3>Checklist de 7 dias</h3><p>O que fazer em cada dia, do preço ao lançamento.</p></div>
+      <div class="bloco"><h3>Planilha do clube</h3><p>A versão em planilha da calculadora, se você preferir.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="faixa">
+  <div class="in">
+    <div class="tag">Quem fez</div>
+    <h2>Feito por barbeiro, para barbeiro</h2>
+    <p>Sou barbeiro e uso o clube de assinatura na minha barbearia. Aqui eu mostro o modelo que uso, como cheguei no meu preço e como funciona o pote de fichas com a equipe.</p>
+    <p>Sem termo difícil, sem enrolação. É conversa de colega de profissão.</p>
+    <div class="grade">
+      <div class="bloco"><h3>É para você se</h3>
+        <ul class="check"><li>Você é barbeiro autônomo ou dono de barbearia</li><li>Quer receita mais previsível</li><li>Nunca montou um clube, ou montou sem fazer a conta</li></ul></div>
+      <div class="bloco"><h3>Não é para você se</h3>
+        <ul class="check"><li>Procura dinheiro rápido sem trabalhar</li><li>Não vai falar com seus clientes</li><li>Não quer olhar seus números</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<section class="faixa alt" id="oferta">
+  <div class="in">
+    <div class="oferta">
+      <div class="tag">Acesso completo</div>
+      <h2>Comece hoje por menos que um corte de R$ 40</h2>
+      <div class="preco">R$ 29,90</div>
+      <p class="small">Pagamento único. Sem mensalidade.</p>
+      <ul class="check">
+        <li>Curso em 6 aulas</li>
+        <li>Calculadora de Preço do Clube</li>
+        <li>Calculadora do Preço do Corte</li>
+        <li>Ebook, planilha e 3 modelos de clube</li>
+        <li>16 scripts de WhatsApp</li>
+        <li>Checklist de implantação em 7 dias</li>
+      </ul>
+      <a class="cta comprar" href="#oferta">Quero acessar agora</a>
+      <p class="aviso-link" id="aviso-link" hidden>O link de compra ainda não foi configurado.</p>
+      <h3>Garantia de 7 dias</h3>
+      <p>Entre, veja tudo e teste as calculadoras. Se não gostar, peça o reembolso em até 7 dias pela plataforma de compra. Sem pergunta difícil.</p>
+    </div>
+  </div>
+</section>
+
+<section class="faixa">
+  <div class="in">
+    <div class="tag">Perguntas frequentes</div>
+    <h2>Tire suas dúvidas</h2>
+    <div>
+      <details><summary>Preciso ter barbearia grande?</summary><p>Não. Tem modelo para barbeiro que trabalha sozinho, barbearia pequena e barbearia com equipe.</p></details>
+      <details><summary>Preciso entender de tecnologia?</summary><p>Não. Você abre as calculadoras pelo link, no celular, e preenche os campos. Não precisa instalar nada.</p></details>
+      <details><summary>É curso em vídeo?</summary><p>Não. São aulas em texto com imagens, curtas e diretas, para ler entre um cliente e outro.</p></details>
+      <details><summary>Como recebo o acesso?</summary><p>Depois que o pagamento for aprovado, o acesso é liberado pela plataforma de compra.</p></details>
+      <details><summary>Preciso de sistema para cobrar a assinatura?</summary><p>Para começar, não. Dá para usar Pix com lembrete. Se quiser um sistema de agendamento com assinatura, eu indico o Primer Barber, que é o meu sistema.</p></details>
+      <details><summary>Eu vou ganhar quanto com o clube?</summary><p>Não dá para prometer valor. O resultado depende do seu preço, da sua região, da sua agenda e do seu trabalho. Os números daqui são simulações de exemplo.</p></details>
+      <details><summary>E se eu não gostar?</summary><p>Você tem 7 dias de garantia. É só pedir o reembolso pela plataforma de compra.</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="faixa alt">
+  <div class="in" style="justify-items:center;text-align:center">
+    <h2>Sua cadeira pode começar o próximo mês com assinante</h2>
+    <p class="lead">Faça a conta, monte seus planos e ofereça ao primeiro cliente em 7 dias.</p>
+    <a class="cta comprar" href="#oferta">Quero montar meu clube</a>
+  </div>
+</section>
+
+<footer>
+  <div class="in">
+    <p>Todos os valores desta página são exemplos e simulações matemáticas. Não há promessa de ganho. Os resultados dependem de cada barbearia.</p>
+    <p>Cadeira Assinada. Conteúdo digital.</p>
+  </div>
+</footer>
+
+<div class="barra">
+  <b>R$ 29,90</b>
+  <a class="cta comprar" href="#oferta">Quero acessar</a>
+</div>
+
+<script>
+/* Cole aqui o link de checkout da Kiwify, entre as aspas. */
+var LINK_COMPRA = '';
+
+(function () {
+  function ler(t) {
+    var s = String(t).replace(/R\$/gi, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+    var n = Number(s);
+    return isFinite(n) && n > 0 ? n : null;
+  }
+  function final90(x) { return Math.max(Math.ceil(Math.round((x - 0.9) * 1e6) / 1e6), 0) + 0.9; }
+  function reais(n) { return 'R$ ' + n.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  var corte = document.getElementById('corte');
+  corte.addEventListener('input', function () {
+    var n = ler(corte.value);
+    document.getElementById('popular').textContent = n ? reais(final90(n * 2 * 1.08)) : '-';
+    document.getElementById('ideal').textContent = n ? reais(final90(n * 2 * 1.12)) : '-';
+  });
+  document.querySelectorAll('.comprar').forEach(function (a) {
+    if (LINK_COMPRA) { a.href = LINK_COMPRA; return; }
+    a.addEventListener('click', function () { document.getElementById('aviso-link').hidden = false; });
+  });
+})();
+</script>
+</body>
+</html>
