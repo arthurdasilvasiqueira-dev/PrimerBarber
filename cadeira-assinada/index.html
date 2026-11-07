@@ -478,6 +478,24 @@ var LINK_COMPRA = 'https://pay.kiwify.com.br/XFaMqtD';
   });
   if (LINK_COMPRA) document.querySelectorAll('.comprar').forEach(function (a) { a.href = LINK_COMPRA; });
 })();
+
+// Pixel da Meta (só no site de verdade)
+var PIXEL_META = '1606280897548168';
+if (PIXEL_META && /primerbarber\.com\.br$/.test(location.hostname)) {
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+  document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', PIXEL_META);
+  fbq('track', 'PageView');
+  fbq('track', 'ViewContent', { content_name: 'Cadeira Assinada', value: 29.90, currency: 'BRL' });
+  document.querySelectorAll('.comprar').forEach(function (a) {
+    a.addEventListener('click', function () {
+      fbq('track', 'InitiateCheckout', { content_name: 'Cadeira Assinada', value: 29.90, currency: 'BRL' });
+    });
+  });
+}
 </script>
 </body>
 </html>
