@@ -1451,6 +1451,18 @@ function periodLabelBR(period){
   return `${name.charAt(0).toUpperCase()+name.slice(1)} de ${year}`;
 }
 
+// "Retrato" dos lançamentos de dinheiro: muda quando entra vale, pagamento ou
+// movimento de caixa. A tela aberta em outro aparelho usa para se atualizar.
+function assinaturaDinheiro(d){
+  const pg = (d?.commissionPayments||[]).map(c=>c.id).join(',');
+  const cx = (d?.cashSessions||[]).map(x=>x.id+':'+x.status+':'+(x.entries||[]).length).join(',');
+  return pg + '|' + cx;
+}
+// Confere, com os dados mais novos, se o pagamento passa do que o profissional
+// ainda tem a receber (ex.: entrou um vale depois que a tela abriu).
+function pagamentoPassaDoSaldo(profId, amount){
+  return Number(amount) > commissionOwed(profId).serviceOwed + 0.005;
+}
 function commissionOwed(profId, customPeriod = null){
   const prof = state.professionals.find(p=>p.id===profId);
   const period = customPeriod || currentPeriod();
@@ -5116,15 +5128,24 @@ function payServiceCommission(profId){
       // FASE 5: a chave é o "retrato" do que já estava pago quando a tela abriu —
       // outro aparelho (ou um segundo toque) pagando o mesmo saldo é recusado
       const chave = `servico:${profId}:${Math.round(c.paid*100)}`;
+      let passouDoSaldo = false;
       update(s=>{
         if(s.commissionPayments.some(x=>x.chave===chave)){ return; }
+        // aqui "state" já é o dado fresco do servidor: se entrou vale no meio, não paga
+        if(pagamentoPassaDoSaldo(profId, amount)){ passouDoSaldo = true; return; }
+        passouDoSaldo = false;
         const id = uid();
         s.commissionPayments.push({id, chave, professionalId:profId, amount, date:new Date().toISOString(), source:'servico', period:mesReal(), origem});
         saidaDoCaixa(s, origem, `Comissão — ${profName(profId)}`, amount, id);
         registrarAuditoria(s, 'Pagou comissão de serviços', `${profName(profId)} — ${BRL(amount)} (${rotuloOrigem(origem)})`);
+      }).then(()=>{
+        if(passouDoSaldo){
+          const agora = commissionOwed(profId).serviceOwed;
+          showToast(`Não paguei: entrou vale enquanto a tela estava aberta. Agora o valor a pagar é ${BRL(Math.max(0, agora))}. Confira e pague de novo.`);
+          if(route==='comissoes') render();
+        } else showToast(`Comissão de serviços paga (${rotuloOrigem(origem)}).`);
       });
       closeModal();
-      showToast(`Comissão de serviços paga (${rotuloOrigem(origem)}).`);
     });
   });
 }
@@ -9770,7 +9791,9 @@ function subscribeBookingNotifications(){
         // clube: pagamento/status que o aviso do Asaas gravou no servidor
         const assinaturaClube = d => JSON.stringify((d?.subscriptionMembers||[]).map(m=>[m.id, m.status, m.pagoAte, m.lastPaymentDate, (m.paymentHistory||[]).length]));
         const clubeMudou = assinaturaClube(remoto) !== assinaturaClube(state);
-        if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal || clubeMudou){
+        // vale/pagamento/caixa lançado em outro aparelho (ex.: vale pela recepcionista)
+        const dinheiroMudou = assinaturaDinheiro(remoto) !== assinaturaDinheiro(state);
+        if(qtdRemoto !== qtdLocal || concluidosRemoto !== concluidosLocal || clubeMudou || dinheiroMudou){
           // mantém a tela em dia com o que outro aparelho fez.
           // O salvamento já é protegido por merge — isto é só para a exibição.
           state = remoto;
@@ -10280,12 +10303,27 @@ const CATEGORIAS_DESPESA = ['Aluguel','Energia','Água','Internet / Telefone','P
 let despMes = null;
 
 function despesaVence(e){ return String(e.dueDate||''); }
-function resultadoDoMes(ym){
+// O dinheiro do clube só fica livre quando o pote do mês fecha: no último dia
+// do mês (ou antes, se o dono já fechou o pote). Até lá ele NÃO entra no lucro.
+function ultimoDiaDoMes(ym){
+  const [a, m] = ym.split('-').map(Number);
+  return ym + '-' + String(new Date(a, m, 0).getDate()).padStart(2, '0');
+}
+function clubeDoMesLiberado(ym, hoje = todayISO()){
+  return hoje >= ultimoDiaDoMes(ym) || monthAlreadyClosed(ym);
+}
+function resultadoDoMes(ym, hoje = todayISO()){
   const receitaServicos = state.appointments
     .filter(a=>a.status==='concluido' && String(a.date).startsWith(ym))
     .reduce((t,a)=>t+valorRealAtendimento(a),0);
-  const receitaClube = clubMonthlyPot(ym);
-  const comissoes = state.professionals.reduce((t,p)=>t+monthlyEarnedForProf(p.id, ym),0);
+  const clubeRecebido = clubMonthlyPot(ym);
+  const comissoesTotal = state.professionals.reduce((t,p)=>t+monthlyEarnedForProf(p.id, ym),0);
+  const comissoesPote = state.professionals.reduce((t,p)=>t+potCommissionForProf(p.id, ym),0);
+  const clubeLiberado = clubeDoMesLiberado(ym, hoje);
+  // parte do clube que fica com a barbearia (mensalidades − pote dos profissionais)
+  const clubeDaBarbearia = clubeRecebido - comissoesPote;
+  const receitaClube = clubeLiberado ? clubeRecebido : 0;
+  const comissoes = clubeLiberado ? comissoesTotal : comissoesTotal - comissoesPote;
   const despesas = (state.expenses||[])
     .filter(e=>e.status==='pago' && String(e.paidDate||'').startsWith(ym))
     .reduce((t,e)=>t+Number(e.amount),0);
@@ -10294,6 +10332,7 @@ function resultadoDoMes(ym){
   // margem já sem o bônus do barbeiro que vendeu
   const margemProdutos = vendasMes.reduce((t,v)=>t+(Number(v.total)||0)-(Number(v.bonus)||0)-(v.itens||[]).reduce((u,i)=>u+(Number(i.qtd)||0)*(Number(i.custoUnit)||0),0),0);
   return { receitaServicos, receitaClube, comissoes, despesas, margemProdutos,
+           clubeLiberado, clubeRecebido, clubeDaBarbearia, liberaEm: ultimoDiaDoMes(ym),
            resultado: receitaServicos + receitaClube + margemProdutos - comissoes - despesas };
 }
 
@@ -10302,11 +10341,12 @@ function comoChegamosHtml(res){
   const linha = (rotulo, valor, menos)=>`<div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:var(--muted);">${menos?'− ':''}${rotulo}</span><span class="font-mono"${menos?' style="color:var(--bad);"':''}>${BRL(valor)}</span></div>`;
   return `<div style="display:flex;flex-direction:column;gap:6px;font-size:13px;">
     ${linha('Serviços concluídos (valor cobrado)', res.receitaServicos)}
-    ${linha('Mensalidades do clube recebidas', res.receitaClube)}
+    ${res.clubeLiberado ? linha('Mensalidades do clube recebidas', res.receitaClube) : ''}
     ${linha('Lucro dos produtos (venda − custo − bônus do barbeiro)', res.margemProdutos)}
-    ${linha('Comissões dos profissionais (serviços + pote)', res.comissoes, true)}
+    ${linha(res.clubeLiberado ? 'Comissões dos profissionais (serviços + pote)' : 'Comissões dos profissionais (serviços)', res.comissoes, true)}
     ${linha('Despesas pagas', res.despesas, true)}
     <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:2px;font-weight:600;"><span>Lucro</span><span class="font-mono" style="color:${res.resultado>=0?'var(--ok)':'var(--bad)'};">${BRL(res.resultado)}</span></div>
+    ${!res.clubeLiberado && res.clubeRecebido>0 ? `<div style="margin-top:6px;padding:9px 11px;border:1px dashed var(--border);border-radius:9px;font-size:12px;color:var(--muted);line-height:1.55;">Clube: ${BRL(res.clubeRecebido)} já recebidos este mês. A parte da barbearia (${BRL(Math.max(0,res.clubeDaBarbearia))}, depois do pote dos profissionais) <b>ainda não conta no lucro</b>: entra em ${res.liberaEm.split('-').reverse().join('/')}, quando o pote do mês fecha.</div>` : ''}
   </div>`;
 }
 
@@ -10319,7 +10359,7 @@ function renderLucro(view){
   const res = resultadoDoMes(ym);
   const ant = resultadoDoMes(shiftYM(ym, -1));
   const varPct = variacao(res.resultado, ant.resultado);
-  const receitas = res.receitaServicos + res.receitaClube + res.margemProdutos;
+  const receitas = res.receitaServicos + res.receitaClube + res.margemProdutos;   // clube só depois que libera
   const margem = receitas > 0 ? res.resultado / receitas * 100 : null;
   const meses = [5,4,3,2,1,0].map(i=>{ const m = shiftYM(ym, -i); return { ym:m, valor: resultadoDoMes(m).resultado }; });
   const maior = Math.max(1, ...meses.map(m=>Math.abs(m.valor)));
@@ -10920,7 +10960,7 @@ const GUIAS_AJUDA = [
     { titulo:'Marcando como paga', texto:'Quando pagar, clique em "Marcar paga", informe a data e a forma de pagamento. Se foi em dinheiro e o caixa está aberto, dá para marcar para tirar do caixa automaticamente.', imagem:null },
     { titulo:'Despesas vencidas', texto:'Um aviso vermelho no topo mostra quantas contas já passaram do vencimento sem pagamento, e o valor total.', imagem:null },
     { titulo:'Cancelando uma despesa lançada errado', texto:'Nada é apagado: a despesa vira "cancelada" e continua no histórico. Isso mantém as contas auditáveis.', imagem:null },
-    { titulo:'Lucro do mês', texto:'O card mostra uma estimativa do que sobrou: serviços concluídos + mensalidades recebidas + lucro dos produtos, menos as comissões dos profissionais e as despesas pagas. A tela Financeiro → Lucro mostra o detalhe e os últimos 6 meses.', imagem:null },
+    { titulo:'Lucro do mês', texto:'O card mostra uma estimativa do que sobrou: serviços concluídos + lucro dos produtos, menos as comissões dos profissionais e as despesas pagas. As mensalidades do clube (já descontado o pote dos profissionais) só entram no último dia do mês, quando o pote fecha — antes disso esse dinheiro ainda não é da barbearia. A tela Financeiro → Lucro mostra o detalhe e os últimos 6 meses.', imagem:null },
   ] },
   { id:'lucro', titulo:'Lucro', papeis:['dono'], imagemGeral:'ajuda/ajuda-lucro.png', passos:[
     { titulo:'O que é', texto:'Mostra quanto sobrou para a barbearia no mês: o que entrou (serviços, mensalidades do clube e lucro dos produtos) menos as comissões dos profissionais e as despesas pagas.', imagem:null },
