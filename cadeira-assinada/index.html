@@ -150,6 +150,25 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .citacao { position: relative; padding: 34px 30px; border-radius: 20px; background: var(--card); border: 1px solid var(--line); font-size: 21px; line-height: 1.45; }
 .citacao::before { content: "\201C"; position: absolute; top: -18px; left: 22px; font-family: Georgia, serif; font-size: 90px; line-height: 1; color: var(--gold); }
 .citacao small { display: block; margin-top: 14px; font-size: 15px; color: var(--muted); }
+.autor .head { display: grid; gap: 18px; }
+.autor .citacao { margin-top: 14px; }
+.nome { color: var(--gold); }
+.foto-loja { margin: 0; }
+.foto-loja img { display: block; width: 100%; height: auto; max-height: 560px; object-fit: cover; border-radius: 20px; border: 1px solid var(--line); }
+.foto-loja figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); text-align: center; }
+.clube-real { display: grid; gap: 26px; align-items: center; margin-top: 44px; }
+@media (min-width: 900px) { .clube-real { grid-template-columns: 1.1fr .9fr; } }
+.cr-texto { display: grid; gap: 16px; justify-items: start; }
+.cr-texto h3 { margin: 0; font-size: 26px; line-height: 1.2; }
+.cr-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+.cr-nums div { padding: 14px 10px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); text-align: center; }
+.cr-nums b { display: block; font-size: clamp(18px, 5.4vw, 24px); white-space: nowrap; color: var(--gold); line-height: 1.1; }
+.cr-nums span { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.3; }
+.cr-aviso { margin: 0; font-size: 13px; color: var(--muted); }
+.cr-print { margin: 0; justify-self: center; max-width: 360px; width: 100%; }
+.cr-print img { display: block; width: 100%; height: auto; border-radius: 20px; border: 1px solid var(--line); box-shadow: 0 20px 50px rgba(0,0,0,.45); }
+.preco-topo { margin: -8px 0 0; font-size: 15px; color: var(--muted); }
+.preco-topo b { font-size: 19px; color: var(--gold); }
 .pq { display: grid; gap: 18px; }
 @media (min-width: 820px) { .pq { grid-template-columns: 1fr 1fr; } }
 
@@ -218,6 +237,7 @@ footer .in { display: grid; gap: 8px; }
       <h1>Pare de começar <span class="ouro">todo mês do zero.</span></h1>
       <p class="lead">Monte o clube de assinatura da sua barbearia em 7 dias, com o preço certo de cada plano e as palavras certas para vender na cadeira.</p>
       <a class="cta comprar" href="#oferta">Quero montar meu clube <svg aria-hidden="true"><use href="#i-seta"/></svg></a>
+      <p class="preco-topo"><b>R$ 29,90</b> · pagamento único · Pix, boleto ou cartão</p>
       <div class="prova">
         <span><svg class="ic" aria-hidden="true"><use href="#i-raio"/></svg>Acesso imediato</span>
         <span><svg class="ic" aria-hidden="true"><use href="#i-escudo"/></svg>Garantia de 7 dias</span>
@@ -378,9 +398,28 @@ footer .in { display: grid; gap: 8px; }
     <div class="head" style="margin:0">
       <span class="tag">Quem fez</span>
       <h2>Feito por barbeiro, <span class="ouro">para barbeiro</span></h2>
-      <p class="muted">Eu uso o clube de assinatura na minha barbearia. Aqui eu mostro o modelo que uso, como cheguei no meu preço e como funciona o pote de fichas com a equipe.</p>
+      <p class="muted">Eu sou o <b class="nome">SiqueiraBarber</b>, dono da <b class="nome">Alpha Barbershop</b>. Eu uso o clube de assinatura na minha barbearia. Aqui eu mostro o modelo que uso, como cheguei no meu preço e como funciona o pote de fichas com a equipe.</p>
+      <div class="citacao">O cabelo do assinante já está baixo, então o corte sai mais rápido. E o cliente paga pouco por corte para vir toda semana.<small>SiqueiraBarber, Alpha Barbershop</small></div>
     </div>
-    <div class="citacao">O cabelo do assinante já está baixo, então o corte sai mais rápido. E o cliente paga pouco por corte para vir toda semana.<small>Como funciona na minha barbearia</small></div>
+    <figure class="foto-loja">
+      <img src="img/alpha-barbershop.jpg" alt="Cadeiras e espelhos da Alpha Barbershop, a barbearia do SiqueiraBarber" width="900" height="1200" loading="lazy">
+      <figcaption>Alpha Barbershop, a minha barbearia</figcaption>
+    </figure>
+  </div>
+  <div class="in clube-real">
+    <div class="cr-texto">
+      <span class="tag">O meu clube hoje</span>
+      <h3>Não é teoria. <span class="ouro">É o que roda na minha cadeira.</span></h3>
+      <div class="cr-nums">
+        <div><b>38</b><span>assinantes ativos</span></div>
+        <div><b>R$ 2.826</b><span>por mês em mensalidades</span></div>
+        <div><b>0</b><span>cancelamentos neste mês</span></div>
+      </div>
+      <p class="cr-aviso">Print real do sistema da Alpha Barbershop em novembro de 2026. É o valor das mensalidades, antes das despesas, e é o meu resultado: não é promessa de ganho. Cada barbearia tem o seu.</p>
+    </div>
+    <figure class="cr-print">
+      <img src="img/clube-alpha.jpg" alt="Tela do sistema mostrando 38 assinantes ativos, R$ 2.826,20 de receita recorrente e 0 cancelamentos no mês" width="828" height="1365" loading="lazy">
+    </figure>
   </div>
   <div class="in pq" style="margin-top:44px">
     <div class="col bom"><h3>É para você se</h3><ul class="lista v"><li><svg aria-hidden="true"><use href="#i-v"/></svg>É barbeiro autônomo ou dono de barbearia</li><li><svg aria-hidden="true"><use href="#i-v"/></svg>Quer receita mais previsível</li><li><svg aria-hidden="true"><use href="#i-v"/></svg>Nunca montou um clube, ou montou sem fazer a conta</li></ul></div>
