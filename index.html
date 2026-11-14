@@ -1525,6 +1525,29 @@ function timesOverlap(startA,durA,startB,durB){
   const aStart=toMin(startA), aEnd=aStart+durA, bStart=toMin(startB), bEnd=bStart+durB;
   return aStart<bEnd && bStart<aEnd;
 }
+// Intervalo entre um cliente e outro (min). O LINK bloqueia (o servidor confere);
+// na agenda interna só avisa — o dono/equipe pode encaixar.
+function intervaloAgenda(){
+  const n = Number(state.onlineBooking?.intervaloMin) || 0;
+  return [15,30].includes(n) ? n : 0;
+}
+// Não bate com ninguém, mas fica a menos do intervalo de outro cliente?
+function coladoNoIntervalo(profId, date, hora, dur, ignorarId){
+  const buf = intervaloAgenda();
+  if(!buf || !hora) return null;
+  const toMin = t=>{ const [hh,mm]=String(t).split(':').map(Number); return hh*60+mm; };
+  const ini = toMin(hora), fim = ini + dur;
+  return state.appointments.find(x=>{
+    if(x.id===ignorarId || x.professionalId!==profId || x.date!==date) return false;
+    if(x.status==='cancelado' || x.status==='faltou') return false;
+    const xi = toMin(x.time), xf = xi + appointmentDuration(x);
+    if(ini < xf && xi < fim) return false;            // bate de verdade: é outro aviso
+    return ini < xf + buf && xi - buf < fim;           // não bate, mas fica colado
+  }) || null;
+}
+function avisoIntervalo(x){
+  return `Fica a menos de ${intervaloAgenda()} min do cliente das ${x.time} (intervalo do link). Dá para salvar assim mesmo, como encaixe.`;
+}
 function generateSlotsForProfessional(prof, dateStr, durationMin){
   if(!isProfessionalWorking(prof, dateStr)) return [];
   const slots = [];
@@ -3685,6 +3708,7 @@ function reagendarModal(apptId, view){
       if(choque){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Já existe outro agendamento nesse horário.'; }
       else if(bloqueado){ aviso.style.color='var(--bad)'; aviso.textContent='⚠ Esse horário está bloqueado (folga ou almoço).'; }
       else if(prof && !isProfessionalWorking(prof, d)){ aviso.style.color='var(--warn)'; aviso.textContent='⚠ Esse profissional não trabalha neste dia.'; }
+      else if(coladoNoIntervalo(pid, d, t, dur, a.id)){ aviso.style.color='var(--warn)'; aviso.textContent='⚠ '+avisoIntervalo(coladoNoIntervalo(pid, d, t, dur, a.id)); }
       else { aviso.style.color='var(--ok)'; aviso.textContent='✓ Horário livre.'; }
     };
     ['#r-prof','#r-date','#r-time'].forEach(sel=>root.querySelector(sel).addEventListener('change', checar));
@@ -3902,6 +3926,7 @@ function openApptModal(pre){
           x.status!=='cancelado' && x.status!=='faltou' &&
           timesOverlap(x.time, appointmentDuration(x), hora, durTotal));
         if(choque) avisos.push('Já existe outro agendamento nesse horário.');
+        else { const colado = coladoNoIntervalo(prof.id, date, hora, durTotal, null); if(colado) avisos.push(avisoIntervalo(colado)); }
         const bloq = blocksForDay(prof.id, date).some(b=> hora >= b.start && hora < b.end);
         if(bloq) avisos.push('Esse horário está bloqueado (folga ou almoço).');
       }
@@ -9499,6 +9524,14 @@ function renderOnlineBooking(view){
             <input id="f-max-reag" type="number" min="0" max="10" value="${ob.maxReschedules ?? 2}" style="width:100%;"></div>
           <div style="flex:1;min-width:150px;"><label>Bloquear agendamento online após quantas faltas? (90 dias · 0 = nunca)</label>
             <input id="f-noshow" type="number" min="0" max="10" value="${ob.noShowLimit ?? 0}" style="width:100%;"></div>
+          <div style="flex:1;min-width:150px;"><label>Intervalo entre um cliente e outro (no link)</label>
+            <select id="f-intervalo" style="width:100%;">
+              ${[0,15,30].map(n=>`<option value="${n}" ${intervaloAgenda()===n?'selected':''}>${n===0?'Sem intervalo':n+' minutos'}</option>`).join('')}
+            </select></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted-2);line-height:1.6;">
+          Intervalo: se um atendimento acaba às 18:00 e o intervalo é de 15 minutos, o próximo horário no link é 18:15.
+          Na agenda interna você ainda consegue encaixar — o sistema só avisa.
         </div>
         <div style="font-size:11.5px;color:var(--muted-2);line-height:1.6;">
           O cliente recebe no e-mail de confirmação um botão "Cancelar ou remarcar". As regras acima valem no servidor:
@@ -9527,6 +9560,8 @@ function renderOnlineBooking(view){
       s.onlineBooking.minHoursChange = num('#f-min-horas', 0, 72, 2);
       s.onlineBooking.maxReschedules = num('#f-max-reag', 0, 10, 2);
       s.onlineBooking.noShowLimit = num('#f-noshow', 0, 10, 0);
+      const iv = parseInt(view.querySelector('#f-intervalo').value, 10);
+      s.onlineBooking.intervaloMin = [15,30].includes(iv) ? iv : 0;
     });
     showToast('Configurações salvas.');
     renderOnlineBooking(view);
@@ -11486,7 +11521,8 @@ async function loadPublicSlots(){
       if(bookedSet.has(marca)) cabe = false;
     }
     if(cabe) slots.push(t);
-    m += 30; if(m>=60){m=0;h++;}
+    // com intervalo ligado, os horários vão de 15 em 15 (ex.: 18:15 depois de quem acaba 18:00)
+    m += (Number(pubBooking.info.intervalo) > 0 ? 15 : 30); if(m>=60){m-=60;h++;}
   }
   wrap.innerHTML = `
     <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Horários disponíveis</div>
