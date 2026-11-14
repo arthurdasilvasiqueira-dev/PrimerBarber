@@ -2941,16 +2941,24 @@ function precoParaCobrar(appt, service){
 
   membros.forEach(member=>{
     const plan = state.subscriptionPlans.find(p=>p.id===member.planId);
-    if(!membroEmDia(member) || !plan || !planValidOnDate(plan, appt.date)) return;
+    if(!membroEmDia(member) || !plan) return;
+    // Os DIAS do plano limitam só o que é incluso. O desconto do assinante
+    // vale a semana toda (pedido do dono: terça a sábado ou terça a quinta,
+    // o desconto é igual em qualquer dia).
+    const diaDoPlano = planValidOnDate(plan, appt.date);
 
     let candidato = null;
     const limiteUsos = Number(plan.usosPorMes)||0;
     const franquiaEsgotada = limiteUsos > 0 && usosDoPlanoNoMes(member, plan, appt) >= limiteUsos;
-    if(franquiaEsgotada && !franquiaInfo) franquiaInfo = { plan, limite: limiteUsos };
-    if(!franquiaEsgotada && plan.includedServiceIds && plan.includedServiceIds.includes(svc.id)){
+    if(diaDoPlano && franquiaEsgotada && !franquiaInfo) franquiaInfo = { plan, limite: limiteUsos };
+    const incluso = plan.includedServiceIds && plan.includedServiceIds.includes(svc.id);
+    if(diaDoPlano && !franquiaEsgotada && incluso){
       candidato = { member, plan, basePrice: 0, priceNote: ' (incluso no clube)', planoAtivo: true };
     } else if(plan.discountPercent > 0){
-      candidato = { member, plan, basePrice: svc.price * (1 - plan.discountPercent/100), priceNote: ` (${plan.discountPercent}% desconto clube)`, planoAtivo: false };
+      const porque = (incluso && !diaDoPlano) ? ' — fora dos dias do plano' : '';
+      candidato = { member, plan, basePrice: svc.price * (1 - plan.discountPercent/100), priceNote: ` (${plan.discountPercent}% desconto clube${porque})`, planoAtivo: false };
+    } else if(!diaDoPlano){
+      return;
     } else {
       if(!algumEmDiaSemCobrir) algumEmDiaSemCobrir = { member, plan };
       return;
@@ -4145,11 +4153,12 @@ function renderCaixa(view){
         </div>
       </div>
 
-      <div style="display:flex;gap:10px;margin-bottom:18px;">
+      <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
         <button class="btn btn-ghost" style="color:var(--ok);border-color:var(--ok);" id="btn-add-in">${ICON.arrowUp} Lançar entrada</button>
         <button class="btn btn-ghost" style="color:var(--bad);border-color:var(--bad);" id="btn-add-out">${ICON.arrowDown} Lançar saída</button>
         <button class="btn btn-ghost" id="btn-sangria">${ICON.cash} Sangria</button>
         ${podeDarVale() ? `<button class="btn btn-ghost" id="btn-vale-caixa">${ICON.cash} Vale</button>` : ''}
+        ${podeReceberMensalidade() && state.asaas?.configured!==false && assinantesAsaasParaReceber().length ? `<button class="btn btn-ghost" id="btn-mensalidade-caixa">${ICON.cash} Mensalidade do clube</button>` : ''}
       </div>
 
       <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:10px;">Movimentações de hoje</div>
@@ -4163,6 +4172,7 @@ function renderCaixa(view){
                 ${e.time} · ${methodLabelPay(e.method)} ${e.auto?'· automático':'· manual'}
                 ${e.estorno?' · <span style="color:var(--warn);">estorno</span>':''}
                 ${e.sangria?' · <span style="color:var(--muted);">sangria</span>':''}
+                ${e.clubeMensalidade?' · <span style="color:var(--gold-bright);">clube</span>':''}
               </div>
             </div>
             <div class="font-mono" style="color:${e.type==='entrada'?'var(--ok)':'var(--bad)'};font-size:14px;">${e.type==='entrada'?'+':'−'} ${BRL(e.amount)}</div>
@@ -4204,6 +4214,60 @@ function renderCaixa(view){
   view.querySelector('#btn-add-out')?.addEventListener('click', ()=>addEntryModal('saida'));
   view.querySelector('#btn-sangria')?.addEventListener('click', ()=>sangriaModal(view));
   view.querySelector('#btn-vale-caixa')?.addEventListener('click', ()=>escolherProfissionalValeModal(()=>renderCaixa(view)));
+  view.querySelector('#btn-mensalidade-caixa')?.addEventListener('click', ()=>mensalidadeClubeModal(()=>renderCaixa(view)));
+}
+
+/* ===== Mensalidade do clube recebida em dinheiro (assinante do Asaas) =====
+   Dono, admin e recepcionista. O SERVIDOR confere quem pode, dá baixa na
+   cobrança do Asaas e lança a entrada no caixa aberto — tudo de uma vez. */
+function podeReceberMensalidade(){ return isOwnerLevel() || userSession.role==='recepcionista'; }
+function assinantesAsaasParaReceber(){
+  const mes = todayISO().slice(0,7);
+  return (state.subscriptionMembers||[])
+    .filter(m=>m.paymentMethod==='asaas' && m.asaasSubscriptionId && !m.arquivado
+      && !['cancelado','pausado'].includes(m.status) && !pagouNoMes(m, mes))
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''), 'pt-BR'));
+}
+async function receberMensalidadeDinheiro(m, botao){
+  const p = state.subscriptionPlans.find(x=>x.id===m.planId);
+  if(!confirm(`Confirmar que ${m.name} pagou a mensalidade${p?` (${p.name} — ${BRL(p.price)})`:''} em DINHEIRO?\n\nA cobrança em aberto é baixada no Asaas, o valor entra no caixa de hoje e o cliente não recebe aviso.`)) return false;
+  if(botao) botao.disabled = true;
+  const ok = await acaoClubeNoServidor({ action:'receber_dinheiro', memberId:m.id });
+  if(!ok){ if(botao) botao.disabled = false; return false; }
+  showToast(`Mensalidade de ${m.name} recebida: baixa no Asaas e entrada no caixa.`);
+  return true;
+}
+function mensalidadeClubeModal(onDone){
+  if(!openSession()){ showToast('Abra o caixa antes de receber a mensalidade.'); return; }
+  const lista = assinantesAsaasParaReceber();
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Mensalidade do clube</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Assinante pagou em <b>dinheiro</b> no balcão? Clique em "Recebi". O sistema dá baixa no Asaas e lança no caixa. (Pix e cartão pelo link do Asaas atualizam sozinhos.)</div>
+      <input id="mc-busca" placeholder="Buscar assinante" style="width:100%;margin-bottom:10px;">
+      <div id="mc-lista" style="display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow-y:auto;">
+        ${lista.length===0 ? emptyState('Nenhum assinante do Asaas com mensalidade em aberto neste mês.') : lista.map(m=>{
+          const p = state.subscriptionPlans.find(x=>x.id===m.planId);
+          return `<div data-mc-linha="${esc(normNome(m.name))}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+            <div style="font-size:13px;"><b>${esc(m.name)}</b><br><span style="color:var(--muted-2);font-size:11.5px;">${p?esc(p.name)+' · '+BRL(p.price):'plano removido'}</span></div>
+            <button class="btn btn-gold" data-mc-receber="${m.id}" style="padding:6px 12px;font-size:12px;flex-shrink:0;">Recebi</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    root.querySelector('#mc-busca').addEventListener('input', e=>{
+      const t = normNome(e.target.value);
+      root.querySelectorAll('[data-mc-linha]').forEach(l=>{ l.style.display = l.dataset.mcLinha.includes(t) ? '' : 'none'; });
+    });
+    root.querySelectorAll('[data-mc-receber]').forEach(b=>b.addEventListener('click', async ()=>{
+      const m = state.subscriptionMembers.find(x=>x.id===b.dataset.mcReceber); if(!m) return;
+      if(await receberMensalidadeDinheiro(m, b)){ closeModal(); if(onDone) onDone(); }
+    }));
+  });
 }
 // Quanto ficou na gaveta no último fechamento
 function saldoUltimoFechamento(){
@@ -6440,7 +6504,7 @@ function renderClube(view){
               <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
                 ${messageChannelRow(m.phone, msg)}
                 ${m.paymentMethod!=='asaas'?`<button class="btn btn-gold" data-marcar-pago="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi</button>`:''}
-                ${m.paymentMethod==='asaas' && userSession.role==='dono'?`<button class="btn btn-gold" data-receber-asaas="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi em dinheiro</button>`:''}
+                ${m.paymentMethod==='asaas' && podeReceberMensalidade()?`<button class="btn btn-gold" data-receber-asaas="${m.id}" style="padding:6px 10px;font-size:12px;">Recebi em dinheiro</button>`:''}
               </div>
             </div>`;
           }).join('')}
@@ -6451,11 +6515,9 @@ function renderClube(view){
       // assinante do Asaas que pagou no balcão: o servidor dá baixa na cobrança do Asaas
       root.querySelectorAll('[data-receber-asaas]').forEach(b=>b.addEventListener('click', async ()=>{
         const m = state.subscriptionMembers.find(x=>x.id===b.dataset.receberAsaas);
-        if(!m || !confirm(`Confirmar que ${m.name} pagou em dinheiro?\n\nA cobrança em aberto será baixada no Asaas (sem entrar saldo lá) e o cliente não recebe aviso.`)) return;
-        b.disabled = true;
-        const ok = await acaoClubeNoServidor({ action:'receber_dinheiro', memberId:m.id });
-        if(!ok){ b.disabled = false; return; }
-        showToast('Pagamento em dinheiro registrado.');
+        if(!m) return;
+        if(!openSession()){ showToast('Abra o caixa antes de receber a mensalidade.'); return; }
+        if(!await receberMensalidadeDinheiro(m, b)) return;
         closeModal();
         renderClube(view);
       }));
@@ -8434,9 +8496,8 @@ function venderProdutosModal(opts = {}){
       // FASE 6: mesma regra de "em dia" do resto do sistema (com tolerância)
       if(m && membroEmDia(m)){
         const plan = state.subscriptionPlans.find(p=>p.id===m.planId);
-        if(plan && !planValidOnDate(plan, todayISO())){
-          nota = `${planDaysLabel(plan.validDays)} — hoje o desconto não vale.`;
-        } else if(plan && plan.discountPercent>0){
+        // desconto do assinante vale a semana toda (os dias do plano só limitam o incluso)
+        if(plan && plan.discountPercent>0){
           desconto = r2(brutoPrevio * (plan.discountPercent/100));
           nota = `Desconto de assinante: ${plan.discountPercent}% (${esc(plan.name)})`;
         }
