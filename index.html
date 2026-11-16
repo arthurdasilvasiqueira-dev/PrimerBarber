@@ -1514,11 +1514,27 @@ function blocksForDay(profId, dateISO){
 function isBlocked(profId, dateISO, hhmm){
   return blocksForDay(profId, dateISO).some(b => hhmm >= b.start && hhmm < b.end);
 }
+// DIA EXTRA: abre uma data em que o profissional normalmente não trabalha,
+// sem mexer no cronograma da semana. Guardado em professionals[].diasExtras
+// = [{date, start, end}]. Mesma regra do servidor (_checar_horario).
+const HORA_OK = /^([01]\d|2[0-3]):[0-5]\d$/;
+function diaExtraDe(prof, dateStr){
+  const lista = Array.isArray(prof?.diasExtras) ? prof.diasExtras : [];
+  return lista.find(x=>x && x.date===dateStr && HORA_OK.test(x.start||'') && HORA_OK.test(x.end||'') && x.start < x.end) || null;
+}
+// Expediente do profissional NUM DIA: dia extra > folga > semana normal (null = não trabalha).
+// Serve para o painel e para a página pública (que recebe os mesmos campos do servidor).
+function expedienteDoDia(prof, dateStr){
+  if(!prof || !dateStr) return null;
+  const extra = diaExtraDe(prof, dateStr);
+  if(extra) return { start: extra.start, end: extra.end, extra: true };
+  if(Array.isArray(prof.timeOff) && prof.timeOff.includes(dateStr)) return null;
+  const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
+  if(!dias.includes(new Date(dateStr+'T12:00').getDay())) return null;
+  return { start: prof.workStart||'09:00', end: prof.workEnd||'18:00', extra: false };
+}
 function isProfessionalWorking(prof, dateStr){
-  const weekday = new Date(dateStr+'T00:00').getDay();
-  if(!prof.workDays.includes(weekday)) return false;
-  if(prof.timeOff.includes(dateStr)) return false;
-  return true;
+  return !!expedienteDoDia(prof, dateStr);
 }
 function timesOverlap(startA,durA,startB,durB){
   const toMin = t=>{ const [hh,mm]=t.split(':').map(Number); return hh*60+mm; };
@@ -1549,10 +1565,11 @@ function avisoIntervalo(x){
   return `Fica a menos de ${intervaloAgenda()} min do cliente das ${x.time} (intervalo do link). Dá para salvar assim mesmo, como encaixe.`;
 }
 function generateSlotsForProfessional(prof, dateStr, durationMin){
-  if(!isProfessionalWorking(prof, dateStr)) return [];
+  const ex = expedienteDoDia(prof, dateStr);
+  if(!ex) return [];
   const slots = [];
-  let [h,m] = prof.workStart.split(':').map(Number);
-  const [eh,em] = prof.workEnd.split(':').map(Number);
+  let [h,m] = ex.start.split(':').map(Number);
+  const [eh,em] = ex.end.split(':').map(Number);
   const workEndMinutes = eh*60+em;
   while(h*60+m < workEndMinutes){
     const timeStr = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
@@ -2226,8 +2243,9 @@ function agendaGridView(dateISO, profList){
   // Faixa de horários: cobre a jornada de todos os profissionais do dia
   let minH = 23, maxH = 1;
   profList.forEach(p=>{
-    const [sh] = (p.workStart||'09:00').split(':').map(Number);
-    const [eh] = (p.workEnd||'19:00').split(':').map(Number);
+    const ex = expedienteDoDia(p, dateISO) || { start: p.workStart||'09:00', end: p.workEnd||'19:00' };
+    const [sh] = ex.start.split(':').map(Number);
+    const [eh] = ex.end.split(':').map(Number);
     minH = Math.min(minH, sh); maxH = Math.max(maxH, eh);
   });
   appts.forEach(a=>{
@@ -2298,7 +2316,7 @@ function agendaGridView(dateISO, profList){
               </div>
               <div style="min-width:0;">
                 <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div>
-                <div style="font-size:10.5px;color:var(--muted-2);">${isProfessionalWorking(p, dateISO)?`${p.workStart}–${p.workEnd}`:'Folga'}</div>
+                <div style="font-size:10.5px;color:var(--muted-2);">${(ex=>ex?`${ex.start}–${ex.end}${ex.extra?' · <span style="color:var(--gold-bright);">dia extra</span>':''}`:'Folga')(expedienteDoDia(p, dateISO))}</div>
               </div>
             </div>
           `).join('')}
@@ -2582,6 +2600,8 @@ function renderAgenda(view){
       </div>
     </div>
 
+    ${cartaoDiaExtra(viewDate)}
+
     ${appts.length>0 ? `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;">
         ${statCard('Agendamentos', appts.length, 'neste dia', 'ok')}
@@ -2670,6 +2690,7 @@ function renderAgenda(view){
   `;
   view.querySelector('#btn-new-appt')?.addEventListener('click', openApptModal);
   view.querySelector('#btn-new-block')?.addEventListener('click', ()=>blockModal({date:viewDate}, view));
+  view.querySelector('#btn-dia-extra')?.addEventListener('click', ()=>diaExtraModal(viewDate, ()=>renderAgenda(view)));
   view.querySelectorAll('.btn-del-block').forEach(b=>b.addEventListener('click', (e)=>{
     e.stopPropagation();
     const bloco = (state.timeBlocks||[]).find(x=>x.id===b.dataset.block);
@@ -3747,6 +3768,104 @@ function reagendarModal(apptId, view){
   });
 }
 
+/* ============ DIA EXTRA (abrir um dia fora do cronograma) ============
+   Ex.: domingo 20/12 — abre só para quem você escolher, com o horário do dia.
+   O cronograma da semana do profissional não muda. Só dono/admin
+   (o servidor não deixa a recepcionista mexer nos profissionais). */
+function cartaoDiaExtra(dateISO){
+  if(!isOwnerLevel() || !dateISO || dateISO < todayISO()) return '';
+  const profs = servingProfessionals();
+  const fechados = profs.filter(p=>!isProfessionalWorking(p, dateISO));
+  const extras = profs.filter(p=>diaExtraDe(p, dateISO));
+  if(!fechados.length && !extras.length) return '';
+  return `<div class="card" id="card-dia-extra" style="padding:12px 16px;margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;font-size:13px;line-height:1.55;">
+      ${extras.length ? `<div>📅 <b>Dia extra aberto</b> para ${extras.map(p=>{ const x = diaExtraDe(p, dateISO); return `${esc(p.name)} (${x.start}–${x.end})`; }).join(', ')}.</div>` : ''}
+      ${fechados.length ? `<div style="color:var(--muted);">${fechados.length===profs.length ? 'Ninguém trabalha neste dia' : `Não trabalha${fechados.length>1?'m':''} neste dia: ${fechados.map(p=>esc(p.name)).join(', ')}`} (cronograma ou folga).</div>` : ''}
+    </div>
+    <button class="btn btn-ghost" id="btn-dia-extra" style="padding:7px 13px;font-size:12.5px;">${extras.length ? 'Mudar dia extra' : 'Abrir este dia'}</button>
+  </div>`;
+}
+// Grava o dia extra: abre para os "ids" (entre os candidatos) e fecha para os outros candidatos.
+// Abrir tira a folga marcada nessa data. Dias extras com mais de 60 dias são limpos.
+function aplicarDiaExtra(s, dateISO, candidatos, ids, start, end){
+  const corte = new Date(Date.now() - 60*86400000).toISOString().slice(0,10);
+  const abriu = [], fechou = [];
+  (s.professionals||[]).forEach(p=>{
+    if(!candidatos.includes(p.id)) return;
+    const tinha = !!diaExtraDe(p, dateISO);
+    const lista = (Array.isArray(p.diasExtras) ? p.diasExtras : []).filter(x=>x && x.date!==dateISO && String(x.date) >= corte);
+    if(ids.includes(p.id)){
+      lista.push({ date: dateISO, start, end });
+      if(Array.isArray(p.timeOff)) p.timeOff = p.timeOff.filter(d=>d!==dateISO);
+      abriu.push(p.name);
+    } else if(tinha) fechou.push(p.name);
+    p.diasExtras = lista.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  });
+  const dataBR = new Date(dateISO+'T12:00').toLocaleDateString('pt-BR');
+  if(abriu.length) registrarAuditoria(s, 'Abriu dia extra', `${dataBR} (${start}–${end}): ${abriu.join(', ')}`);
+  if(fechou.length) registrarAuditoria(s, 'Fechou dia extra', `${dataBR}: ${fechou.join(', ')}`);
+  return { abriu, fechou };
+}
+function diaExtraModal(dateISO, onDone){
+  if(!isOwnerLevel()) return;
+  const lista = servingProfessionals().filter(p=>diaExtraDe(p, dateISO) || !isProfessionalWorking(p, dateISO));
+  if(!lista.length){ showToast('Todos já trabalham neste dia.'); return; }
+  const ref = lista.map(p=>diaExtraDe(p, dateISO)).find(Boolean) || { start: lista[0].workStart||'09:00', end: lista[0].workEnd||'18:00' };
+  const titulo = new Date(dateISO+'T12:00').toLocaleDateString('pt-BR', {weekday:'long', day:'2-digit', month:'2-digit'});
+  openModal(`
+    <div style="padding:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="font-display" style="font-size:19px;font-weight:600;">Abrir dia extra</div>
+        <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.5;"><b style="color:var(--ink);">${esc(titulo.charAt(0).toUpperCase()+titulo.slice(1))}</b> — os clientes poderão agendar pelo link com quem você marcar. O cronograma da semana não muda.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+        <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;">
+          <input type="checkbox" id="de-todos" style="width:auto;"> <b style="font-size:13.5px;">Todos os profissionais</b>
+        </label>
+        ${lista.map(p=>`<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;cursor:pointer;">
+          <input type="checkbox" data-de-prof="${p.id}" ${diaExtraDe(p, dateISO)?'checked':''} style="width:auto;">
+          <span style="font-size:13.5px;">${esc(p.name)}</span>
+          ${(p.timeOff||[]).includes(dateISO) && !diaExtraDe(p, dateISO) ? '<span style="font-size:11px;color:var(--muted-2);">(folga marcada — abrir tira a folga)</span>' : ''}
+        </label>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <div style="flex:1;"><label>Começa</label><input id="de-start" type="time" value="${ref.start}" style="width:100%;"></div>
+        <div style="flex:1;"><label>Termina</label><input id="de-end" type="time" value="${ref.end}" style="width:100%;"></div>
+      </div>
+      <div id="de-msg" role="alert" style="display:none;font-size:12.5px;color:var(--bad);margin-bottom:10px;"></div>
+      <button class="btn btn-gold" id="de-salvar" style="justify-content:center;width:100%;">Salvar</button>
+    </div>
+  `, root=>{
+    root.querySelector('#m-close').addEventListener('click', closeModal);
+    const caixas = [...root.querySelectorAll('[data-de-prof]')];
+    const todos = root.querySelector('#de-todos');
+    const sincTodos = ()=>{ todos.checked = caixas.every(c=>c.checked); };
+    sincTodos();
+    todos.addEventListener('change', ()=>caixas.forEach(c=>{ c.checked = todos.checked; }));
+    caixas.forEach(c=>c.addEventListener('change', sincTodos));
+    root.querySelector('#de-salvar').addEventListener('click', ()=>{
+      const msg = root.querySelector('#de-msg');
+      const start = root.querySelector('#de-start').value, end = root.querySelector('#de-end').value;
+      const ids = caixas.filter(c=>c.checked).map(c=>c.dataset.deProf);
+      if(ids.length && (!HORA_OK.test(start) || !HORA_OK.test(end) || start >= end)){
+        msg.textContent = 'O horário de término precisa ser depois do começo.'; msg.style.display = 'block'; return;
+      }
+      // fechar de novo quem já tem cliente marcado nesse dia: avisa antes
+      const fechando = lista.filter(p=>diaExtraDe(p, dateISO) && !ids.includes(p.id));
+      const comCliente = fechando.filter(p=>state.appointments.some(a=>a.professionalId===p.id && a.date===dateISO && a.status!=='cancelado' && a.status!=='faltou'));
+      if(comCliente.length && !confirm(`${comCliente.map(p=>p.name).join(', ')} já tem cliente marcado nesse dia.\n\nFechar o dia mesmo assim? Os horários marcados continuam na agenda (avise os clientes).`)) return;
+      if(!ids.length && !fechando.length){ msg.textContent = 'Marque pelo menos um profissional.'; msg.style.display = 'block'; return; }
+      let r = { abriu: [], fechou: [] };
+      update(s=>{ r = aplicarDiaExtra(s, dateISO, lista.map(p=>p.id), ids, start, end); });
+      closeModal();
+      showToast(r.abriu.length ? `Dia aberto para ${r.abriu.join(', ')}.` : 'Dia extra fechado.');
+      if(onDone) onDone();
+    });
+  });
+}
+
 function blockModal(pre, view){
   const isProfView = userSession.role==='profissional';
   const profs = isProfView
@@ -3922,8 +4041,9 @@ function openApptModal(pre){
       }
       // fora do horário de funcionamento do profissional
       if(prof && hora){
-        const ini = prof.workStart || '09:00';
-        const fim = prof.workEnd || '19:00';
+        const exDia = date ? expedienteDoDia(prof, date) : null;
+        const ini = exDia ? exDia.start : (prof.workStart || '09:00');
+        const fim = exDia ? exDia.end : (prof.workEnd || '19:00');
         if(hora < ini || hora >= fim){
           avisos.push(`${hora} está fora do expediente de ${prof.name} (${ini} às ${fim}). O agendamento será criado como exceção e aparecerá normalmente na agenda.`);
         }
@@ -9037,11 +9157,12 @@ function ocupacaoMes(ym){
   servingProfessionals().forEach(p=>{
     for(let d=1; d<=ultimoDia; d++){
       const dia = `${ym}-${String(d).padStart(2,'0')}`;
-      const [sh,sm] = (p.workStart||'09:00').split(':').map(Number);
-      const [eh,em] = (p.workEnd||'19:00').split(':').map(Number);
+      const exDia = expedienteDoDia(p, dia);
+      const [sh,sm] = (exDia ? exDia.start : (p.workStart||'09:00')).split(':').map(Number);
+      const [eh,em] = (exDia ? exDia.end : (p.workEnd||'19:00')).split(':').map(Number);
       const jornada = (eh*60+em) - (sh*60+sm);
       if(jornada<=0) continue;
-      if(isProfessionalWorking(p, dia)){
+      if(exDia){
         minutosPossiveis += jornada;
         // desconta bloqueios (almoço, folga)
         blocksForDay(p.id, dia).forEach(b=>{
@@ -9641,14 +9762,13 @@ async function acceptBookingRequest(req){
   if(prof){
     // Avisa se o pedido cair num dia de folga ou fora do expediente do
     // profissional, antes de jogar direto na agenda sem querer.
-    const dow = new Date(req.date+'T12:00').getDay();
-    const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
-    const foraDoDia = !dias.includes(dow);
-    const foraDoHorario = req.time < (prof.workStart||'09:00') || req.time >= (prof.workEnd||'18:00');
+    const exDia = expedienteDoDia(prof, String(req.date).slice(0,10));
+    const foraDoDia = !exDia;
+    const foraDoHorario = !!exDia && (req.time < exDia.start || req.time >= exDia.end);
     if(foraDoDia || foraDoHorario){
       const motivo = foraDoDia
-        ? `${prof.name} não trabalha neste dia da semana`
-        : `${req.time} está fora do expediente de ${prof.name} (${prof.workStart||'09:00'} às ${prof.workEnd||'18:00'})`;
+        ? `${prof.name} não trabalha neste dia (cronograma ou folga)`
+        : `${req.time} está fora do expediente de ${prof.name} (${exDia.start} às ${exDia.end})`;
       if(!confirm(`⚠ ${motivo}.\n\nAceitar mesmo assim como uma exceção?`)) return;
     }
     // Já tem outro cliente nesse horário? (o pedido pode ter sido feito
@@ -11658,9 +11778,9 @@ async function loadPublicSlots(){
   // Confere se o profissional trabalha neste dia da semana ANTES de
   // qualquer coisa. Sem isso, o sistema gerava horários mesmo em dias
   // de folga (ex: domingo, ou antes do profissional começar na barbearia).
-  const diaSemana = new Date(pubBooking.date+'T12:00').getDay();
-  const dias = Array.isArray(prof.workDays) ? prof.workDays : [1,2,3,4,5,6];
-  if(!dias.includes(diaSemana)){
+  // DIA EXTRA: o servidor manda os dias extras e as folgas que vêm pela frente.
+  const exDia = expedienteDoDia(prof, pubBooking.date);
+  if(!exDia){
     wrap.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">${esc(prof.name)} não atende neste dia. Escolha outra data.</div>`;
     return;
   }
@@ -11673,8 +11793,8 @@ async function loadPublicSlots(){
   const svcEscolhido = (pubBooking.info.services||[]).find(s=>s.id===pubBooking.serviceId);
   const durMin = Number(svcEscolhido?.duration) || 30;
   const slots = [];
-  let [h,m] = (prof.workStart||'09:00').split(':').map(Number);
-  const [endH,endM] = (prof.workEnd||'18:00').split(':').map(Number);
+  let [h,m] = exDia.start.split(':').map(Number);
+  const [endH,endM] = exDia.end.split(':').map(Number);
   const fimExpediente = endH*60 + endM;
   while(h < endH || (h===endH && m < endM)){
     const inicio = h*60 + m;
@@ -11912,8 +12032,8 @@ async function carregarHorariosGerenciar(){
   const el = document.getElementById('ger-slots');
   const i = gerenciar.info, p = i.professional || {};
   if(!el || !gerenciar.data) return;
-  const dia = new Date(gerenciar.data+'T12:00').getDay();
-  if(!(Array.isArray(p.workDays) ? p.workDays : [1,2,3,4,5,6]).includes(dia)){
+  const exDia = expedienteDoDia(p, gerenciar.data);
+  if(!exDia){
     el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">${esc(p.name||'O profissional')} não atende neste dia.</div>`; return;
   }
   el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);">Carregando horários...</div>`;
@@ -11921,7 +12041,7 @@ async function carregarHorariosGerenciar(){
   const bloq = new Set(ocupados||[]);
   // o próprio horário atual não bloqueia a remarcação (o servidor também ignora)
   if(gerenciar.data===i.date){ const [h0,m0] = i.time.split(':').map(Number); for(let x=h0*60+m0; x<h0*60+m0+(i.duration||30); x+=15) bloq.delete(String(Math.floor(x/60)).padStart(2,'0')+':'+String(x%60).padStart(2,'0')); }
-  const [hi,mi] = (p.workStart||'09:00').split(':').map(Number), [hf,mf] = (p.workEnd||'18:00').split(':').map(Number);
+  const [hi,mi] = exDia.start.split(':').map(Number), [hf,mf] = exDia.end.split(':').map(Number);
   const agora = new Date(), hoje = todayISO()===gerenciar.data, livres = [];
   for(let t=hi*60+mi; t+(i.duration||30)<=hf*60+mf; t+=30){
     const hh = String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
