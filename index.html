@@ -8097,6 +8097,9 @@ function clientModal(existing){
           ${state.clients.filter(c=>c.id!==existing?.id).map(c=>`<option value="${esc(c.name)}" ${existing?.referredBy===c.name?'selected':''}>${esc(c.name)}</option>`).join('')}
         </select></div>
         <div><label>Observações</label><input id="f-notes" value="${esc(existing?.notes)}" placeholder="Preferências do cliente" style="width:100%;"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="f-sem-avisos" ${existing?.semAvisos?'checked':''} style="width:auto;"> Não receber avisos (pediu SAIR)
+        </label>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
         ${isEdit && podeUsarLgpd() ? `
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
@@ -8119,7 +8122,8 @@ function clientModal(existing){
       let birthday = existing?.birthday || '';
       const m = bdayRaw.match(/^(\d{1,2})\/(\d{1,2})$/);
       if(m) birthday = m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
-      const data = {name, phone: root.querySelector('#f-phone').value.trim(), birthday, notes: root.querySelector('#f-notes').value.trim(), referredBy: root.querySelector('#f-referred').value};
+      const data = {name, phone: root.querySelector('#f-phone').value.trim(), birthday, notes: root.querySelector('#f-notes').value.trim(), referredBy: root.querySelector('#f-referred').value,
+        semAvisos: root.querySelector('#f-sem-avisos').checked};
       // FASE 3: telefone já cadastrado em outro cliente? (evita duplicado)
       const telNovo = String(data.phone||'').replace(/\D/g,'').replace(/^55(?=\d{10,11}$)/,'');
       const mesmoTel = telNovo.length>=10 && state.clients.find(c=>c.id!==existing?.id && !c.arquivado &&
@@ -9994,12 +9998,110 @@ function whatsAutoCfg(s){
   if(c.cobrancaAtraso === undefined) c.cobrancaAtraso = c.cobranca;   // quem já usava cobrança segue recebendo o aviso de atraso
   return c;
 }
-async function chamarWhats(acao){
+async function chamarWhats(acao, extra){
   try{
-    const { data, error } = await supa.functions.invoke('whatsapp', { body:{ acao } });
+    const { data, error } = await supa.functions.invoke('whatsapp', { body:{ ...(extra||{}), acao } });
     if(error) return { error:'Não foi possível falar com o servidor. Tente de novo.' };
     return data || { error:'Sem resposta do servidor.' };
   }catch(e){ return { error:'Não foi possível falar com o servidor. Tente de novo.' }; }
+}
+/* ===== AVISO PARA TODOS OS CLIENTES =====
+   O dono escreve, escolhe o grupo e envia. Quem recebe é calculado no
+   SERVIDOR; a mensagem sai pela fila do WhatsApp, depois das automáticas
+   e no máximo 30 por hora. Cliente que pediu SAIR: marcar na ficha dele. */
+const AVISO_SAIR = 'Se não quiser receber avisos, responda SAIR.';
+const AVISO_PUBLICOS = [['recentes','Quem veio nos últimos 6 meses'], ['todos','Todos com celular'], ['clube','Só assinantes do clube']];
+function previaAviso(texto, nome, comSair){
+  const primeiro = String(nome||'').split(' ')[0] || 'cliente';
+  const corpo = String(texto||'').trim().replace(/\{cliente\}/gi, primeiro);
+  return comSair ? corpo + '\n\n' + AVISO_SAIR : corpo;
+}
+function montarAvisoTodos(caixa){
+  let rascunho = '';
+  try{ rascunho = localStorage.getItem('pb_aviso_rascunho') || ''; }catch(e){}
+  const nomeLoja = state.shopProfile?.name || 'a barbearia';
+  caixa.innerHTML = `
+    <div class="card" style="padding:18px 20px;margin-bottom:22px;">
+      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:4px;">📣 Aviso para todos os clientes</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Folga, feriado, mudança de horário. Sai pelo WhatsApp conectado acima, aos poucos (no máximo 30 por hora), sempre depois das confirmações e lembretes.</div>
+      <label>Mensagem</label>
+      <textarea id="av-texto" rows="4" maxlength="700" placeholder="Olá {cliente}! A ${esc(nomeLoja)} vai estar fechada na quinta, dia 20. Na sexta voltamos ao normal." style="width:100%;margin-bottom:4px;">${esc(rascunho)}</textarea>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-bottom:12px;">Use <b>{cliente}</b> para sair com o nome de cada um. <span id="av-letras"></span></div>
+      <label>Quem recebe</label>
+      <select id="av-publico" style="width:100%;margin-bottom:10px;">
+        ${AVISO_PUBLICOS.map(([k,r])=>`<option value="${k}">${r}</option>`).join('')}
+      </select>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:12px;">
+        <input type="checkbox" id="av-sair" checked style="width:auto;"> Colocar no final: "${AVISO_SAIR}"
+      </label>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Prévia (como o João vai ver)</div>
+      <div id="av-previa" style="background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.35);border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.6;white-space:pre-wrap;margin-bottom:12px;max-width:460px;"></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-gold" id="av-enviar">Enviar aviso</button>
+        <span id="av-info" style="font-size:12px;color:var(--muted-2);">Contando clientes...</span>
+      </div>
+      <div id="av-msg" style="font-size:12.5px;margin-top:8px;"></div>
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <div style="font-size:12.5px;font-weight:600;">Último aviso</div>
+          <div style="display:flex;gap:6px;"><button class="btn btn-ghost" id="av-atualizar" style="padding:5px 10px;font-size:12px;">Atualizar</button>
+          <button class="btn btn-ghost" id="av-cancelar" style="padding:5px 10px;font-size:12px;color:var(--bad);border-color:var(--bad);display:none;">Parar o envio</button></div>
+        </div>
+        <div id="av-status" style="font-size:12.5px;color:var(--muted);">Carregando...</div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-top:10px;line-height:1.5;">Cliente respondeu SAIR? Abra a ficha dele em Clientes e marque "Não receber avisos".</div>
+    </div>`;
+  const $ = s=>caixa.querySelector(s);
+  let total = null;
+  const msg = (t, cor)=>{ $('#av-msg').style.color = cor || 'var(--bad)'; $('#av-msg').textContent = t || ''; };
+  const desenhar = ()=>{
+    const t = $('#av-texto').value;
+    $('#av-previa').textContent = t.trim() ? previaAviso(t, 'João Silva', $('#av-sair').checked) : 'Escreva a mensagem para ver a prévia.';
+    $('#av-letras').textContent = `${t.length}/700`;
+    try{ localStorage.setItem('pb_aviso_rascunho', t); }catch(e){}
+  };
+  const contar = async ()=>{
+    total = null; $('#av-info').textContent = 'Contando clientes...';
+    const r = await chamarWhats('aviso_contar', { publico: $('#av-publico').value });
+    if(r.error){ $('#av-info').textContent = r.error; return; }
+    total = r.total;
+    $('#av-info').textContent = total ? `${total} cliente(s) · leva cerca de ${Math.max(1, Math.ceil(total/30))} h` : 'Nenhum cliente com celular nesse grupo.';
+  };
+  const status = async ()=>{
+    const r = await chamarWhats('aviso_status');
+    if(r.error){ $('#av-status').textContent = r.error; return; }
+    const a = r.aviso;
+    $('#av-cancelar').style.display = a && a.pendente>0 ? '' : 'none';
+    if(!a){ $('#av-status').textContent = 'Nenhum aviso enviado nos últimos dias.'; return; }
+    const cx = (rot, n, cor)=>`<div style="flex:1;min-width:90px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;"><div style="font-size:11px;color:var(--muted-2);">${rot}</div><div class="font-mono" style="font-size:17px;color:${cor};">${n}</div></div>`;
+    $('#av-status').innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cx('Enviadas', a.enviado, 'var(--ok)')}${cx('Na fila', a.pendente, 'var(--ink)')}${cx('Não saíram', (a.erro||0)+(a.expirado||0), 'var(--bad)')}${a.cancelado?cx('Paradas', a.cancelado, 'var(--muted)'):''}</div>`;
+  };
+  $('#av-texto').addEventListener('input', ()=>{ desenhar(); msg(''); });
+  $('#av-sair').addEventListener('change', desenhar);
+  $('#av-publico').addEventListener('change', contar);
+  $('#av-atualizar').addEventListener('click', status);
+  $('#av-cancelar').addEventListener('click', async ()=>{
+    if(!confirm('Parar o envio? Quem ainda está na fila não recebe este aviso.')) return;
+    const r = await chamarWhats('aviso_cancelar');
+    if(r.error){ msg(r.error); return; }
+    msg('Envio parado.', 'var(--ok)'); status();
+  });
+  $('#av-enviar').addEventListener('click', async (e)=>{
+    const texto = $('#av-texto').value.trim();
+    if(texto.length < 5){ msg('Escreva a mensagem do aviso.'); return; }
+    if(!total){ msg('Nenhum cliente para receber nesse grupo.'); return; }
+    const grupo = AVISO_PUBLICOS.find(p=>p[0]===$('#av-publico').value)[1];
+    if(!confirm(`Enviar este aviso para ${total} cliente(s)?\n(${grupo})\n\nNão dá para desfazer o que já saiu. Dá para parar o resto da fila.`)) return;
+    const b = e.currentTarget; b.disabled = true;
+    const r = await chamarWhats('aviso_enviar', { texto, publico: $('#av-publico').value, sair: $('#av-sair').checked });
+    b.disabled = false;
+    if(r.error){ msg(r.error); return; }
+    msg(`Aviso na fila para ${r.total} cliente(s). Vai saindo aos poucos.`, 'var(--ok)');
+    try{ localStorage.removeItem('pb_aviso_rascunho'); }catch(err){}
+    update(s=>registrarAuditoria(s, 'Enviou aviso para os clientes', `${r.total} cliente(s) (${grupo}): ${texto.slice(0,150)}`));
+    status();
+  });
+  desenhar(); contar(); status();
 }
 function qrValido(v){ return typeof v==='string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v); }
 
@@ -10125,7 +10227,7 @@ function renderMensagens(view){
 
   view.innerHTML = `
     ${pageHeader('Mensagens Automáticas', 'Confirmação, lembrete, retorno de clientes ausentes e oferta de serviços/produtos')}
-    ${podeUsarLgpd() ? '<div id="wa-auto"></div>' : ''}
+    ${podeUsarLgpd() ? '<div id="wa-auto"></div><div id="wa-aviso"></div>' : ''}
 
     <div class="card" style="padding:16px 18px;margin-bottom:22px;">
       <div style="font-size:13px;color:var(--muted);line-height:1.7;">Este painel identifica automaticamente quem precisa receber cada mensagem com base na agenda e no histórico de clientes. Toque em <strong style="color:var(--ink);">Enviar via WhatsApp</strong> para abrir a conversa já com o texto pronto — o envio 100% automático (disparado sozinho, sem toque, mesmo com o sistema fechado) exige um servidor com a API oficial do WhatsApp Business rodando em segundo plano.</div>
@@ -10257,6 +10359,8 @@ function renderMensagens(view){
 
   const caixaWa = view.querySelector('#wa-auto');
   if(caixaWa) montarWhatsAuto(caixaWa);
+  const caixaAviso = view.querySelector('#wa-aviso');
+  if(caixaAviso) montarAvisoTodos(caixaAviso);
 
   view.querySelector('#btn-save-reminder-hours').addEventListener('click', ()=>{
     const v = parseInt(view.querySelector('#f-reminder-hours').value)||3;
