@@ -2114,6 +2114,7 @@ function viewDashboard(){
 
   return `
     ${pageHeader('Painel', new Date().toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'}))}
+    ${cartaoFeriados()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:22px;">
       ${statCard(
         isProfView?'Seu faturamento hoje':'Faturamento em serviços hoje',
@@ -2176,6 +2177,7 @@ function viewDashboard(){
   `;
 }
 function ligarPainel(view){
+  ligarFeriados(view, ()=>render());
   view.querySelector('[data-ir-lucro]')?.addEventListener('click', ()=>{ route = 'lucro'; render(); window.scrollTo(0, 0); });
 }
 function statCard(label, value, sub, tone){
@@ -2600,6 +2602,7 @@ function renderAgenda(view){
       </div>
     </div>
 
+    ${cartaoFeriadoDoDia(viewDate)}
     ${cartaoDiaExtra(viewDate)}
 
     ${appts.length>0 ? `
@@ -2691,6 +2694,8 @@ function renderAgenda(view){
   view.querySelector('#btn-new-appt')?.addEventListener('click', openApptModal);
   view.querySelector('#btn-new-block')?.addEventListener('click', ()=>blockModal({date:viewDate}, view));
   view.querySelector('#btn-dia-extra')?.addEventListener('click', ()=>diaExtraModal(viewDate, ()=>renderAgenda(view)));
+  ligarFeriados(view, ()=>renderAgenda(view));
+  view.querySelector('#btn-feriados')?.addEventListener('click', ()=>feriadosLocaisModal(()=>renderAgenda(view)));
   view.querySelectorAll('.btn-del-block').forEach(b=>b.addEventListener('click', (e)=>{
     e.stopPropagation();
     const bloco = (state.timeBlocks||[]).find(x=>x.id===b.dataset.block);
@@ -3862,6 +3867,166 @@ function diaExtraModal(dateISO, onDone){
       closeModal();
       showToast(r.abriu.length ? `Dia aberto para ${r.abriu.join(', ')}.` : 'Dia extra fechado.');
       if(onDone) onDone();
+    });
+  });
+}
+
+/* ============ FERIADOS ("vamos trabalhar?") ============
+   7 dias antes de um feriado o Painel pergunta. "Vamos fechar" marca folga
+   (timeOff) nessa data para todos que atendem — o link e o servidor já
+   respeitam a folga. Nenhum agendamento é cancelado sozinho.
+   Feriados da cidade: state.feriadosLocais = [{data:'MM-DD', nome}] (todo ano).
+   Respostas: state.feriadosRespostas = {'AAAA-MM-DD': 'fechado'|'aberto'}. */
+const FERIADOS_FIXOS = [['01-01','Confraternização Universal'],['04-21','Tiradentes'],['05-01','Dia do Trabalho'],
+  ['09-07','Independência do Brasil'],['10-12','Nossa Senhora Aparecida'],['11-02','Finados'],
+  ['11-15','Proclamação da República'],['11-20','Dia da Consciência Negra'],['12-25','Natal']];
+function pascoaISO(ano){   // algoritmo de Meeus/Jones/Butcher
+  const a=ano%19, b=Math.floor(ano/100), c=ano%100, d=Math.floor(b/4), e=b%4, f=Math.floor((b+8)/25),
+    g=Math.floor((b-f+1)/3), h=(19*a+b-d-g+15)%30, i=Math.floor(c/4), k=c%4, l=(32+2*e+2*i-h-k)%7,
+    m=Math.floor((a+11*h+22*l)/451), mes=Math.floor((h+l-7*m+114)/31), dia=((h+l-7*m+114)%31)+1;
+  return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
+function feriadosDoAno(ano){
+  const p = pascoaISO(ano);
+  const lista = FERIADOS_FIXOS.map(([md,nome])=>({date:`${ano}-${md}`, nome}));
+  lista.push({date:addDaysISO(p,-48), nome:'Carnaval (segunda)'}, {date:addDaysISO(p,-47), nome:'Carnaval (terça)'},
+             {date:addDaysISO(p,-2), nome:'Sexta-feira Santa'}, {date:addDaysISO(p,60), nome:'Corpus Christi'});
+  (Array.isArray(state.feriadosLocais) ? state.feriadosLocais : []).forEach(f=>{
+    if(f && /^\d{2}-\d{2}$/.test(f.data||'')) lista.push({date:`${ano}-${f.data}`, nome:String(f.nome||'Feriado da cidade').slice(0,60), local:true});
+  });
+  return lista.sort((a,b)=>a.date.localeCompare(b.date));
+}
+function feriadoEm(dateISO){
+  return feriadosDoAno(Number(dateISO.slice(0,4))).find(f=>f.date===dateISO) || null;
+}
+// feriados de hoje até daqui a 7 dias, ainda sem resposta, num dia em que alguém trabalharia
+function feriadosParaPerguntar(hojeISO){
+  const fim = addDaysISO(hojeISO, 7);
+  const anos = [...new Set([hojeISO.slice(0,4), fim.slice(0,4)])].map(Number);
+  const resp = state.feriadosRespostas || {};
+  const vistos = new Set();
+  return anos.flatMap(feriadosDoAno).filter(f=>{
+    if(f.date < hojeISO || f.date > fim || resp[f.date] || vistos.has(f.date)) return false;
+    vistos.add(f.date);
+    return servingProfessionals().some(p=>isProfessionalWorking(p, f.date));
+  });
+}
+function dataFeriadoBR(dateISO){
+  const t = new Date(dateISO+'T12:00').toLocaleDateString('pt-BR', {weekday:'long', day:'2-digit', month:'2-digit'});
+  return t.charAt(0).toUpperCase()+t.slice(1);
+}
+// na agenda: o dia escolhido é feriado? mostra o nome e, se ainda não respondeu, pergunta
+function cartaoFeriadoDoDia(dateISO){
+  if(!isOwnerLevel() || !dateISO) return '';
+  const f = feriadoEm(dateISO);
+  if(!f) return `<div style="margin:-8px 0 14px;text-align:right;"><button class="btn btn-ghost" id="btn-feriados" style="padding:5px 11px;font-size:12px;">📅 Feriados</button></div>`;
+  const resp = (state.feriadosRespostas||{})[dateISO];
+  const pergunta = !resp && dateISO >= todayISO();
+  return `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-color:var(--gold);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;font-size:13px;line-height:1.5;">🎉 <b>Feriado: ${esc(f.nome)}</b>${resp==='fechado'?' — vocês vão <b>fechar</b>.':resp==='aberto'?' — vocês vão <b>trabalhar</b>.':pergunta?'. Vocês vão trabalhar?':'.'}</div>
+    ${pergunta ? `<button class="btn btn-ghost" data-feriado-fechar="${dateISO}" style="padding:7px 13px;font-size:12.5px;color:var(--bad);border-color:var(--bad);">Vamos fechar</button>
+    <button class="btn btn-ghost" data-feriado-abrir="${dateISO}" style="padding:7px 13px;font-size:12.5px;color:var(--ok);border-color:var(--ok);">Vamos trabalhar</button>` : ''}
+    <button class="btn btn-ghost" id="btn-feriados" style="padding:7px 11px;font-size:12px;">📅 Feriados</button>
+  </div>`;
+}
+function cartaoFeriados(){
+  if(!isOwnerLevel()) return '';
+  const lista = feriadosParaPerguntar(todayISO());
+  if(!lista.length) return '';
+  return lista.map(f=>`<div class="card" data-feriado-card="${f.date}" style="padding:14px 18px;margin-bottom:16px;border-color:var(--gold);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;font-size:13.5px;line-height:1.5;">📅 <b>${esc(dataFeriadoBR(f.date))} — ${esc(f.nome)}.</b> Vocês vão trabalhar?</div>
+    <button class="btn btn-ghost" data-feriado-fechar="${f.date}" style="padding:7px 13px;font-size:12.5px;color:var(--bad);border-color:var(--bad);">Vamos fechar</button>
+    <button class="btn btn-ghost" data-feriado-abrir="${f.date}" style="padding:7px 13px;font-size:12.5px;color:var(--ok);border-color:var(--ok);">Vamos trabalhar</button>
+  </div>`).join('');
+}
+// Fecha o dia para todos que atendem (folga) e guarda a resposta. Devolve quem tem cliente marcado.
+function aplicarRespostaFeriado(s, dateISO, resposta){
+  if(!s.feriadosRespostas || typeof s.feriadosRespostas!=='object') s.feriadosRespostas = {};
+  // guarda só o último ano de respostas
+  const corte = addDaysISO(todayISO(), -370);
+  Object.keys(s.feriadosRespostas).forEach(d=>{ if(d < corte) delete s.feriadosRespostas[d]; });
+  s.feriadosRespostas[dateISO] = resposta;
+  const f = feriadoEm(dateISO);
+  const nome = f ? f.nome : 'feriado';
+  if(resposta==='fechado'){
+    (s.professionals||[]).filter(p=>p.servesClients!==false).forEach(p=>{
+      if(!Array.isArray(p.timeOff)) p.timeOff = [];
+      if(!p.timeOff.includes(dateISO)) p.timeOff.push(dateISO);
+      if(Array.isArray(p.diasExtras)) p.diasExtras = p.diasExtras.filter(x=>x && x.date!==dateISO);
+    });
+  }
+  registrarAuditoria(s, resposta==='fechado' ? 'Fechou no feriado' : 'Vai trabalhar no feriado', `${new Date(dateISO+'T12:00').toLocaleDateString('pt-BR')} — ${nome}`);
+  return (s.appointments||[]).filter(a=>a.date===dateISO && a.status!=='cancelado' && a.status!=='faltou')
+    .sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+}
+function ligarFeriados(view, redesenhar){
+  view.querySelectorAll('[data-feriado-abrir]').forEach(b=>b.addEventListener('click', ()=>{
+    update(s=>{ aplicarRespostaFeriado(s, b.dataset.feriadoAbrir, 'aberto'); });
+    showToast('Combinado: o dia fica aberto normalmente.');
+    redesenhar();
+  }));
+  view.querySelectorAll('[data-feriado-fechar]').forEach(b=>b.addEventListener('click', ()=>{
+    const d = b.dataset.feriadoFechar, f = feriadoEm(d);
+    if(!confirm(`Fechar ${dataFeriadoBR(d)} (${f?f.nome:'feriado'}) para todos os profissionais?\n\nO link de agendamento para de oferecer esse dia na hora.`)) return;
+    let marcados = [];
+    update(s=>{ marcados = aplicarRespostaFeriado(s, d, 'fechado'); });
+    redesenhar();
+    if(!marcados.length){ showToast('Dia fechado. Ninguém consegue agendar nele.'); return; }
+    openModal(`<div style="padding:22px;">
+      <div class="font-display" style="font-size:19px;font-weight:600;margin-bottom:8px;">Dia fechado ✅</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:14px;">Estes clientes já estavam marcados nesse dia. <b style="color:var(--ink);">Nada foi cancelado</b> — avise e remarque cada um pela agenda.</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+        ${marcados.map(a=>`<div style="font-size:13px;padding:8px 10px;border-radius:8px;background:var(--panel-2);"><span class="font-mono" style="color:var(--muted-2);">${esc(a.time)}</span> <b>${esc(a.client)}</b> · ${esc(profName(a.professionalId))}</div>`).join('')}
+      </div>
+      <button class="btn btn-gold" id="fer-ir" style="justify-content:center;width:100%;">Ver na agenda</button>
+    </div>`, root=>{
+      root.querySelector('#fer-ir').addEventListener('click', ()=>{ closeModal(); agendaDate = d; route = 'agenda'; render(); });
+    });
+  }));
+}
+function feriadosLocaisModal(onDone){
+  const desenhar = (root)=>{
+    const locais = Array.isArray(state.feriadosLocais) ? state.feriadosLocais : [];
+    root.querySelector('#fl-lista').innerHTML = locais.length ? locais.map((f,i)=>`<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:7px 10px;border-radius:8px;background:var(--panel-2);">
+      <span class="font-mono" style="color:var(--muted-2);">${esc(f.data.slice(3))}/${esc(f.data.slice(0,2))}</span><span style="flex:1;">${esc(f.nome)}</span>
+      <button class="btn btn-ghost" data-fl-del="${i}" style="padding:4px 8px;" title="Remover">${ICON.x}</button></div>`).join('')
+      : '<div style="font-size:12.5px;color:var(--muted-2);">Nenhum feriado da cidade cadastrado.</div>';
+    root.querySelectorAll('[data-fl-del]').forEach(b=>b.addEventListener('click', ()=>{
+      update(s=>{ s.feriadosLocais = (s.feriadosLocais||[]).filter((_,i)=>i!==Number(b.dataset.flDel)); });
+      desenhar(root);
+    }));
+  };
+  const proximos = feriadosDoAno(Number(todayISO().slice(0,4))).concat(feriadosDoAno(Number(todayISO().slice(0,4))+1))
+    .filter(f=>!f.local && f.date >= todayISO()).slice(0,6);
+  openModal(`<div style="padding:22px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div class="font-display" style="font-size:19px;font-weight:600;">Feriados</div>
+      <button class="btn btn-ghost" style="padding:6px;" id="m-close">${ICON.x}</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:14px;">7 dias antes de cada feriado o Painel pergunta se vocês vão trabalhar. Os nacionais já estão no sistema; aqui você põe os da sua cidade (repetem todo ano).</div>
+    <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">Próximos nacionais</div>
+    <div style="font-size:12.5px;color:var(--muted-2);line-height:1.7;margin-bottom:14px;">${proximos.map(f=>`${new Date(f.date+'T12:00').toLocaleDateString('pt-BR')} — ${esc(f.nome)}`).join('<br>')}</div>
+    <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">Da sua cidade</div>
+    <div id="fl-lista" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:130px;"><label>Data</label><input id="fl-data" type="date" style="width:100%;"></div>
+      <div style="flex:2;min-width:160px;"><label>Nome</label><input id="fl-nome" maxlength="60" placeholder="Ex: Aniversário da cidade" style="width:100%;"></div>
+      <button class="btn btn-gold" id="fl-add">Adicionar</button>
+    </div>
+    <div id="fl-msg" role="alert" style="display:none;font-size:12.5px;color:var(--bad);margin-top:8px;"></div>
+  </div>`, root=>{
+    root.querySelector('#m-close').addEventListener('click', ()=>{ closeModal(); if(onDone) onDone(); });
+    desenhar(root);
+    root.querySelector('#fl-add').addEventListener('click', ()=>{
+      const v = root.querySelector('#fl-data').value, nome = root.querySelector('#fl-nome').value.trim();
+      const msg = root.querySelector('#fl-msg');
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(v) || nome.length < 2){ msg.textContent = 'Escolha a data e escreva o nome do feriado.'; msg.style.display = 'block'; return; }
+      const md = v.slice(5);
+      if((state.feriadosLocais||[]).some(f=>f.data===md)){ msg.textContent = 'Esse dia já está na lista.'; msg.style.display = 'block'; return; }
+      update(s=>{ if(!Array.isArray(s.feriadosLocais)) s.feriadosLocais = []; s.feriadosLocais.push({data:md, nome:nome.slice(0,60)});
+        registrarAuditoria(s, 'Cadastrou feriado da cidade', `${md.slice(3)}/${md.slice(0,2)} — ${nome}`); });
+      root.querySelector('#fl-data').value = ''; root.querySelector('#fl-nome').value = ''; msg.style.display = 'none';
+      desenhar(root);
     });
   });
 }
