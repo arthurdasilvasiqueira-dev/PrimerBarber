@@ -8634,7 +8634,7 @@ function renderEstoque(view){
         <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th>Bônus</th><th></th></tr></thead>
         <tbody>
         ${produtos.map(p=>`<tr>
-          <td style="font-weight:500;">${esc(p.name)}</td>
+          <td style="font-weight:500;">${esc(p.name)}${p.vitrine?' <span class="pill pill-ok" style="font-size:10px;">vitrine</span>':''}</td>
           <td class="font-mono">${p.stock<=p.minStock?`<span class="pill pill-bad">${p.stock}</span>`:p.stock}</td>
           <td class="font-mono" style="color:var(--muted);">${p.minStock}</td>
           <td class="font-mono" style="color:var(--muted);">${BRL(p.cost)}</td>
@@ -8982,6 +8982,59 @@ function movimentarEstoqueModal(productId, view){
   });
 }
 
+/* ============ VITRINE DE PRODUTOS ============
+   O produto marcado "Mostrar na vitrine" aparece na página de agendamento
+   (foto, descrição, preço, esgotado). O servidor só manda esses campos. */
+function fotoProdutoOk(url){
+  return typeof url==='string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(url) && url.length < 400000;
+}
+// deixa a foto quadrada (corta o centro), no máximo "lado" px, em JPEG leve
+function fotoQuadrada(file, lado, cb){
+  if(!/^image\//.test(file.type||'')){ showToast('Escolha um arquivo de imagem.'); return; }
+  if(file.size > 15*1024*1024){ showToast('Imagem muito grande (máx. 15MB).'); return; }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = ()=>{
+    const q = Math.min(img.naturalWidth, img.naturalHeight), t = Math.min(lado, q);
+    const c = document.createElement('canvas'); c.width = t; c.height = t;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, t, t);
+    ctx.drawImage(img, (img.naturalWidth-q)/2, (img.naturalHeight-q)/2, q, q, 0, 0, t, t);
+    URL.revokeObjectURL(url);
+    let out = c.toDataURL('image/jpeg', 0.82);
+    if(out.length >= 400000) out = c.toDataURL('image/jpeg', 0.6);
+    if(!fotoProdutoOk(out)){ showToast('Não deu para usar essa foto. Tente outra.'); return; }
+    cb(out);
+  };
+  img.onerror = ()=>{ URL.revokeObjectURL(url); showToast('Não foi possível ler a imagem.'); };
+  img.src = url;
+}
+function vitrinePublicaHTML(info){
+  const lista = (Array.isArray(info?.produtos) ? info.produtos : []).filter(p=>p && p.name);
+  if(!lista.length) return '';
+  const tel = String(info.phone||'').replace(/\D/g,'');
+  const pedir = (p)=>tel ? `https://wa.me/55${tel}?text=${encodeURIComponent(`Oi! Quero o produto ${p.name} (${BRL(p.price)}). Ainda tem?`)}` : '';
+  return `<div class="card" id="pb-vitrine" style="padding:20px;margin-top:16px;">
+    <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:4px;">Produtos</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">À venda na barbearia. Peça pelo WhatsApp e retire no seu horário.</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
+      ${lista.map(p=>`<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;${p.esgotado?'opacity:.6;':''}">
+        <div style="aspect-ratio:1/1;background:var(--panel-2);display:flex;align-items:center;justify-content:center;color:var(--muted-2);">
+          ${fotoProdutoOk(p.foto) ? `<img src="${p.foto}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover;">` : ICON.image}
+        </div>
+        <div style="padding:10px;display:flex;flex-direction:column;gap:4px;flex:1;">
+          <div style="font-size:12.5px;font-weight:600;line-height:1.3;">${esc(p.name)}</div>
+          ${p.descricao ? `<div style="font-size:11.5px;color:var(--muted);line-height:1.45;">${esc(p.descricao)}</div>` : ''}
+          <div style="flex:1;"></div>
+          <div class="font-mono" style="font-size:14px;color:var(--gold-bright);margin-top:4px;">${BRL(p.price)}</div>
+          ${p.esgotado ? '<span class="pill pill-muted" style="font-size:10.5px;align-self:flex-start;">Esgotado</span>'
+            : pedir(p) ? `<a href="${pedir(p)}" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;justify-content:center;padding:6px 8px;font-size:12px;">${ICON.chat} Quero este</a>` : ''}
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
 function productModal(existing){
   const isEdit = !!existing;
   openModal(`
@@ -9002,11 +9055,46 @@ function productModal(existing){
         </div>
         <div><label>Bônus do barbeiro na venda (%)</label><input id="f-comissao-pct" type="number" step="0.5" min="0" max="100" value="${existing?.comissaoPct??0}" style="width:100%;">
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Ex.: 10% — pomada vendida por R$ 40 dá R$ 4 de bônus para quem vendeu. Pago separado da comissão de serviços.</div></div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+            <input type="checkbox" id="f-vitrine" ${existing?.vitrine?'checked':''} style="width:auto;margin-top:2px;">
+            <div><div style="font-size:13.5px;font-weight:600;">Mostrar na vitrine</div>
+            <div style="font-size:11.5px;color:var(--muted-2);margin-top:2px;">Aparece na sua página de agendamento, com foto, descrição e preço. O cliente pede pelo WhatsApp.</div></div>
+          </label>
+        </div>
+        <div>
+          <label>Foto do produto</label>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="f-foto-prev" style="width:72px;height:72px;border-radius:10px;background:var(--panel-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;color:var(--muted-2);">
+              ${fotoProdutoOk(existing?.fotoDataUrl) ? `<img src="${existing.fotoDataUrl}" style="width:100%;height:100%;object-fit:cover;">` : ICON.image}
+            </div>
+            <input type="file" id="f-foto-file" accept="image/*" style="display:none;">
+            <button class="btn btn-ghost" id="f-foto-pick" type="button">${ICON.upload} Escolher foto</button>
+            <button class="btn btn-ghost" id="f-foto-del" type="button" style="color:var(--bad);border-color:var(--bad);${fotoProdutoOk(existing?.fotoDataUrl)?'':'display:none;'}">${ICON.trash}</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Pode ser foto do celular: o sistema deixa quadrada e leve sozinho.</div>
+        </div>
+        <div><label>Descrição <span style="color:var(--muted-2);font-weight:400;">(o que é, como usar)</span></label>
+          <textarea id="f-descricao" maxlength="400" rows="3" style="width:100%;resize:vertical;">${esc(existing?.descricao||'')}</textarea></div>
         <button class="btn btn-gold" id="f-submit" style="justify-content:center;margin-top:4px;">${isEdit?'Salvar':'Cadastrar'}</button>
       </div>
     </div>
   `, root=>{
     root.querySelector('#m-close').addEventListener('click', closeModal);
+    let foto = fotoProdutoOk(existing?.fotoDataUrl) ? existing.fotoDataUrl : '';
+    root.querySelector('#f-foto-pick').addEventListener('click', ()=>root.querySelector('#f-foto-file').click());
+    root.querySelector('#f-foto-file').addEventListener('change', e=>{
+      const file = e.target.files[0]; e.target.value = '';
+      if(!file) return;
+      fotoQuadrada(file, 600, url=>{
+        foto = url;
+        root.querySelector('#f-foto-prev').innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;">`;
+        root.querySelector('#f-foto-del').style.display = 'inline-flex';
+      });
+    });
+    root.querySelector('#f-foto-del').addEventListener('click', ()=>{
+      foto = ''; root.querySelector('#f-foto-prev').innerHTML = ICON.image; root.querySelector('#f-foto-del').style.display = 'none';
+    });
     root.querySelector('#f-submit').addEventListener('click', ()=>{
       const name = root.querySelector('#f-name').value.trim();
       if(!name){ showToast('Informe o nome.'); return; }
@@ -9014,6 +9102,9 @@ function productModal(existing){
         name, minStock: parseInt(root.querySelector('#f-min').value)||0,
         cost: parseFloat(root.querySelector('#f-cost').value)||0, price: parseFloat(root.querySelector('#f-price').value)||0,
         comissaoPct: Math.max(0, Math.min(100, parseFloat(root.querySelector('#f-comissao-pct').value)||0)),
+        vitrine: root.querySelector('#f-vitrine').checked,
+        descricao: root.querySelector('#f-descricao').value.trim().slice(0,400),
+        fotoDataUrl: foto,
       };
       const inicial = isEdit ? 0 : Math.max(0, parseInt(root.querySelector('#f-stock').value)||0);
       const novoId = uid();
@@ -11913,6 +12004,7 @@ function renderPublicBookingScreen(step1Only){
             <div data-done-sub style="font-size:12.5px;color:var(--muted);">A barbearia vai confirmar seu horário em breve.</div>
           </div>
         </div>
+        ${vitrinePublicaHTML(info)}
       </div>
     </div>
   `;
