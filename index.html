@@ -6012,7 +6012,7 @@ function renderServicos(view){
         <thead><tr><th>Serviço</th><th>Valor</th><th>Duração</th><th>Sinal</th><th>Fichas</th><th></th></tr></thead>
         <tbody>
         ${state.services.map(s=>`<tr>
-          <td style="font-weight:500;">${esc(s.name)}${s.hideOnline?` <span class="pill pill-muted" style="font-size:10px;">só no painel</span>`:''}</td>
+          <td style="font-weight:500;">${esc(s.name)}${s.hideOnline?` <span class="pill pill-muted" style="font-size:10px;">só no painel</span>`:''}${s.oferecerRobo?` <span class="pill pill-ok" style="font-size:10px;">robô oferece</span>`:''}</td>
           <td class="font-mono">${BRL(s.price)}</td>
           <td class="font-mono" style="color:var(--muted);">${s.duration} min</td>
           <td>${s.requireDeposit ? `<span class="pill pill-warn font-mono">${ICON.timer} ${BRL(depositAmountFor(s))}</span>` : '<span class="pill pill-muted">Não exige</span>'}</td>
@@ -6065,6 +6065,7 @@ function svcModal(existing){
           <div style="font-size:11px;color:var(--muted-2);margin-top:4px;">Quantas fichas o profissional ganha ao fazer este serviço em um cliente assinante do clube — usado para dividir o pote no fechamento do mês.</div>
         </div>
         <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;"><input type="checkbox" id="f-online" ${existing?.hideOnline?'':'checked'} style="width:auto;padding:0;"> Disponível no agendamento online</label>
+        <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink);cursor:pointer;margin-top:8px;"><input type="checkbox" id="f-oferecer" ${existing?.oferecerRobo?'checked':''} style="width:auto;padding:0;"> Robô do WhatsApp pode oferecer este serviço como extra</label>
         <div style="font-size:11px;color:var(--muted-2);margin-top:-6px;">Desmarque para serviços que só a barbearia marca por dentro (ex: procedimentos especiais). O cliente não verá esta opção no link público, mas você continua agendando normalmente.</div>
         <div><label>Produtos que este serviço consome (baixa automática ao concluir)</label>
           <div id="f-consumos" style="display:flex;flex-direction:column;gap:6px;"></div>
@@ -6103,12 +6104,13 @@ function svcModal(existing){
       const depositValue = parseFloat(root.querySelector('#f-dep-value').value)||0;
       const clubFichas = parseInt(root.querySelector('#f-fichas').value)||0;
       const hideOnline = !root.querySelector('#f-online').checked;
+      const oferecerRobo = root.querySelector('#f-oferecer').checked;
       const consumos = [...root.querySelectorAll('.f-consumo-linha')].map(l=>({
         productId: l.querySelector('.f-consumo-prod').value,
         qtd: Math.max(0, Math.min(50, parseFloat(l.querySelector('.f-consumo-qtd').value)||0)) })).filter(c=>c.productId && c.qtd>0);
       update(s=>{
-        if(isEdit){ const alvo = s.services.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, consumos}); }
-        else{ s.services.push({id:uid(), name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, consumos}); }
+        if(isEdit){ const alvo = s.services.find(x=>x.id===existing.id); if(alvo) Object.assign(alvo, {name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, oferecerRobo, consumos}); }
+        else{ s.services.push({id:uid(), name, price, duration, requireDeposit, depositType, depositValue, clubFichas, hideOnline, oferecerRobo, consumos}); }
       });
       closeModal();
     });
@@ -10479,6 +10481,46 @@ function montarAvisoTodos(caixa){
   });
   desenhar(); contar(); status();
 }
+/* ROBÔ DE AGENDAMENTO NO WHATSAPP: o cliente manda mensagem e o robô
+   mostra horários, oferece um serviço a mais e agenda. Só aparece para
+   barbearias liberadas no servidor. Quem confere e grava é o servidor. */
+function servicosOfertaRobo(s){
+  return ((s||state).services||[]).filter(x=>x.oferecerRobo && !x.hideOnline && !x.arquivado);
+}
+async function montarRoboAgenda(caixa){
+  caixa.innerHTML = '';
+  const st = await chamarWhats('robo_status');
+  if(!st || !st.liberado || !document.body.contains(caixa)) return;
+  const ligado = state.roboWhats?.ativo === true;
+  const ofertas = servicosOfertaRobo();
+  caixa.innerHTML = `
+    <div class="card" style="padding:18px 20px;margin-bottom:22px;">
+      <div class="font-display" style="font-size:16px;font-weight:600;margin-bottom:8px;">${ICON.chat} Robô de agendamento <span class="pill pill-warn" style="font-size:10px;">teste</span></div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+        O cliente manda mensagem no WhatsApp da barbearia e o robô responde: pergunta o serviço, mostra os horários livres,
+        oferece um serviço a mais e agenda sozinho. Para cancelar ou remarcar, ele manda o link do próprio cliente.
+        <b>Se alguém da equipe responder na conversa, o robô fica calado nela por 12 horas.</b>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="robo-ativo" ${ligado?'checked':''} style="width:auto;"> Robô atende e agenda pelo WhatsApp
+      </label>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;">
+        Serviços que o robô oferece como extra: ${ofertas.length ? ofertas.map(x=>`<b style="color:var(--ink);">${esc(x.name)}</b>`).join(', ') : '<i>nenhum</i>'}.
+        Para mudar, abra o serviço em <b>Serviços</b> e marque "Robô do WhatsApp pode oferecer".
+      </div>
+      <div id="robo-msg" style="font-size:12.5px;margin-top:10px;"></div>
+    </div>`;
+  const msg = (t, cor)=>{ const el = caixa.querySelector('#robo-msg'); el.style.color = cor || 'var(--bad)'; el.textContent = t || ''; };
+  caixa.querySelector('#robo-ativo').addEventListener('change', async (e)=>{
+    const cb = e.currentTarget; const ligar = cb.checked; cb.disabled = true;
+    msg(ligar ? 'Ligando...' : 'Desligando...', 'var(--muted)');
+    const r = await chamarWhats('robo', { ligar });
+    cb.disabled = false;
+    if(r.error){ cb.checked = !ligar; msg(r.error); return; }
+    update(s=>{ s.roboWhats = { ...(s.roboWhats||{}), ativo: ligar }; registrarAuditoria(s, 'Robô de agendamento no WhatsApp', ligar ? 'ligado' : 'desligado'); });
+    msg(ligar ? 'Robô ligado. Mande um "oi" de outro celular para testar.' : 'Robô desligado.', 'var(--ok)');
+  });
+}
 function qrValido(v){ return typeof v==='string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v); }
 
 async function montarWhatsAuto(caixa){
@@ -10603,7 +10645,7 @@ function renderMensagens(view){
 
   view.innerHTML = `
     ${pageHeader('Mensagens Automáticas', 'Confirmação, lembrete, retorno de clientes ausentes e oferta de serviços/produtos')}
-    ${podeUsarLgpd() ? '<div id="wa-auto"></div><div id="wa-aviso"></div>' : ''}
+    ${podeUsarLgpd() ? '<div id="wa-auto"></div><div id="wa-robo"></div><div id="wa-aviso"></div>' : ''}
 
     <div class="card" style="padding:16px 18px;margin-bottom:22px;">
       <div style="font-size:13px;color:var(--muted);line-height:1.7;">Este painel identifica automaticamente quem precisa receber cada mensagem com base na agenda e no histórico de clientes. Toque em <strong style="color:var(--ink);">Enviar via WhatsApp</strong> para abrir a conversa já com o texto pronto — o envio 100% automático (disparado sozinho, sem toque, mesmo com o sistema fechado) exige um servidor com a API oficial do WhatsApp Business rodando em segundo plano.</div>
@@ -10735,6 +10777,8 @@ function renderMensagens(view){
 
   const caixaWa = view.querySelector('#wa-auto');
   if(caixaWa) montarWhatsAuto(caixaWa);
+  const caixaRobo = view.querySelector('#wa-robo');
+  if(caixaRobo) montarRoboAgenda(caixaRobo);
   const caixaAviso = view.querySelector('#wa-aviso');
   if(caixaAviso) montarAvisoTodos(caixaAviso);
 
