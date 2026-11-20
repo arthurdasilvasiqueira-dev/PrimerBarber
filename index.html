@@ -6225,7 +6225,7 @@ function cancelarMembroModal(id, view){
 }
 
 // FASE 4B: mesma conta do servidor (_shared/clube.ts) — aqui é só a PRÉVIA
-function calcularTrocaPlano(precoAtual, precoNovo, vencimento, hojeISO){
+function calcularTrocaPlano(precoAtual, precoNovo, vencimento, hojeISO, modo='proporcional'){
   const atual = Number(precoAtual)||0, novo = Number(precoNovo)||0;
   const tipo = novo > atual ? 'upgrade' : novo < atual ? 'downgrade' : 'igual';
   let dias = 0;
@@ -6233,8 +6233,23 @@ function calcularTrocaPlano(precoAtual, precoNovo, vencimento, hojeISO){
     dias = Math.round((Date.parse(vencimento+'T12:00:00Z') - Date.parse(hojeISO+'T12:00:00Z')) / 86400000);
   }
   dias = Math.max(0, Math.min(30, dias));
-  const diferenca = tipo==='upgrade' ? Math.round((novo-atual)*dias/30*100)/100 : 0;
+  const fator = modo==='nenhuma' ? 0 : modo==='cheia' ? (dias>0 ? 1 : 0) : dias/30;
+  const diferenca = tipo==='upgrade' ? Math.round((novo-atual)*fator*100)/100 : 0;
   return { tipo, diasRestantes: dias, diferenca, aPartirDe: tipo==='downgrade' ? (vencimento && vencimento > hojeISO ? vencimento : hojeISO) : hojeISO };
+}
+// até quando o cliente JÁ PAGOU o plano atual (mesma regra do servidor: pagoAteTroca)
+function pagoAteTroca(m, hojeISO){
+  const pa = String(m?.pagoAte||'').slice(0,10);
+  if(DATA_ISO_RE.test(pa) && pa > hojeISO && ['pago','pendente'].includes(m?.status)) return pa;
+  const v = String(m?.dueDate||'').slice(0,10);
+  if(m?.status==='pago' && DATA_ISO_RE.test(v) && v > hojeISO) return v;
+  return null;
+}
+function calcTrocaDoMembro(m, atual, novo, modo){
+  const hoje = todayISO(), pago = pagoAteTroca(m, hoje);
+  let c = calcularTrocaPlano(atual?.price, novo?.price, pago || m.dueDate || null, hoje, modo);
+  if(!pago) c = { ...c, diferenca:0, diasRestantes:0, aPartirDe:hoje };
+  return { ...c, pagoAte: pago };
 }
 function trocarPlanoModal(id, view){
   const m = state.subscriptionMembers.find(x=>x.id===id); if(!m) return;
@@ -6245,39 +6260,48 @@ function trocarPlanoModal(id, view){
     <div class="font-display" style="font-size:18px;font-weight:600;margin-bottom:6px;">Trocar plano</div>
     <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">${esc(m.name)} — hoje no <b>${esc(atual?.name||'?')}</b> (${BRL(atual?.price||0)})</div>
     <label>Novo plano</label><select id="f-novo" style="width:100%;margin-bottom:12px;">${outros.map(p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)}</option>`).join('')}</select>
+    <div id="f-modo-box" style="display:none;margin-bottom:12px;"><label>Cobrar a diferença do upgrade</label>
+      <select id="f-modo" style="width:100%;">
+        <option value="proporcional">Só os dias que faltam do mês já pago (recomendado)</option>
+        <option value="cheia">A diferença do mês inteiro</option>
+        <option value="nenhuma">Não cobrar diferença</option>
+      </select></div>
     <div id="f-previa" style="font-size:12.5px;line-height:1.7;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:14px;"></div>
     <div style="display:flex;gap:8px;"><button class="btn btn-ghost" id="m-close" style="flex:1;justify-content:center;">Voltar</button>
     <button class="btn btn-gold" id="f-ok" style="flex:1;justify-content:center;">Trocar</button></div></div>`, root=>{
     const previa = ()=>{
       const novo = state.subscriptionPlans.find(p=>p.id===root.querySelector('#f-novo').value);
-      let c = calcularTrocaPlano(atual?.price, novo?.price, m.dueDate, todayISO());
-      if(m.status!=='pago') c = { ...c, diferenca:0, diasRestantes:0, aPartirDe:todayISO() };
+      const modo = root.querySelector('#f-modo').value;
+      const c = calcTrocaDoMembro(m, atual, novo, modo);
       const data = d => new Date(d+'T12:00').toLocaleDateString('pt-BR');
+      root.querySelector('#f-modo-box').style.display = (c.tipo==='upgrade' && c.pagoAte) ? '' : 'none';
+      const explica = modo==='cheia' ? 'Diferença do mês inteiro' : `Diferença proporcional dos ${c.diasRestantes} dia(s) que faltam do mês já pago (até ${c.pagoAte?data(c.pagoAte):'—'})`;
       root.querySelector('#f-previa').innerHTML =
         c.tipo==='upgrade' ? (c.diferenca>0
-            ? `⬆ <b>Upgrade na hora.</b> Diferença proporcional dos ${c.diasRestantes} dia(s) até o vencimento: <b>${BRL(c.diferenca)}</b>${m.paymentMethod==='asaas' ? (c.diferenca>=5?' (cobrança avulsa no Asaas)':' (abaixo do mínimo do Asaas: não cobrada)') : ' (cobrar em dinheiro)'}.<br>A partir do próximo vencimento: ${BRL(novo.price)}/mês.`
-            : `⬆ <b>Upgrade na hora</b>, sem cobrança extra${m.status!=='pago'?' (o ciclo atual ainda não foi pago: a cobrança pendente passa para o valor novo)':''}. Novo valor: ${BRL(novo.price)}/mês.`)
+            ? `⬆ <b>Upgrade na hora.</b> ${explica}: <b>${BRL(c.diferenca)}</b> (${BRL(novo.price)} − ${BRL(atual?.price||0)})${m.paymentMethod==='asaas' ? (c.diferenca>=5?' — cobrança avulsa no Asaas':' — abaixo do mínimo do Asaas (R$ 5): não cobrada') : ' — cobrar em dinheiro'}.<br>A partir do próximo vencimento: ${BRL(novo.price)}/mês.`
+            : `⬆ <b>Upgrade na hora</b>, sem cobrança extra${modo==='nenhuma' && c.pagoAte ? ' (você escolheu não cobrar a diferença)' : !c.pagoAte ? ' (o mês atual ainda não foi pago: a cobrança em aberto passa para o valor novo)' : ''}. Novo valor: ${BRL(novo.price)}/mês.`)
         : c.tipo==='downgrade'
           ? (c.aPartirDe > todayISO()
               ? `⬇ <b>Downgrade a partir de ${data(c.aPartirDe)}</b> (o cliente já pagou o plano atual até lá). Depois: ${BRL(novo.price)}/mês. Sem estorno.`
               : `⬇ <b>Downgrade na hora.</b> Novo valor: ${BRL(novo.price)}/mês.`)
           : `Mesmo valor (${BRL(novo.price)}): troca na hora.`;
     };
-    root.querySelector('#f-novo').addEventListener('change', previa); previa();
+    root.querySelector('#f-novo').addEventListener('change', previa);
+    root.querySelector('#f-modo').addEventListener('change', previa); previa();
     root.querySelector('#m-close').addEventListener('click', closeModal);
     root.querySelector('#f-ok').addEventListener('click', async (e)=>{
       const novoId = root.querySelector('#f-novo').value;
       const novo = state.subscriptionPlans.find(p=>p.id===novoId);
+      const modo = root.querySelector('#f-modo').value;
       e.currentTarget.disabled = true;
       if(m.paymentMethod==='asaas' && m.asaasSubscriptionId){
-        const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'change_plan', memberId:m.id, newPlanId:novoId } });
+        const { data: res, error } = await supa.functions.invoke('asaas-sync', { body:{ action:'change_plan', memberId:m.id, newPlanId:novoId, modo } });
         if(error || res?.error){ showToast(res?.error || 'Não foi possível falar com o servidor.'); e.currentTarget.disabled = false; return; }
         const remoto = await buscarEstadoRemoto(); if(remoto){ state = remoto; migrateState(); }
         if(res.aviso) alert(res.aviso);
         if(res.invoiceUrl && confirm('Cobrança da diferença criada no Asaas. Abrir o link para enviar ao cliente?')) window.open(res.invoiceUrl, '_blank');
       } else {
-        let c = calcularTrocaPlano(atual?.price, novo?.price, m.dueDate, todayISO());
-        if(m.status!=='pago') c = { ...c, diferenca:0, diasRestantes:0, aPartirDe:todayISO() };
+        const c = calcTrocaDoMembro(m, atual, novo, modo);
         await update(s=>{
           const x = s.subscriptionMembers.find(x=>x.id===m.id); if(!x) return;
           const agora = new Date().toISOString();
@@ -6286,7 +6310,7 @@ function trocarPlanoModal(id, view){
           else { delete x.trocaAgendada; x.planId = novoId; }
           x.eventos = [...(x.eventos||[]), { at:agora, tipo: x.trocaAgendada ? 'troca agendada' : 'plano trocado', detalhe:`${atual?.name||'?'} → ${novo?.name||'?'}` }];
         });
-        if(c.diferenca > 0) alert(`Cobre ${BRL(c.diferenca)} do cliente (diferença proporcional) e registre no caixa.`);
+        if(c.diferenca > 0) alert(`Cobre ${BRL(c.diferenca)} do cliente (diferença do upgrade) e registre no caixa.`);
       }
       update(s=>registrarAuditoria(s, 'Trocou plano do clube', `${m.name}: ${atual?.name||'?'} → ${novo?.name||'?'}`));
       closeModal(); showToast('Troca de plano registrada.'); renderClube(view);
@@ -8618,25 +8642,42 @@ function estornarConsumo(s, ap){
 function sugestaoCompra(p){ return Math.max(0, (Number(p.minStock)||0)*2 - (Number(p.stock)||0)); }
 
 let estoqueVer = 'produtos';   // 'produtos' | 'vendas' | 'movimentos'
+let estoqueCat = '';           // filtro de categoria na lista de produtos ('' = todas)
+// categorias sugeridas; o dono pode digitar uma nova no cadastro do produto
+const CATEGORIAS_PRODUTO = ['Pomada e cera', 'Shampoo e condicionador', 'Barba (óleo, balm, shampoo)', 'Gel, spray e finalizador',
+  'Tratamento capilar', 'Perfume e loção', 'Pós-barba', 'Bebida', 'Acessório', 'Outros'];
+function categoriaProduto(p){ return String(p?.categoria||'').trim() || 'Sem categoria'; }
+function categoriasEmUso(){
+  const usadas = (state.products||[]).filter(p=>!p.arquivado).map(categoriaProduto);
+  return [...new Set(usadas)].sort((a,b)=>a==='Sem categoria' ? 1 : b==='Sem categoria' ? -1 : a.localeCompare(b));
+}
 function renderEstoque(view){
-  const produtos = (state.products||[]).filter(p=>!p.arquivado);
+  const todosProdutos = (state.products||[]).filter(p=>!p.arquivado);
+  const cats = categoriasEmUso();
+  if(estoqueCat && !cats.includes(estoqueCat)) estoqueCat = '';
+  const produtos = estoqueCat ? todosProdutos.filter(p=>categoriaProduto(p)===estoqueCat) : todosProdutos;
   const low = produtos.filter(p=>p.stock<=p.minStock);
   const vendas = (state.sales||[]).slice().reverse().slice(0,100);
   const movs = (state.stockMovements||[]).slice().reverse().slice(0,150);
   const aba = (id, rotulo)=>`<button class="btn ${estoqueVer===id?'btn-gold':'btn-ghost'}" data-aba-estoque="${id}" style="padding:7px 14px;font-size:12.5px;">${rotulo}</button>`;
   view.innerHTML = `
-    ${pageHeader('Estoque', produtos.length+' produto(s) cadastrado(s)', `<button class="btn btn-gold" id="btn-new-product">${ICON.plus} Novo produto</button>`)}
+    ${pageHeader('Estoque', todosProdutos.length+' produto(s) cadastrado(s)', `<button class="btn btn-gold" id="btn-new-product">${ICON.plus} Novo produto</button>`)}
     ${low.length>0 ? `<div class="card" style="padding:14px 18px;margin-bottom:18px;border-color:var(--bad);">
       <div style="font-size:13.5px;color:var(--bad);font-weight:600;margin-bottom:6px;">Estoque baixo em ${low.length} produto(s)</div>
       ${low.map(p=>`<div style="font-size:12.5px;color:var(--muted);padding:2px 0;">${esc(p.name)}: ${p.stock} (mínimo ${p.minStock})${sugestaoCompra(p)?` — sugestão de compra: <b>${sugestaoCompra(p)}</b>`:''}</div>`).join('')}
     </div>` : ''}
     <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${aba('produtos','Produtos')}${aba('vendas','Vendas ('+(state.sales||[]).length+')')}${aba('movimentos','Movimentações')}</div>
+    ${estoqueVer==='produtos' && cats.length>1 ? `<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="btn ${!estoqueCat?'btn-gold':'btn-ghost'}" data-cat-estoque="" style="padding:5px 12px;font-size:12px;">Todas</button>
+      ${cats.map(c=>`<button class="btn ${estoqueCat===c?'btn-gold':'btn-ghost'}" data-cat-estoque="${esc(c)}" style="padding:5px 12px;font-size:12px;">${esc(c)} (${todosProdutos.filter(p=>categoriaProduto(p)===c).length})</button>`).join('')}
+    </div>` : ''}
     ${estoqueVer==='produtos' ? (produtos.length===0 ? emptyState('Nenhum produto cadastrado.') : `
       <table>
         <thead><tr><th>Produto</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Venda</th><th>Bônus</th><th></th></tr></thead>
         <tbody>
         ${produtos.map(p=>`<tr>
-          <td style="font-weight:500;">${esc(p.name)}${p.vitrine?' <span class="pill pill-ok" style="font-size:10px;">vitrine</span>':''}</td>
+          <td style="font-weight:500;">${esc(p.name)}${p.vitrine?' <span class="pill pill-ok" style="font-size:10px;">vitrine</span>':''}
+            <div style="font-size:11px;color:var(--muted-2);font-weight:400;">${esc(categoriaProduto(p))}</div></td>
           <td class="font-mono">${p.stock<=p.minStock?`<span class="pill pill-bad">${p.stock}</span>`:p.stock}</td>
           <td class="font-mono" style="color:var(--muted);">${p.minStock}</td>
           <td class="font-mono" style="color:var(--muted);">${BRL(p.cost)}</td>
@@ -8684,6 +8725,7 @@ function renderEstoque(view){
   `;
   view.querySelector('#btn-new-product').addEventListener('click', ()=>productModal());
   view.querySelectorAll('[data-aba-estoque]').forEach(b=>b.addEventListener('click', ()=>{ estoqueVer = b.dataset.abaEstoque; renderEstoque(view); }));
+  view.querySelectorAll('[data-cat-estoque]').forEach(b=>b.addEventListener('click', ()=>{ estoqueCat = b.dataset.catEstoque; renderEstoque(view); }));
   view.querySelectorAll('[data-sell-product]').forEach(b=>b.addEventListener('click', ()=>sellProductModal(state.products.find(p=>p.id===b.dataset.sellProduct))));
   view.querySelectorAll('[data-mov-product]').forEach(b=>b.addEventListener('click', ()=>movimentarEstoqueModal(b.dataset.movProduct, view)));
   view.querySelectorAll('[data-edit-product]').forEach(b=>b.addEventListener('click', ()=>productModal(state.products.find(p=>p.id===b.dataset.editProduct))));
@@ -8735,6 +8777,7 @@ function venderProdutosModal(opts = {}){
   if(!disponiveis().length){ if(!opts.posAtendimento) showToast('Nenhum produto com estoque para vender.'); return; }
   const souBarbeiro = !isOwnerLevel() && userSession.role!=='recepcionista';
   const vendedorFixo = souBarbeiro ? userSession.professionalId : null;
+  const podeDesconto = isOwnerLevel() || userSession.role==='recepcionista';   // barbeiro: só o do clube (o servidor também limita)
   const clientes = state.clients.filter(c=>!c.arquivado).slice().sort((a,b)=>a.name.localeCompare(b.name));
   const carrinho = [];   // { productId, qtd }
   if(opts.produtoId) carrinho.push({ productId: opts.produtoId, qtd: 1 });
@@ -8748,7 +8791,9 @@ function venderProdutosModal(opts = {}){
       ${opts.posAtendimento ? `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;">Atendimento concluído. Se vendeu pomada, shampoo etc., registre aqui: entra no caixa e no bônus do barbeiro.</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;gap:8px;align-items:flex-end;">
-          <div style="flex:3;"><label>Produto</label><select id="sp-prod" style="width:100%;">${disponiveis().map(p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)} (${p.stock} em estoque)</option>`).join('')}</select></div>
+          <div style="flex:3;"><label>Produto</label><select id="sp-prod" style="width:100%;">${(()=>{ const lista = disponiveis(), cs = [...new Set(lista.map(categoriaProduto))].sort();
+            const op = p=>`<option value="${p.id}">${esc(p.name)} — ${BRL(p.price)} (${p.stock} em estoque)</option>`;
+            return cs.length>1 ? cs.map(c=>`<optgroup label="${esc(c)}">${lista.filter(p=>categoriaProduto(p)===c).map(op).join('')}</optgroup>`).join('') : lista.map(op).join(''); })()}</select></div>
           <div style="flex:1;"><label>Qtd</label><input id="sp-qty" type="number" min="1" value="1" style="width:100%;"></div>
           <button class="btn btn-ghost" id="sp-add" type="button" style="padding:10px 12px;">${ICON.plus}</button>
         </div>
@@ -8764,6 +8809,11 @@ function venderProdutosModal(opts = {}){
             ${clientes.map(cl=>`<option value="${esc(cl.name)}" ${opts.cliente && cl.name.trim().toLowerCase()===opts.cliente.trim().toLowerCase()?'selected':''}>${esc(cl.name)}</option>`).join('')}
           </select>
         </div>
+        ${podeDesconto ? `<div><label>Desconto <span style="color:var(--muted-2);font-weight:400;">(opcional)</span></label>
+          <div style="display:flex;gap:8px;">
+            <input id="sp-desc" type="number" min="0" step="0.01" placeholder="0" style="flex:1;">
+            <select id="sp-desc-tipo" style="width:110px;"><option value="reais">R$</option><option value="pct">%</option></select>
+          </div></div>` : ''}
         <div id="sp-total" class="card" style="padding:14px 16px;background:var(--panel-2);"></div>
         <label>Forma de pagamento</label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -8795,7 +8845,15 @@ function venderProdutosModal(opts = {}){
       } else if(m){
         nota = m.status==='pausado' ? 'Assinatura pausada — sem desconto.' : 'Assinante em atraso — sem desconto.';
       }
-      const venda = montarItensVenda(itens, desconto);
+      // desconto dado na hora (soma com o do clube; nunca passa do valor dos produtos)
+      let descontoManual = 0;
+      if(podeDesconto){
+        const v = Math.max(0, parseFloat(root.querySelector('#sp-desc').value)||0);
+        descontoManual = root.querySelector('#sp-desc-tipo').value==='pct' ? r2(brutoPrevio * Math.min(100, v) / 100) : r2(v);
+        descontoManual = r2(Math.min(descontoManual, Math.max(0, brutoPrevio - desconto)));
+      }
+      const descontoClube = desconto;
+      const venda = montarItensVenda(itens, r2(desconto + descontoManual));
       root.querySelector('#sp-itens').innerHTML = carrinho.map((c,idx)=>{ const p = state.products.find(x=>x.id===c.productId);
         return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13.5px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
           <span>${c.qtd}× ${esc(p?.name||'')}</span>
@@ -8805,7 +8863,8 @@ function venderProdutosModal(opts = {}){
       root.querySelectorAll('.sp-del').forEach(b=>b.onclick = ()=>{ carrinho.splice(Number(b.dataset.idx),1); calc(); });
       root.querySelector('#sp-total').innerHTML = `
         <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);"><span>Produtos</span><span class="font-mono">${BRL(venda.bruto)}</span></div>
-        ${venda.desconto>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto</span><span class="font-mono">− ${BRL(venda.desconto)}</span></div>`:''}
+        ${descontoClube>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto do clube</span><span class="font-mono">− ${BRL(descontoClube)}</span></div>`:''}
+        ${descontoManual>0?`<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--ok);margin-top:5px;"><span>Desconto dado agora</span><span class="font-mono">− ${BRL(descontoManual)}</span></div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
           <span style="font-size:13px;font-weight:600;">Total</span>
           <span class="font-mono" style="font-size:21px;color:var(--gold-bright);">${BRL(venda.total)}</span>
@@ -8813,7 +8872,7 @@ function venderProdutosModal(opts = {}){
         ${vendedor && venda.bonus>0 ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">Bônus de ${esc(profName(vendedor))}: <b class="font-mono">${BRL(venda.bonus)}</b></div>` : ''}
         ${nota?`<div style="font-size:11.5px;color:var(--muted-2);margin-top:8px;">${nota}</div>`:''}`;
       root.querySelectorAll('.sp-pay').forEach(b=>b.disabled = !carrinho.length);
-      return { venda, nome, vendedor };
+      return { venda, nome, vendedor, descontoClube, descontoManual };
     };
     root.querySelector('#sp-add').addEventListener('click', ()=>{
       const pid = root.querySelector('#sp-prod').value;
@@ -8827,10 +8886,12 @@ function venderProdutosModal(opts = {}){
       calc();
     });
     root.querySelector('#sp-client').addEventListener('change', calc);
+    root.querySelector('#sp-desc')?.addEventListener('input', calc);
+    root.querySelector('#sp-desc-tipo')?.addEventListener('change', calc);
     root.querySelector('#sp-vendedor')?.addEventListener('change', calc);
     calc();
     root.querySelectorAll('.sp-pay').forEach(b=>b.addEventListener('click', async ()=>{
-      const { venda, nome, vendedor } = calc();
+      const { venda, nome, vendedor, descontoClube, descontoManual } = calc();
       if(!venda.itens.length) return;
       const method = b.dataset.method;
       root.querySelectorAll('.sp-pay').forEach(x=>x.disabled = true);
@@ -8849,13 +8910,15 @@ function venderProdutosModal(opts = {}){
         const nomes = venda.itens.map(i=>`${i.qtd}× ${i.nome}`).join(', ');
         sess.entries.push({
           id:entryId, type:'entrada', method, vendaId,
-          desc:`${nomes}${nome?' — '+nome:''}${venda.desconto>0?' (com desconto do clube)':''}`,
+          desc:`${nomes}${nome?' — '+nome:''}${descontoClube>0?' (com desconto do clube)':''}${descontoManual>0?` (desconto de ${BRL(descontoManual)})`:''}`,
           amount: venda.total, time:new Date().toTimeString().slice(0,5), auto:false,
         });
         if(!Array.isArray(s.sales)) s.sales = [];
         s.sales.push({ id:vendaId, at:new Date().toISOString(), itens:venda.itens, bruto:venda.bruto, desconto:venda.desconto,
           total:venda.total, bonus:venda.bonus, method, cliente:nome||'', professionalId: vendedor || null, apptId: opts.apptId || null,
-          caixaId:sess.id, caixaEntryId:entryId, status:'ok', por:quemEstaLogado() });
+          caixaId:sess.id, caixaEntryId:entryId, status:'ok', por:quemEstaLogado(),
+          ...(descontoManual>0 ? { descontoManual, descontoClube, descontoPor: quemEstaLogado() } : {}) });
+        if(descontoManual>0) registrarAuditoria(s, 'Deu desconto em venda de produto', `${nomes}: ${BRL(descontoManual)}${nome?' — '+nome:''}`);
       });
       closeModal();
       if(semEstoque){ showToast('Estoque insuficiente: outro aparelho vendeu antes. Nada foi registrado.'); return; }
@@ -9047,6 +9110,9 @@ function productModal(existing){
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div><label>Nome do produto</label><input id="f-name" value="${esc(existing?.name)}" style="width:100%;"></div>
+        <div><label>Categoria <span style="color:var(--muted-2);font-weight:400;">(escolha ou digite uma nova)</span></label>
+          <input id="f-categoria" list="f-categorias" maxlength="40" value="${esc(existing?.categoria||'')}" placeholder="Ex.: Pomada e cera" style="width:100%;">
+          <datalist id="f-categorias">${[...new Set([...CATEGORIAS_PRODUTO, ...categoriasEmUso().filter(c=>c!=='Sem categoria')])].map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;"><label>${isEdit?'Estoque atual (use "Movimentar")':'Estoque inicial'}</label><input id="f-stock" type="number" min="0" value="${existing?.stock??0}" ${isEdit?'disabled':''} style="width:100%;"></div>
           <div style="flex:1;"><label>Estoque mínimo</label><input id="f-min" type="number" min="0" value="${existing?.minStock??0}" style="width:100%;"></div>
@@ -9102,6 +9168,7 @@ function productModal(existing){
       if(!name){ showToast('Informe o nome.'); return; }
       const data = {
         name, minStock: parseInt(root.querySelector('#f-min').value)||0,
+        categoria: root.querySelector('#f-categoria').value.replace(/\s+/g,' ').trim().slice(0,40),
         cost: parseFloat(root.querySelector('#f-cost').value)||0, price: parseFloat(root.querySelector('#f-price').value)||0,
         comissaoPct: Math.max(0, Math.min(100, parseFloat(root.querySelector('#f-comissao-pct').value)||0)),
         vitrine: root.querySelector('#f-vitrine').checked,
